@@ -170,7 +170,11 @@ jobs:
             fi
 
             echo "publishing $name@$version"
-            npm publish "$tarball" --access public --ignore-scripts
+            # The `./` matters. npm parses its argument as a package spec, and a
+            # bare `tarballs/x.tgz` looks exactly like the `owner/repo` GitHub
+            # shorthand — npm tries to git-clone it and dies on a public-key
+            # error. A leading `./` forces the file interpretation.
+            npm publish "./$tarball" --access public --ignore-scripts
             published=$((published + 1))
           done
           echo "published=$published" >> "$GITHUB_ENV"
