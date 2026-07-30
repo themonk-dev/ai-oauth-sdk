@@ -149,12 +149,16 @@ jobs:
           name: tarballs
           path: tarballs
 
-      # Once trusted publishing is configured for all ten packages on npmjs.com,
-      # drop NODE_AUTH_TOKEN and delete the NPM_TOKEN secret — npm will mint a
-      # short-lived credential from the OIDC token instead.
+      # No NODE_AUTH_TOKEN, and no NPM_TOKEN secret to leak: every package has a
+      # trusted publisher on npmjs.com pinned to this repository, this workflow
+      # filename and the `release` environment. npm exchanges the OIDC token
+      # above for a credential that lives for the length of one publish.
+      #
+      # That pinning is the part worth keeping intact — a workflow added under
+      # a different filename, or one that skips the environment, cannot mint
+      # anything. Renaming this file means updating all ten packages on npm.
       - name: Publish to npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: 'true'
         run: |
           published=0
