@@ -1,5 +1,19 @@
 # ai-oauth-sdk
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [700d60b]
+  - @ai-oauth-sdk/core@0.1.1
+  - @ai-oauth-sdk/browser@0.1.1
+  - @ai-oauth-sdk/node@0.1.1
+  - @ai-oauth-sdk/react@0.1.1
+  - @ai-oauth-sdk/react-native@0.1.1
+  - @ai-oauth-sdk/solid@0.1.1
+  - @ai-oauth-sdk/svelte@0.1.1
+  - @ai-oauth-sdk/vue@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes
