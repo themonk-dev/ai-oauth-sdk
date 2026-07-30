@@ -163,7 +163,7 @@ The PKCE verifier lives in `sessionStorage` between the two page loads.
 </details>
 
 <details>
-<summary><b>⚛ React · Vue · Svelte · Solid</b></summary>
+<summary><b>◈ React · Vue · Svelte · Solid</b></summary>
 
 All four wrap the same store, so the API is deliberately parallel.
 
