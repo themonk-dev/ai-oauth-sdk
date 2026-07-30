@@ -1,6 +1,10 @@
+import { buildLoopbackRedirectUri, defaultRedirectUri } from '../authorize.js'
 import { OAuthError } from '../errors.js'
 import { parseStandardCallback } from '../providers/define.js'
 import type { CallbackReceiver, CallbackResult, ReceiverContext } from '../types.js'
+
+/** Port used when a loopback provider accepts any, since nothing will listen. */
+const PASTE_FALLBACK_PORT = 1455
 
 export interface ManualReceiverOptions {
   /**
@@ -8,8 +12,30 @@ export interface ManualReceiverOptions {
    * a full redirect URL, a bare code, or Anthropic's `code#state`.
    */
   prompt: (url: string, context: ReceiverContext) => Promise<string>
-  /** Fixed redirect URI. Defaults to the provider's hosted URI. */
+  /** Fixed redirect URI. Defaults to whatever the provider's mode implies. */
   redirectUri?: string
+}
+
+/**
+ * The redirect URI to hand the provider when the caller named none.
+ *
+ * A hosted provider publishes one. A loopback provider does not — but pasting
+ * still works there: the browser fails to reach the port, and the user copies
+ * the code straight out of the address bar. So a loopback URI is synthesised
+ * rather than refused, including for providers that accept any port (`0`),
+ * where nothing is listening anyway and the value only has to round-trip
+ * unchanged into the token request.
+ */
+function resolveRedirectUri(context: ReceiverContext): string | undefined {
+  const { provider } = context
+  const declared = defaultRedirectUri(provider)
+  if (declared) {
+    return declared
+  }
+  if (provider.redirect.mode === 'loopback') {
+    return buildLoopbackRedirectUri(provider, PASTE_FALLBACK_PORT)
+  }
+  return undefined
 }
 
 /**
@@ -22,12 +48,13 @@ export function manualReceiver(options: ManualReceiverOptions): CallbackReceiver
   return {
     id: 'manual',
     async start(context) {
-      const redirectUri = options.redirectUri ?? context.provider.redirect.hostedUri
+      const redirectUri = options.redirectUri ?? resolveRedirectUri(context)
       if (!redirectUri) {
         throw new OAuthError(
           'configuration_error',
-          `Provider "${context.provider.id}" has no hosted redirect URI, so ` +
-            '`manualReceiver` needs an explicit `redirectUri`.',
+          `Provider "${context.provider.id}" does not use a redirect, so it cannot ` +
+            'be completed by pasting. Use the device-code flow instead ' +
+            '(`deviceLogin()`, or `--device` on the CLI).',
         )
       }
 

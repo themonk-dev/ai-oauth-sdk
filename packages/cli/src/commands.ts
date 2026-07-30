@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 
 import {
+  buildLoopbackRedirectUri,
   defineProvider,
   isOAuthError,
   providers,
@@ -191,13 +192,19 @@ export async function login({ args, json }: CommandContext): Promise<void> {
     await rememberProvider(provider, args)
   }
 
-  const tokens = flagBoolean(args.flags, 'device')
-    ? await loginWithDevice(client)
+  // A provider with no redirect can only be completed by device code. Requiring
+  // `--device` for those means the default lands on a loopback server that can
+  // never receive anything, and the user waits for a callback that is not coming.
+  const deviceOnly = provider.redirect.mode === 'custom' && Boolean(provider.deviceAuthorizationUrl)
+
+  const timeoutSeconds = flagNumber(args.flags, 'timeout')
+  const timeoutMs = timeoutSeconds === undefined ? undefined : timeoutSeconds * 1000
+
+  const tokens = flagBoolean(args.flags, 'device') || deviceOnly
+    ? await loginWithDevice(client, timeoutMs)
     : await client.login({
         receiver: pickReceiver(provider, args),
-        ...(flagNumber(args.flags, 'timeout')
-          ? { timeoutMs: flagNumber(args.flags, 'timeout')! * 1000 }
-          : {}),
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
       })
 
   if (json) {
@@ -214,7 +221,18 @@ export async function login({ args, json }: CommandContext): Promise<void> {
 
 function pickReceiver(provider: ProviderConfig, args: ParsedArgs) {
   if (flagBoolean(args.flags, 'paste')) {
-    return promptReceiver()
+    if (provider.redirect.mode === 'custom') {
+      throw new CliError(
+        `${provider.label} does not use a redirect, so --paste cannot complete it.`,
+        `Run: ai-oauth-sdk login ${provider.id} --device`,
+      )
+    }
+    // A specific port still has to appear in the redirect URI, because the
+    // provider matches it against the one sent at the token exchange.
+    const port = flagNumber(args.flags, 'port')
+    return promptReceiver(
+      port !== undefined ? { redirectUri: buildLoopbackRedirectUri(provider, port) } : {},
+    )
   }
 
   // Always show the URL, even when a browser is being opened: if the launch
@@ -239,16 +257,33 @@ function pickReceiver(provider: ProviderConfig, args: ParsedArgs) {
     : receiver
 }
 
-async function loginWithDevice(client: AuthClient): Promise<TokenSet> {
-  return client.deviceLogin({
-    onCode: (device) => {
-      info('')
-      info(`  Open ${cyan(device.verificationUriComplete ?? device.verificationUri)}`)
-      info(`  Enter code ${bold(device.userCode)}`)
-      info('')
-      info(dim('  Waiting for approval…'))
-    },
-  })
+/**
+ * Device-code login.
+ *
+ * `deviceLogin` takes a signal rather than a timeout, so `--timeout` is wired
+ * through one here. Without it the flag is silently ignored and polling runs to
+ * the provider's own expiry — typically fifteen minutes of a hung terminal.
+ */
+async function loginWithDevice(client: AuthClient, timeoutMs?: number): Promise<TokenSet> {
+  const controller = timeoutMs === undefined ? undefined : new AbortController()
+  const timer = controller && setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await client.deviceLogin({
+      ...(controller ? { signal: controller.signal } : {}),
+      onCode: (device) => {
+        info('')
+        info(`  Open ${cyan(device.verificationUriComplete ?? device.verificationUri)}`)
+        info(`  Enter code ${bold(device.userCode)}`)
+        info('')
+        info(dim('  Waiting for approval…'))
+      },
+    })
+  } finally {
+    if (timer) {
+      clearTimeout(timer)
+    }
+  }
 }
 
 export async function token({ args, json }: CommandContext): Promise<void> {

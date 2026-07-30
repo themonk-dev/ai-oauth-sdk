@@ -143,13 +143,26 @@ describe('manualReceiver', () => {
     expect(started.redirectUri).toBe('https://custom.test/cb')
   })
 
-  it('requires a redirect URI when the provider has no hosted one', async () => {
+  it('synthesises a loopback URI when the provider has no hosted one', async () => {
+    // Pasting is the fallback for headless machines, and most providers are
+    // loopback — so refusing them here made `--paste` useless for all but one.
+    // The browser cannot reach the port, which is the point: the user copies
+    // the code out of the address bar.
     const loopbackOnly = defineProvider({
       ...provider,
       redirect: { mode: 'loopback', loopbackPort: 0 },
     })
+    const started = await manualReceiver({ prompt: async () => 'abc' }).start({
+      provider: loopbackOnly,
+    })
+    expect(started.redirectUri).toMatch(/^http:\/\/localhost:\d+\//)
+    expect(started.redirectUri).not.toContain(':0/')
+  })
+
+  it('refuses a provider that has no redirect at all', async () => {
+    const deviceOnly = defineProvider({ ...provider, redirect: { mode: 'custom' } })
     await expect(
-      manualReceiver({ prompt: async () => 'abc' }).start({ provider: loopbackOnly }),
+      manualReceiver({ prompt: async () => 'abc' }).start({ provider: deviceOnly }),
     ).rejects.toMatchObject({ code: 'configuration_error' })
   })
 
