@@ -1,0 +1,10 @@
+{
+  // Tests drive a real HTTP server from @ai-oauth-sdk/core's helpers, so they need
+  // Node typings. src/ is a browser package — a stray `process.env` in src/ must not compile,
+  // so it stays in the stricter program next door.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src", "test"]
+}

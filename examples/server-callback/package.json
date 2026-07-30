@@ -1,0 +1,13 @@
+{
+  "name": "@ai-oauth-sdk-example/server-callback",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Web server showing the state-keyed handoff: start a flow on one request, finish it on another.",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/core": "workspace:^"
+  }
+}

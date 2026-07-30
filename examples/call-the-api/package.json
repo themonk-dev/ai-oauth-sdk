@@ -1,0 +1,14 @@
+{
+  "name": "@ai-oauth-sdk-example/call-the-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sign in, then actually call the provider's API with the token.",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/core": "workspace:^",
+    "@ai-oauth-sdk/node": "workspace:^"
+  }
+}

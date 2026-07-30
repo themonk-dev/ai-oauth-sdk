@@ -1,0 +1,54 @@
+{
+  "name": "@ai-oauth-sdk/cli",
+  "version": "0.1.0",
+  "description": "Command-line tool to sign in to AI providers (ChatGPT, Claude, Gemini, Grok, Copilot) and print tokens for scripts.",
+  "keywords": [
+    "oauth",
+    "cli",
+    "ai",
+    "chatgpt",
+    "claude",
+    "gemini",
+    "grok",
+    "copilot",
+    "token"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",
+    "directory": "packages/cli"
+  },
+  "type": "module",
+  "bin": {
+    "ai-oauth-sdk": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/core": "workspace:^",
+    "@ai-oauth-sdk/node": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

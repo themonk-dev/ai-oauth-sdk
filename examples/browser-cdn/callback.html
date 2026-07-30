@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Signing you in…</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 ui-sans-serif, system-ui, sans-serif; display: grid;
+         place-items: center; min-height: 100vh; margin: 0; }
+</style>
+</head>
+<body>
+
+<p>Signing you in…</p>
+
+<script src="https://cdn.jsdelivr.net/npm/ai-oauth-sdk/dist/ai-oauth-sdk.global.js"></script>
+<script>
+  // The provider redirected here with ?code=…&state=…. This page is same-origin
+  // with the opener, so it can hand the callback back and close itself.
+  if (!AIOAuth.postCallbackToOpener()) {
+    document.body.textContent =
+      'This page was not opened by a sign-in popup. You can close it.'
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ai-oauth-sdk — CDN example</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+         max-width: 40rem; margin: 4rem auto; padding: 0 1rem; }
+  button { font: inherit; padding: .6rem 1.1rem; border-radius: .5rem;
+           border: 1px solid #8883; background: #8881; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  pre { background: #8881; padding: 1rem; border-radius: .5rem; overflow-x: auto; }
+  .error { color: #dc2626; }
+</style>
+</head>
+<body>
+
+<h1>ai-oauth-sdk via <code>&lt;script&gt;</code></h1>
+<p>No build step, no bundler, no npm. One file from a CDN.</p>
+
+<p>
+  <button id="login">Sign in with ChatGPT</button>
+  <button id="logout" hidden>Sign out</button>
+</p>
+<pre id="output">Not signed in.</pre>
+
+<!-- In production pin a version: ai-oauth-sdk@0.1.0/dist/ai-oauth-sdk.global.js -->
+<script src="https://cdn.jsdelivr.net/npm/ai-oauth-sdk/dist/ai-oauth-sdk.global.js"></script>
+<script>
+  const output = document.querySelector('#output')
+  const loginButton = document.querySelector('#login')
+  const logoutButton = document.querySelector('#logout')
+
+  // Use your own registered web client id — the built-in one belongs to the
+  // Codex CLI and is registered for a loopback redirect, not a web origin.
+  const client = AIOAuth.createAuthClient({
+    provider: 'openai',
+    clientId: 'YOUR_WEB_CLIENT_ID',
+    redirectUri: location.origin + location.pathname.replace(/[^/]*$/, 'callback.html'),
+    storage: AIOAuth.sessionStorageAdapter(),
+  })
+
+  async function render() {
+    const tokens = await client.getTokens()
+    loginButton.hidden = Boolean(tokens)
+    logoutButton.hidden = !tokens
+    output.textContent = tokens
+      ? JSON.stringify(
+          { account: tokens.email ?? tokens.accountId, expiresAt: tokens.expiresAt, scope: tokens.scope },
+          null,
+          2,
+        )
+      : 'Not signed in.'
+  }
+
+  // Must run from the click itself, or the browser blocks the popup.
+  loginButton.addEventListener('click', async () => {
+    loginButton.disabled = true
+    try {
+      await client.login({ receiver: AIOAuth.popupReceiver() })
+      await render()
+    } catch (error) {
+      output.className = 'error'
+      // `aborted` just means the user closed the window.
+      output.textContent = AIOAuth.isOAuthError(error)
+        ? `${error.code}: ${error.message}`
+        : String(error)
+    } finally {
+      loginButton.disabled = false
+    }
+  })
+
+  logoutButton.addEventListener('click', async () => {
+    await client.logout()
+    await render()
+  })
+
+  render()
+</script>
+
+</body>
+</html>

@@ -1,0 +1,51 @@
+{
+  "name": "@ai-oauth-sdk/browser",
+  "version": "0.1.0",
+  "description": "Browser adapter for ai-oauth-sdk: popup and full-page redirect callback receivers plus web storage.",
+  "keywords": [
+    "oauth",
+    "pkce",
+    "browser",
+    "spa",
+    "ai",
+    "popup",
+    "redirect"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",
+    "directory": "packages/browser"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/core": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

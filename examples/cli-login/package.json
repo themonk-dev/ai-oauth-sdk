@@ -1,0 +1,16 @@
+{
+  "name": "@ai-oauth-sdk-example/cli-login",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal CLI that signs in to an AI provider and prints the token.",
+  "bin": {
+    "ai-login": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/node": "workspace:^"
+  }
+}

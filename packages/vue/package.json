@@ -1,0 +1,54 @@
+{
+  "name": "@ai-oauth-sdk/vue",
+  "version": "0.1.0",
+  "description": "Vue 3 composable for ai-oauth-sdk — sign in with ChatGPT, Claude, Gemini or Grok.",
+  "keywords": [
+    "oauth",
+    "pkce",
+    "vue",
+    "composable",
+    "ai",
+    "chatgpt",
+    "claude"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",
+    "directory": "packages/vue"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/core": "workspace:^"
+  },
+  "peerDependencies": {
+    "vue": ">=3.3"
+  },
+  "devDependencies": {
+    "vue": "^3.5.13"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

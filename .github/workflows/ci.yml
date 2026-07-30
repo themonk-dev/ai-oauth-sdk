@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  # Plain `pull_request`, never `pull_request_target`. The latter runs a fork's
+  # code in the base repository's context with access to secrets, which is the
+  # entry point the May 2026 TanStack compromise used.
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml

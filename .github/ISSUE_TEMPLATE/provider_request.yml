@@ -1,0 +1,57 @@
+name: Provider request
+description: Ask for support for another AI provider
+labels: [provider]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most providers are a single descriptor — see
+        [CONTRIBUTING.md](../../CONTRIBUTING.md#adding-a-provider). PRs welcome.
+
+        **Do not include a client secret**, here or in a PR.
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      placeholder: "Acme AI"
+    validations:
+      required: true
+
+  - type: input
+    id: authorize
+    attributes:
+      label: Authorization endpoint
+    validations:
+      required: false
+
+  - type: input
+    id: token
+    attributes:
+      label: Token endpoint
+    validations:
+      required: false
+
+  - type: dropdown
+    id: flow
+    attributes:
+      label: Which flow does its own CLI use?
+      options:
+        - Authorization code + PKCE, loopback redirect
+        - Authorization code + PKCE, hosted redirect with paste
+        - Device code (RFC 8628)
+        - Something else / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: deviations
+    attributes:
+      label: Known deviations from OAuth 2.0
+      description: Unusual param names, a non-standard token response, no `state` echoed, etc.
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Where these values come from
+      description: Link the vendor's docs or the open-source CLI they're published in.

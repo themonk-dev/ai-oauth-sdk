@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "paths": {
+      "@ai-oauth-sdk/core": ["../core/src/index.ts"],
+      "@ai-oauth-sdk/node": ["../node/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

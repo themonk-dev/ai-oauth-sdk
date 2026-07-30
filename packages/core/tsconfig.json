@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    // Deliberately empty: core must compile with no platform typings at all.
+    // If a `node:` import or a Node global ever creeps into src/, this fails —
+    // which is the whole point, since core also runs in browsers and on Hermes.
+    "types": []
+  },
+  "include": ["src"]
+}

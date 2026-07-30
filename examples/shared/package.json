@@ -1,0 +1,17 @@
+{
+  "name": "@ai-oauth-sdk-example/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bits the browser examples share: a mock OAuth provider served by Vite, and the descriptor pointing at it.",
+  "exports": {
+    "./demo-provider": "./demo-provider.ts",
+    "./vite-plugin": "./mock-provider.ts"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/core": "workspace:^"
+  },
+  "devDependencies": {
+    "vite": "^6.0.7"
+  }
+}

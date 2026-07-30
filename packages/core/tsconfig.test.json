@@ -1,0 +1,10 @@
+{
+  // Tests legitimately use Node — they spin up real HTTP servers to drive the
+  // flows. Keeping them in a separate program lets src/ stay platform-free
+  // (see tsconfig.json) without hobbling the suite.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src", "test"]
+}

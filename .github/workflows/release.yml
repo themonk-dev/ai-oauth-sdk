@@ -1,0 +1,202 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+# Least privilege by default; each job widens only what it actually needs.
+#
+# The shape here is deliberate. Trusted publishing does not remove the npm
+# credential, it makes it mintable on demand — so any code running in a job
+# that holds `id-token: write` can mint one. TanStack had OIDC, 2FA and signed
+# provenance in May 2026 and was still compromised, because attacker code got
+# to run inside the privileged job and every malicious version it pushed
+# carried a perfectly valid attestation.
+#
+# So the untrusted half (install, build, the whole dev toolchain) runs with no
+# credentials at all and hands over a directory of tarballs, and the job that
+# can reach npm installs nothing and runs no project code.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  # Unconsumed changesets mean there are changes not yet versioned, so this run
+  # opens a version PR. None means main already carries the versions to ship.
+  # The two paths below are mutually exclusive.
+  triage:
+    runs-on: ubuntu-latest
+    outputs:
+      pending: ${{ steps.count.outputs.pending }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: count
+        run: |
+          pending=$(find .changeset -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
+          echo "pending=$pending" >> "$GITHUB_OUTPUT"
+          echo "$pending unconsumed changeset(s)."
+
+  # Opens the "Version Packages" PR and nothing else. Note the absence of
+  # `id-token`: Changesets and every dev dependency execute here, and none of
+  # them should be able to reach the registry.
+  version:
+    needs: [test, triage]
+    if: needs.triage.outputs.pending != '0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # v1 input spelling. The action renamed these to `version-script` /
+      # `commit-message` / `pr-title` after v1, so a major bump that misses
+      # that would leave it opening nothing.
+      - uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: pnpm changeset version
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The untrusted half. Runs the full toolchain with no credentials of any
+  # kind, and no cache — a restored cache is attacker-writable state, and
+  # poisoning one is how the TanStack payload reached the runner.
+  build:
+    needs: [test, triage]
+    if: needs.triage.outputs.pending == '0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm build
+
+      # `pnpm pack` rewrites `workspace:^` into a real semver range. `npm pack`
+      # does not, and would publish a manifest nobody can install.
+      - name: Pack every publishable package
+        run: |
+          mkdir -p tarballs
+          for dir in packages/*/; do
+            if [ "$(node -p "require('./${dir}package.json').private === true")" = "true" ]; then
+              echo "skipping private package in ${dir}"
+              continue
+            fi
+            (cd "$dir" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/tarballs")
+          done
+          ls -l tarballs
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tarballs
+          path: tarballs/
+          retention-days: 7
+
+  # The only job that can mint an npm credential. It installs nothing, runs no
+  # project code and no lifecycle scripts — it publishes bytes that were built
+  # where no credential existed.
+  #
+  # Configure the `release` environment with required reviewers so a human
+  # approves every publish. That is the control that survives a compromised
+  # dependency: the attacker would need a maintainer to click approve.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write # push the version tag and create the release
+      id-token: write # OIDC exchange for npm trusted publishing
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # npm >= 11.5.1 performs the OIDC exchange; Node 24 ships a newer one.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tarballs
+          path: tarballs
+
+      # Once trusted publishing is configured for all ten packages on npmjs.com,
+      # drop NODE_AUTH_TOKEN and delete the NPM_TOKEN secret — npm will mint a
+      # short-lived credential from the OIDC token instead.
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: |
+          published=0
+          for tarball in tarballs/*.tgz; do
+            manifest=$(tar -xzOf "$tarball" package/package.json)
+            name=$(printf '%s' "$manifest" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).name")
+            version=$(printf '%s' "$manifest" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+
+            # Re-running a release must not fail on what already shipped.
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already on the registry; skipping."
+              continue
+            fi
+
+            echo "publishing $name@$version"
+            npm publish "$tarball" --access public --ignore-scripts
+            published=$((published + 1))
+          done
+          echo "published=$published" >> "$GITHUB_ENV"
+
+      # Changesets would normally tag each package and cut the releases itself,
+      # but it no longer runs in this job — so do both here. One repo-level tag
+      # rather than ten per-package ones, since `fixed` holds every package at
+      # the same version.
+      - name: Tag and release
+        if: env.published != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./packages/core/package.json').version")
+
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already tagged; nothing to do."
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "v$version" -m "v$version"
+          git push origin "v$version"
+
+          # The newest section of the changelog, i.e. everything up to the
+          # heading for the previous version.
+          awk '/^## /{if (seen++) exit} seen' packages/core/CHANGELOG.md > release-notes.md
+          gh release create "v$version" tarballs/*.tgz \
+            --title "v$version" \
+            --notes-file release-notes.md

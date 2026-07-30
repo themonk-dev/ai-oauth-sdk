@@ -1,0 +1,43 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "jsx": "react-jsx",
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@ai-oauth-sdk/core": [
+        "../core/src/index.ts"
+      ],
+      "@ai-oauth-sdk/node": [
+        "../node/src/index.ts"
+      ],
+      "@ai-oauth-sdk/browser": [
+        "../browser/src/index.ts"
+      ],
+      "@ai-oauth-sdk/react": [
+        "../react/src/index.ts"
+      ],
+      "@ai-oauth-sdk/react-native": [
+        "../react-native/src/index.ts"
+      ],
+      "@ai-oauth-sdk/vue": [
+        "../vue/src/index.ts"
+      ],
+      "@ai-oauth-sdk/svelte": [
+        "../svelte/src/index.ts"
+      ],
+      "@ai-oauth-sdk/solid": [
+        "../solid/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "src"
+  ]
+}

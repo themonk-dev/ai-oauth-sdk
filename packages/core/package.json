@@ -1,0 +1,54 @@
+{
+  "name": "@ai-oauth-sdk/core",
+  "version": "0.1.0",
+  "description": "Framework-agnostic OAuth 2.0 + PKCE core for AI provider sign-in (ChatGPT, Claude, Gemini, Grok). Zero dependencies, runs anywhere.",
+  "keywords": [
+    "oauth",
+    "oauth2",
+    "pkce",
+    "ai",
+    "chatgpt",
+    "claude",
+    "gemini",
+    "grok",
+    "cli",
+    "authentication"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",
+    "directory": "packages/core"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

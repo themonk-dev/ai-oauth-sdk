@@ -1,0 +1,66 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a real token, client secret, or authorization code.**
+        Redact them — `sk-ant-oat01-REDACTED` is enough for us to see the shape.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "@ai-oauth-sdk/core 0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options:
+        - Node
+        - Bun
+        - Deno
+        - Browser
+        - React Native / Expo
+        - CDN (script tag)
+        - CLI
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - openai
+        - anthropic
+        - google
+        - xai
+        - github-copilot
+        - openrouter
+        - qwen
+        - microsoft
+        - custom (defineProvider / providerFromDiscovery)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead. Include the OAuthError `code` if there was one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: The smallest code that shows the problem.
+      render: ts
+    validations:
+      required: true

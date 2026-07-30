@@ -1,0 +1,153 @@
+{
+  "name": "ai-oauth-sdk",
+  "version": "0.1.0",
+  "description": "Minimal, provider-agnostic OAuth for AI CLIs and apps — sign in with ChatGPT, Claude, Gemini or Grok and get a token back. Works in Node, browsers, React, React Native, and via CDN.",
+  "keywords": [
+    "oauth",
+    "oauth2",
+    "pkce",
+    "ai",
+    "chatgpt",
+    "openai",
+    "claude",
+    "anthropic",
+    "gemini",
+    "grok",
+    "cli",
+    "login",
+    "authentication",
+    "sign-in-with-chatgpt"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/themonk-dev/ai-oauth-sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",
+    "directory": "packages/ai-oauth-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/node.cjs",
+  "module": "./dist/node.js",
+  "types": "./dist/node.d.ts",
+  "browser": "./dist/browser.js",
+  "unpkg": "./dist/ai-oauth-sdk.global.js",
+  "jsdelivr": "./dist/ai-oauth-sdk.global.js",
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./dist/browser.d.ts",
+        "import": "./dist/browser.js",
+        "require": "./dist/browser.cjs"
+      },
+      "node": {
+        "types": "./dist/node.d.ts",
+        "import": "./dist/node.js",
+        "require": "./dist/node.cjs"
+      },
+      "react-native": {
+        "types": "./dist/native.d.ts",
+        "import": "./dist/native.js",
+        "require": "./dist/native.cjs"
+      },
+      "default": {
+        "types": "./dist/browser.d.ts",
+        "import": "./dist/browser.js",
+        "require": "./dist/browser.cjs"
+      }
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js",
+      "require": "./dist/core.cjs"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
+      "require": "./dist/node.cjs"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js",
+      "require": "./dist/browser.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
+    },
+    "./react-native": {
+      "types": "./dist/native.d.ts",
+      "import": "./dist/native.js",
+      "require": "./dist/native.cjs"
+    },
+    "./package.json": "./package.json",
+    "./vue": {
+      "types": "./dist/vue.d.ts",
+      "import": "./dist/vue.js",
+      "require": "./dist/vue.cjs"
+    },
+    "./svelte": {
+      "types": "./dist/svelte.d.ts",
+      "import": "./dist/svelte.js",
+      "require": "./dist/svelte.cjs"
+    },
+    "./solid": {
+      "types": "./dist/solid.d.ts",
+      "import": "./dist/solid.js",
+      "require": "./dist/solid.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/browser": "workspace:^",
+    "@ai-oauth-sdk/core": "workspace:^",
+    "@ai-oauth-sdk/node": "workspace:^",
+    "@ai-oauth-sdk/react": "workspace:^",
+    "@ai-oauth-sdk/react-native": "workspace:^",
+    "@ai-oauth-sdk/solid": "workspace:^",
+    "@ai-oauth-sdk/svelte": "workspace:^",
+    "@ai-oauth-sdk/vue": "workspace:^"
+  },
+  "peerDependencies": {
+    "react": ">=17",
+    "vue": ">=3.3",
+    "svelte": ">=4",
+    "solid-js": ">=1.8"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    },
+    "svelte": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "react": "^18.3.1"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
