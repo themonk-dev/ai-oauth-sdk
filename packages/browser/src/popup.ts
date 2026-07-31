@@ -25,17 +25,23 @@ const MESSAGE_TYPE = 'aioauth:callback'
  * Keeps the host page alive — no navigation, no state to rehydrate — which
  * makes it the nicest option for an SPA. Your redirect page must call
  * {@link postCallbackToOpener}; the popup is same-origin with the opener at
- * that point, so it can hand the code back over `postMessage`.
+ * that point, so it can hand the code back over `postMessage`. Messages from
+ * any other origin are ignored — by the time the popup posts it is same-origin,
+ * so anything else is not ours.
+ *
+ * The `window` guard runs before anything touches `window`, or it would never
+ * run at all: deriving the default `redirectUri` first would throw a bare
+ * `ReferenceError`. A closed popup is polled for because it is the only signal
+ * the browser gives that the user gave up.
  */
 export function popupReceiver(options: PopupReceiverOptions = {}): CallbackReceiver {
   return {
     id: 'popup',
     async start(context: ReceiverContext) {
-      // Check before touching `window`, or the guard never runs — the default
-      // `redirectUri` would already have thrown a bare ReferenceError.
       if (typeof window === 'undefined') {
         throw new OAuthError('unsupported_runtime', 'popupReceiver requires a browser window.')
       }
+
       const redirectUri = options.redirectUri ?? window.location.href.split('#')[0]!
 
       let popup: Window | null = null
@@ -50,12 +56,12 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
       let closedPoller: ReturnType<typeof setInterval> | undefined
 
       const onMessage = (event: MessageEvent) => {
-        // Only trust messages from our own origin; the popup is same-origin by
-        // the time it posts, so anything else is not ours.
         if (event.origin !== window.location.origin) {
           return
         }
+
         const data = event.data as { type?: string; payload?: string } | null
+
         if (!data || data.type !== MESSAGE_TYPE || typeof data.payload !== 'string') {
           return
         }
@@ -71,9 +77,11 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
 
       const cleanup = () => {
         window.removeEventListener('message', onMessage)
+
         if (closedPoller) {
           clearInterval(closedPoller)
         }
+
         context.signal?.removeEventListener('abort', onAbort)
       }
 
@@ -88,7 +96,6 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
         async present(url) {
           const width = options.width ?? 520
           const height = options.height ?? 680
-          // Centre on the window the user is actually looking at, not screen 0.
           const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2)
           const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2)
 
@@ -107,7 +114,6 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
             )
           }
 
-          // A closed popup is the only signal we get that the user gave up.
           closedPoller = setInterval(() => {
             if (popup?.closed) {
               clearInterval(closedPoller)
@@ -120,6 +126,7 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
         wait: () => callbackPromise,
         async close() {
           cleanup()
+
           if (popup && !popup.closed) {
             popup.close()
           }
@@ -143,7 +150,9 @@ export function postCallbackToOpener(payload: string = window.location.search): 
   if (!window.opener) {
     return false
   }
+
   window.opener.postMessage({ type: MESSAGE_TYPE, payload }, window.location.origin)
   window.close()
+
   return true
 }

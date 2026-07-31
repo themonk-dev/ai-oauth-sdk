@@ -36,12 +36,16 @@ export interface UseAuthResult extends AuthState {
  * The store owns the state machine; this hook only bridges it to React's
  * render cycle. Subscription-based rather than `useSyncExternalStore` so the
  * package still supports React 17.
+ *
+ * The store's identity depends only on what changes the client's behaviour;
+ * rebuilding it every render would drop in-flight flows and the token cache.
+ * Callbacks are read through a ref so they stay current without joining that
+ * identity. `subscribe` emits immediately, so the mount effect also resyncs
+ * state after a remount.
  */
 export function useAuth(options: UseAuthOptions): UseAuthResult {
   const { receiver, restoreOnMount = true, onSuccess, onError, ...clientOptions } = options
 
-  // Identity depends only on what changes the client's behaviour; rebuilding it
-  // every render would drop in-flight flows and the token cache.
   const clientKey = JSON.stringify({
     provider:
       typeof clientOptions.provider === 'string' ? clientOptions.provider : clientOptions.provider.id,
@@ -51,7 +55,6 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
     accountKey: clientOptions.accountKey,
   })
 
-  // Read the latest callbacks without making them part of the store's identity.
   const latest = useRef({ clientOptions, receiver, onSuccess, onError })
   latest.current = { clientOptions, receiver, onSuccess, onError }
 
@@ -70,11 +73,12 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
   const [state, setState] = useState<AuthState>(() => store.getState())
 
   useEffect(() => {
-    // subscribe() emits immediately, so this also syncs state after a remount.
     const unsubscribe = store.subscribe(setState)
+
     if (restoreOnMount) {
       void store.restore()
     }
+
     return () => {
       unsubscribe()
       store.cancel()

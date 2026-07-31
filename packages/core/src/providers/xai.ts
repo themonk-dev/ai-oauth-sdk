@@ -32,12 +32,15 @@ export const xai = defineProvider({
   tokenRequest: { style: 'form', includeClientIdInBody: true },
   experimental: true,
   note:
-    'xAI does not publish a public client id. Supply your own via ' +
-    '`createAuthClient({ provider: "xai", clientId })`.',
+    'Supply a clientId — publicClientIds.xai is the one grok-cli uses. xAI ' +
+    'rejects clients it has not allowlisted and offers no self-service ' +
+    'registration for a desktop CLI, so that id is effectively the only one ' +
+    'that works. Supports both loopback and the device flow.',
   enrichTokens(raw, tokens: TokenSet) {
     const payload = decodeJwtPayload(tokens.idToken ?? String(raw['id_token'] ?? ''))
     const accountId = getStringClaim(payload, 'sub')
     const email = getStringClaim(payload, 'email')
+
     return { ...(accountId ? { accountId } : {}), ...(email ? { email } : {}) }
   },
 })

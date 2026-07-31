@@ -9,16 +9,17 @@
  * The practical risk here is low — an attacker also needs a usable `code`, and
  * the pending record is single-use — but the comparison is on the security
  * boundary and constant time costs nothing at these lengths.
+ *
+ * Comparison runs over a fixed span so a length difference does not change the
+ * work done, with the length check folded into the accumulator rather than
+ * returned early. Reads past the end substitute `0`, since `charCodeAt` would
+ * otherwise return `NaN` and poison the XOR.
  */
 export function timingSafeEqual(a: string, b: string): boolean {
-  // Compare over a fixed span so a length difference does not change the work
-  // done. The length check is folded into the accumulator rather than returned
-  // early.
   const length = Math.max(a.length, b.length)
   let difference = a.length ^ b.length
 
   for (let i = 0; i < length; i++) {
-    // charCodeAt past the end gives NaN, which would poison the XOR — use 0.
     const left = i < a.length ? a.charCodeAt(i) : 0
     const right = i < b.length ? b.charCodeAt(i) : 0
     difference |= left ^ right

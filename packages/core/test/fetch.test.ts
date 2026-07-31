@@ -35,6 +35,7 @@ async function signedInClient(target: FakeAuthServer, overrides: Partial<Provide
   const response = await fetch(authorization.url, { redirect: 'manual' })
   const params = new URL(response.headers.get('location')!).searchParams
   await client.completeAuthorization({ code: params.get('code')!, state: params.get('state')! })
+
   return client
 }
 
@@ -60,8 +61,8 @@ describe('createAuthenticatedFetch', () => {
     const client = await signedInClient(server)
     const api = createAuthenticatedFetch(client)
 
-    await api('echo') // no leading slash
-    await api('/echo') // leading slash
+    await api('echo')
+    await api('/echo')
     expect(server.apiCount).toBe(2)
   })
 
@@ -137,9 +138,22 @@ describe('createAuthenticatedFetch', () => {
     expect(server.apiRequests[0]?.['x-custom']).toBe('from-caller')
   })
 
-  it('lets an explicit Authorization header win', async () => {
+  // Deliberately unlike the other headers: an SDK that wraps us sets
+  // Authorization from its own `apiKey` before calling, and deferring to it
+  // shipped that placeholder while the real token was refreshed and dropped.
+  // The Vercel AI SDK sends the header even with `apiKey` empty or omitted.
+  it('replaces an Authorization header the caller already set', async () => {
     const client = await signedInClient(server)
     const api = createAuthenticatedFetch(client)
+    await api('/echo', { headers: { Authorization: 'Bearer sdk-placeholder' } })
+
+    expect(server.apiRequests[0]?.['authorization']).not.toBe('Bearer sdk-placeholder')
+    expect(server.apiRequests[0]?.['authorization']).toContain(server.currentAccessToken!)
+  })
+
+  it('defers to the caller when respectCallerAuthorization is set', async () => {
+    const client = await signedInClient(server)
+    const api = createAuthenticatedFetch(client, { respectCallerAuthorization: true })
     await api('/echo', { headers: { Authorization: 'Bearer caller-supplied' } })
 
     expect(server.apiRequests[0]?.['authorization']).toBe('Bearer caller-supplied')

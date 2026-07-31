@@ -43,6 +43,10 @@ export interface SolidAuth {
  *   <button onClick={() => auth.logout()}>Sign out</button>
  * </Show>
  * ```
+ *
+ * The signals do not need `equals: false`: the store already suppresses no-op
+ * notifications, and a `TokenSet` is replaced wholesale rather than mutated.
+ * `onCleanup` is a no-op outside a reactive root, which is correct there.
  */
 export function createAuth(options: CreateAuthOptions): SolidAuth {
   const { receiver, restoreOnMount = true, onSuccess, onError, ...clientOptions } = options
@@ -55,8 +59,6 @@ export function createAuth(options: CreateAuthOptions): SolidAuth {
   })
 
   const initial = store.getState()
-  // `equals: false` is unnecessary here: the store already suppresses no-op
-  // notifications, and TokenSet is replaced wholesale rather than mutated.
   const [tokens, setTokens] = createSignal<TokenSet | undefined>(initial.tokens)
   const [isLoading, setIsLoading] = createSignal(initial.isLoading)
   const [error, setError] = createSignal<Error | undefined>(initial.error)
@@ -68,11 +70,11 @@ export function createAuth(options: CreateAuthOptions): SolidAuth {
   }
 
   const unsubscribe = store.subscribe(apply)
+
   if (restoreOnMount) {
     void store.restore()
   }
 
-  // No-op outside a reactive root, which is the correct behaviour there.
   onCleanup(() => {
     unsubscribe()
     store.destroy()

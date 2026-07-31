@@ -30,11 +30,12 @@ export function openBrowser(url: string): void {
 
   let command: string
   let args: string[]
+
   if (platform === 'darwin') {
     command = 'open'
     args = [url]
   } else if (platform === 'win32') {
-    // `start` is a cmd builtin; the empty string is the (required) window title.
+    /* `start` is a cmd builtin; the empty string is the required window title. */
     command = 'cmd'
     args = ['/c', 'start', '', escapeForCmd(url)]
   } else {
@@ -44,8 +45,6 @@ export function openBrowser(url: string): void {
 
   try {
     const child = spawn(command, args, { stdio: 'ignore', detached: true })
-    // Never let a failed launcher crash the host process — the caller always
-    // prints the URL as a fallback.
     child.on('error', () => {})
     child.unref()
   } catch {
@@ -58,6 +57,6 @@ export function canOpenBrowser(): boolean {
   if (process.platform === 'darwin' || process.platform === 'win32') {
     return true
   }
-  // On Linux, no DISPLAY/WAYLAND_DISPLAY almost always means no browser.
+
   return Boolean(process.env['DISPLAY'] ?? process.env['WAYLAND_DISPLAY'])
 }

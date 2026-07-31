@@ -54,6 +54,7 @@ describe('loopbackReceiver', () => {
 
   it('binds an ephemeral port and reports it in the redirect URI', async () => {
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+
     try {
       const url = new URL(started.redirectUri)
       expect(url.hostname).toBe('localhost')
@@ -69,6 +70,7 @@ describe('loopbackReceiver', () => {
       redirect: { mode: 'loopback', loopbackPort: 0, loopbackPath: '/auth/callback' },
     })
     const started = await loopbackReceiver().start({ provider })
+
     try {
       expect(new URL(started.redirectUri).pathname).toBe('/auth/callback')
     } finally {
@@ -99,6 +101,7 @@ describe('loopbackReceiver', () => {
 
   it('404s paths other than the callback path', async () => {
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+
     try {
       const base = new URL(started.redirectUri)
       const response = await fetch(`${base.origin}/some/other/path`)
@@ -111,6 +114,7 @@ describe('loopbackReceiver', () => {
   it('rejects when the provider reports a denial', async () => {
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
     const waiting = started.wait()
+
     try {
       const response = await fetch(`${started.redirectUri}?error=access_denied&error_description=nope`)
       expect(response.status).toBe(400)
@@ -125,6 +129,7 @@ describe('loopbackReceiver', () => {
 
   it('refuses methods a browser navigation would never use', async () => {
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+
     try {
       for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS']) {
         const response = await fetch(started.redirectUri, { method })
@@ -139,6 +144,7 @@ describe('loopbackReceiver', () => {
 
   it('tells caches and referrers not to keep the callback URL', async () => {
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+
     try {
       const response = await fetch(`${started.redirectUri}?code=abc&state=xyz`)
       // The URL carries the authorization code, so it must not be cached or
@@ -154,6 +160,7 @@ describe('loopbackReceiver', () => {
   it('reports a port collision clearly', async () => {
     const provider = testProvider(server.url)
     const first = await loopbackReceiver({ port: 0 }).start({ provider })
+
     try {
       const port = Number(new URL(first.redirectUri).port)
       await expect(loopbackReceiver({ port }).start({ provider })).rejects.toMatchObject({

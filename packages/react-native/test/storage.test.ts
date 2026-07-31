@@ -5,6 +5,7 @@ import { asyncStorageAdapter, secureStoreAdapter } from '../src/storage.js'
 /** Records the keys SecureStore is actually asked for. */
 function fakeSecureStore() {
   const map = new Map<string, string>()
+
   return {
     store: {
       async getItemAsync(key: string) {
@@ -80,6 +81,7 @@ describe('secureStoreAdapter key encoding', () => {
       {
         async getItemAsync(_key, options) {
           seen.push(options)
+
           return null
         },
         async setItemAsync(_key, _value, options) {

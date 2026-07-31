@@ -34,7 +34,7 @@ export interface LoopbackReceiverOptions {
   onAuthorizationUrl?: (url: string) => void
 }
 
-function page(title: string, message: string, accent: string): string {
+function page(title: string, message: string, accent: string, glyph: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -56,7 +56,7 @@ function page(title: string, message: string, accent: string): string {
 </head>
 <body>
   <div class="card">
-    <div class="dot">${accent === '#16a34a' ? '&#10003;' : '&#33;'}</div>
+    <div class="dot">${glyph}</div>
     <h1>${title}</h1>
     <p>${message}</p>
   </div>
@@ -68,10 +68,11 @@ const DEFAULT_SUCCESS_HTML = page(
   'Signed in',
   'You can close this tab and return to your terminal.',
   '#16a34a',
+  '&#10003;',
 )
 
 const defaultFailureHtml = (error: string) =>
-  page('Sign-in failed', escapeHtml(error), '#dc2626')
+  page('Sign-in failed', escapeHtml(error), '#dc2626', '&#33;')
 
 function escapeHtml(value: string): string {
   return value
@@ -100,6 +101,7 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
   return new Promise((resolve, reject) => {
     const onError = (error: NodeJS.ErrnoException) => {
       server.removeListener('listening', onListening)
+
       if (error.code === 'EADDRINUSE') {
         reject(
           new OAuthError(
@@ -110,8 +112,10 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
             { cause: error },
           ),
         )
+
         return
       }
+
       reject(error)
     }
     const onListening = () => {
@@ -130,7 +134,16 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
  *
  * This is how every AI CLI does desktop sign-in: bind 127.0.0.1, send the user
  * to the provider, and let the browser redirect back into the process. The
- * server handles exactly one callback and then shuts down.
+ * server handles exactly one callback and then shuts down, closing idle
+ * keep-alive sockets that would otherwise hold it open.
+ *
+ * Only `GET` and `HEAD` are answered. The callback arrives as a browser
+ * navigation, so nothing else is legitimate, and any local process can reach a
+ * loopback port — a narrower surface is one less thing to reason about.
+ *
+ * The callback promise is given a no-op `catch` at construction because it is
+ * consumed only in `wait()`; without it, a callback that fails before anyone
+ * calls `wait()` would surface as an unhandled rejection.
  */
 export function loopbackReceiver(options: LoopbackReceiverOptions = {}): CallbackReceiver {
   return {
@@ -147,33 +160,30 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         resolveCallback = resolve
         rejectCallback = reject
       })
-      // The promise is consumed only in `wait()`; without this, a callback that
-      // errors before `wait()` is called would surface as an unhandled rejection.
       callbackPromise.catch(() => {})
 
       const server = createServer((request: IncomingMessage, response: ServerResponse) => {
-        // The callback arrives as a browser navigation, so nothing else is
-        // legitimate. Any local process can reach a loopback port, and a
-        // narrower surface is one less thing to reason about.
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           response.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'text/plain' })
           response.end('Method not allowed')
+
           return
         }
 
         const url = new URL(request.url ?? '/', `http://${bindHost}`)
+
         if (url.pathname !== path) {
           response.writeHead(404, { ...securityHeaders, 'Content-Type': 'text/plain' })
           response.end('Not found')
+
           return
         }
 
         let result: CallbackResult
+
         try {
           result = readCallback(provider, url.search)
         } catch (error) {
-          // The page shows the provider's own wording where there is one; the
-          // full error still goes to the caller.
           const detail =
             error instanceof OAuthError
               ? (error.providerErrorDescription ?? error.providerError ?? error.message)
@@ -181,6 +191,7 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
           response.end((options.failureHtml ?? defaultFailureHtml)(detail))
           rejectCallback(error)
+
           return
         }
 
@@ -194,7 +205,6 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       const close = async (): Promise<void> => {
         await new Promise<void>((resolve) => {
           server.close(() => resolve())
-          // Idle keep-alive sockets would otherwise hold the server open.
           server.closeAllConnections?.()
         })
       }
@@ -218,6 +228,7 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         redirectUri: buildLoopbackRedirectUri(redirectProvider, boundPort),
         async present(url) {
           options.onAuthorizationUrl?.(url)
+
           if (context.openUrl) {
             await context.openUrl(url)
           } else if (options.openBrowser !== false) {

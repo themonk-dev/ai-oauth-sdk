@@ -12,7 +12,7 @@
 <a href="LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/license/themonk-dev/ai-oauth-sdk.svg?variant=ghost&amp;size=xs&amp;mode=dark"><img alt="License" src="https://www.shieldcn.dev/github/license/themonk-dev/ai-oauth-sdk.svg?variant=ghost&amp;size=xs&amp;mode=light"></picture></a>
 </p>
 
-[Quickstart](#quickstart) · [Providers](#providers) · [Recipes](docs/recipes.md) · [Security](SECURITY.md) · [Packages](#packages)
+[Quickstart](#quickstart) · [Providers](#providers) · [Credentials](docs/credentials.md) · [Recipes](docs/recipes.md) · [Security](SECURITY.md) · [Disclaimer](DISCLAIMER.md)
 
 </div>
 
@@ -302,12 +302,12 @@ createAuthClient({ provider: 'openai', clientId: 'my-registered-client' })  // o
 | Provider | Flow | Client id |
 |---|---|---|
 | `openai` | loopback `:1455` | `publicClientIds.openai` |
-| `anthropic` | hosted redirect + paste | `publicClientIds.anthropic` |
+| `anthropic` | loopback, any port | `publicClientIds.anthropic` |
 | `github-copilot` | device code | `publicClientIds['github-copilot']` |
 | `qwen` | device code | `publicClientIds.qwen` *(experimental)* |
 | `openrouter` | loopback | none — identified by callback URL |
-| `google` | loopback, any port | **yours** — needs a `clientSecret` too |
-| `xai` | loopback `:56121` | **yours** *(experimental)* |
+| `google` | loopback, any port | `publicClientIds.google` + `publicClientSecrets.google` |
+| `xai` | loopback `:56121` | `publicClientIds.xai` *(experimental)* |
 
 Plus `microsoft({ clientId, tenant })` for Entra ID — a factory rather than a constant
 because its endpoints are tenant-scoped.
@@ -317,6 +317,15 @@ because its endpoints are tenant-scoped.
 > vendors ship in their own binaries. But using one means *presenting your application as
 > that CLI*, which is why it's an explicit argument rather than a default. Check the
 > provider's terms before shipping it in a product.
+
+> [!WARNING]
+> **This is an unofficial project, and none of these providers supports third-party
+> OAuth clients.** Everything here was derived from the vendors' own open-source CLIs and
+> the RFCs they implement, so endpoints and client ids can change or stop working at any
+> time. Read the [**disclaimer**](DISCLAIMER.md) before shipping this in a product.
+
+→ [**docs/credentials.md**](docs/credentials.md) for the raw values, how to pass them
+from the SDK or the CLI, and how to register your own instead.
 
 Any other OAuth 2.0 provider works via `defineProvider()`, or
 `providerFromDiscovery()` to build one from an OIDC document so an endpoint move needs
@@ -360,15 +369,18 @@ pnpm install
 pnpm verify      # lint && typecheck && build && test && exports check
 ```
 
-CI runs the gate on Node 22, 24 and 26. **402 tests** — the flow tests drive a real
+CI runs the gate on Node 22, 24 and 26. **434 tests** — the flow tests drive a real
 OAuth server that validates PKCE by recomputing the S256 challenge, so a broken verifier
-fails the suite rather than only failing in production. [`examples/`](examples) has
-runnable React, Vue, Svelte and Solid apps, a CLI and a server-side callback handler.
-server-side callback handler, and a CDN page.
+fails the suite rather than only failing in production. [`examples/`](examples) has a
+login CLI, an API caller, a server-side callback handler and a CDN page — every one of
+them against a real provider.
 
 <div align="center">
 <br />
 
-**MIT** · [Contributing](CONTRIBUTING.md) · [Recipes](docs/recipes.md) · [Security](SECURITY.md)
+**MIT** · [Contributing](CONTRIBUTING.md) · [Recipes](docs/recipes.md) · [Security](SECURITY.md) · [Disclaimer](DISCLAIMER.md)
+
+<sub>An independent project. Not affiliated with or endorsed by OpenAI, Anthropic, Google,
+GitHub, Microsoft, xAI, Alibaba or OpenRouter. All trademarks belong to their owners.</sub>
 
 </div>

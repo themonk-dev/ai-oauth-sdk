@@ -27,14 +27,19 @@ function encodeComponent(value: string): string {
     .replace(/[!'()~]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
 }
 
+/**
+ * Reverses {@link encodeComponent}.
+ *
+ * `+` means space in form encoding, which `decodeURIComponent` does not know.
+ * A stray `%` is not worth throwing over — a provider that sends one still
+ * deserves to have the rest of its callback read.
+ */
 function decodeComponent(value: string): string {
-  // `+` means space in form encoding, which decodeURIComponent does not know.
   const spaced = value.replace(/\+/g, ' ')
+
   try {
     return decodeURIComponent(spaced)
   } catch {
-    // A stray `%` is not worth throwing over — a provider that sends one still
-    // deserves to have the rest of its callback read.
     return spaced
   }
 }
@@ -42,9 +47,11 @@ function decodeComponent(value: string): string {
 /** Serialises params as `a=1&b=2`, ready for a query string or a form body. */
 export function encodeQuery(params: Record<string, string>): string {
   const parts: string[] = []
+
   for (const [key, value] of Object.entries(params)) {
     parts.push(`${encodeComponent(key)}=${encodeComponent(value)}`)
   }
+
   return parts.join('&')
 }
 
@@ -54,15 +61,18 @@ export function encodeQuery(params: Record<string, string>): string {
  */
 export function parseQuery(query: string): Record<string, string> {
   const result: Record<string, string> = {}
+
   for (const pair of query.split('&')) {
     if (!pair) {
       continue
     }
+
     const equals = pair.indexOf('=')
     const rawKey = equals === -1 ? pair : pair.slice(0, equals)
     const rawValue = equals === -1 ? '' : pair.slice(equals + 1)
     result[decodeComponent(rawKey)] = decodeComponent(rawValue)
   }
+
   return result
 }
 
@@ -80,5 +90,6 @@ export function appendQuery(url: string, params: Record<string, string>): string
   const existing = queryAt === -1 ? '' : withoutFragment.slice(queryAt + 1)
 
   const query = encodeQuery({ ...parseQuery(existing), ...params })
+
   return query ? `${base}?${query}${fragment}` : `${base}${fragment}`
 }

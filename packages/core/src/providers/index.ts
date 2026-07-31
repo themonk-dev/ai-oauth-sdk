@@ -14,7 +14,7 @@ export { anthropic, githubCopilot, google, openai, openrouter, qwen, xai }
 export { exchangeForCopilotToken } from './github-copilot.js'
 export type { CopilotApiToken } from './github-copilot.js'
 export { microsoft } from './microsoft.js'
-export { publicClientIds } from './public-client-ids.js'
+export { publicClientIds, publicClientSecrets } from './public-client-ids.js'
 export type { PublicClientIdProvider } from './public-client-ids.js'
 export type { MicrosoftProviderOptions } from './microsoft.js'
 
@@ -52,10 +52,12 @@ export function resolveProvider(
   overrides: Partial<ProviderConfig> = {},
 ): ProviderConfig {
   let base: ProviderConfig
+
   if (isProviderConfig(provider)) {
     base = provider
   } else {
     const found = (providers as Record<string, ProviderConfig | undefined>)[provider]
+
     if (!found) {
       throw new OAuthError(
         'unknown_provider',
@@ -63,6 +65,7 @@ export function resolveProvider(
           'Pass a descriptor from `defineProvider()` to use a custom one.',
       )
     }
+
     base = found
   }
 
@@ -73,9 +76,11 @@ export function resolveProvider(
     extraAuthParams: { ...base.extraAuthParams, ...overrides.extraAuthParams },
     tokenRequest: { ...base.tokenRequest, ...overrides.tokenRequest },
   }
+
   if (overrides.scopes?.length) {
     merged.scopes = overrides.scopes
   }
+
   return merged
 }
 
@@ -90,12 +95,14 @@ interface DiscoveryDocument {
  * Builds a descriptor from an OIDC discovery document, so providers that move
  * their endpoints (or ones this library has never heard of) work without a
  * release. Pass the issuer URL, not the `.well-known` path.
+ *
+ * `authorizationUrl`, `tokenUrl` and `scopes` are optional in `input` because
+ * the discovery document supplies them. They are re-declared rather than
+ * intersected with `Partial<Pick<…>>`, which would not work — a required
+ * property intersected with an optional one stays required.
  */
 export async function providerFromDiscovery(
   issuer: string,
-  // These three are optional here because the discovery document supplies them.
-  // Intersecting with `Partial<Pick<…>>` would not work: a required property
-  // intersected with an optional one stays required.
   input: Omit<ProviderInput, 'authorizationUrl' | 'tokenUrl' | 'scopes'> & {
     authorizationUrl?: string
     tokenUrl?: string
@@ -105,6 +112,7 @@ export async function providerFromDiscovery(
 ): Promise<ProviderConfig> {
   const url = `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`
   const response = await fetchImpl(url)
+
   if (!response.ok) {
     throw new OAuthError(
       'configuration_error',
@@ -112,9 +120,11 @@ export async function providerFromDiscovery(
       { status: response.status },
     )
   }
+
   const document = (await response.json()) as DiscoveryDocument
   const authorizationUrl = input.authorizationUrl ?? document.authorization_endpoint
   const tokenUrl = input.tokenUrl ?? document.token_endpoint
+
   if (!authorizationUrl || !tokenUrl) {
     throw new OAuthError(
       'configuration_error',

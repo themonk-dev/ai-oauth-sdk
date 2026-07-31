@@ -51,6 +51,7 @@ export function table(headers: string[], rows: string[][]): void {
   if (rows.length === 0) {
     return
   }
+
   const widths = headers.map((header, column) =>
     Math.max(header.length, ...rows.map((row) => (row[column] ?? '').length)),
   )
@@ -59,6 +60,7 @@ export function table(headers: string[], rows: string[][]): void {
 
   info(bold(line(headers)))
   info(dim(widths.map((width) => '─'.repeat(width)).join('  ')))
+
   for (const row of rows) {
     info(line(row))
   }
@@ -68,18 +70,24 @@ export function formatExpiry(expiresAt: number | undefined): string {
   if (expiresAt === undefined) {
     return 'never'
   }
+
   const remaining = expiresAt - Date.now()
+
   if (remaining <= 0) {
     return 'expired'
   }
 
   const minutes = Math.floor(remaining / 60_000)
+
   if (minutes < 60) {
     return `${minutes}m`
   }
+
   const hours = Math.floor(minutes / 60)
+
   if (hours < 24) {
     return `${hours}h ${minutes % 60}m`
   }
+
   return `${Math.floor(hours / 24)}d ${hours % 24}h`
 }

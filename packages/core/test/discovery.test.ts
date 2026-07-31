@@ -14,12 +14,15 @@ async function startDiscoveryServer(document: unknown, status = 200): Promise<st
     if (request.url === '/.well-known/openid-configuration') {
       response.writeHead(status, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify(document))
+
       return
     }
+
     response.writeHead(404)
     response.end()
   })
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+
   return `http://127.0.0.1:${(server!.address() as AddressInfo).port}`
 }
 
@@ -223,6 +226,7 @@ describe('manualReceiver', () => {
     const started = await manualReceiver({
       prompt: async (url) => {
         seen.push(url)
+
         return 'https://provider.test/callback?code=abc'
       },
     }).start({ provider, openUrl: (url) => void opened.push(url) })
@@ -236,6 +240,7 @@ describe('manualReceiver', () => {
     const rejections: unknown[] = []
     const onRejection = (reason: unknown) => rejections.push(reason)
     process.on('unhandledRejection', onRejection)
+
     try {
       const started = await manualReceiver({ prompt: async () => 'garbage' }).start({ provider })
       // present() fails to parse, and the caller walks away without waiting.

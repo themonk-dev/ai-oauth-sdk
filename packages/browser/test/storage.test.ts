@@ -21,6 +21,7 @@ beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
   }
+
   vi.restoreAllMocks()
 })
 
@@ -86,6 +87,7 @@ describe.skipIf(!hasWebStorage)('with web storage available', () => {
         codeVerifier: `verifier-${i}`,
       })
     }
+
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(await registry.prune()).toBe(3)
@@ -110,6 +112,7 @@ describe('without web storage', () => {
   function hide(name: 'localStorage' | 'sessionStorage') {
     const original = Object.getOwnPropertyDescriptor(globalThis, name)
     Object.defineProperty(globalThis, name, { value: undefined, configurable: true })
+
     return () => {
       if (original) {
         Object.defineProperty(globalThis, name, original)
@@ -121,6 +124,7 @@ describe('without web storage', () => {
 
   it('localStorageAdapter still works, backed by memory', async () => {
     const restore = hide('localStorage')
+
     try {
       const storage = localStorageAdapter()
       await storage.set('k', 'v')
@@ -134,6 +138,7 @@ describe('without web storage', () => {
 
   it('sessionStorageAdapter still works, backed by memory', async () => {
     const restore = hide('sessionStorage')
+
     try {
       const storage = sessionStorageAdapter()
       await storage.set('k', 'v')
@@ -145,6 +150,7 @@ describe('without web storage', () => {
 
   it('two adapters do not share the memory fallback', async () => {
     const restore = hide('localStorage')
+
     try {
       // Each call gets its own store, so a page holding two clients does not
       // have one silently overwrite the other's tokens.

@@ -15,10 +15,12 @@ beforeEach(async () => {
   stderr = []
   vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
     stdout.push(String(chunk))
+
     return true
   })
   vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
     stderr.push(String(chunk))
+
     return true
   })
 })
@@ -100,14 +102,42 @@ describe('argument validation', () => {
     expect(err()).toContain('Unknown provider')
   })
 
+  // xai and google used to have no published id, so the CLI could only tell
+  // you to pass one. Both now default to the vendor's, which means `login`
+  // proceeds to a real flow instead of failing — so the thing worth asserting
+  // is that a provider we have no credential for still explains itself.
   it('asks for a client id when the provider has none', async () => {
-    expect(await run(['login', 'xai', '--auth-dir', dir])).toBe(1)
+    expect(
+      await run([
+        'login',
+        'acme',
+        '--authorize-url',
+        'https://acme.test/authorize',
+        '--token-url',
+        'https://acme.test/token',
+        '--auth-dir',
+        dir,
+      ]),
+    ).toBe(1)
     expect(err()).toContain('--client-id')
   })
+})
 
-  it('asks for credentials for Google', async () => {
-    expect(await run(['login', 'google', '--auth-dir', dir])).toBe(1)
-    expect(err()).toContain('--client-id')
+describe('flags that are not real', () => {
+  // Every mode is named against loopback, so people reach for --loopback — and
+  // it used to parse, get ignored, and run the default as though nothing had
+  // been passed.
+  it('rejects an unknown option instead of ignoring it', async () => {
+    expect(await run(['login', 'openai', '--loopback', '--auth-dir', dir])).toBe(1)
+    expect(err()).toContain('Unknown option "--loopback"')
+    expect(err()).toContain('loopback is the default')
+  })
+
+  // The device-only branch short-circuits past the receiver, so this guard used
+  // to be unreachable and --paste silently ran a device login.
+  it('refuses --paste on a provider with no redirect', async () => {
+    expect(await run(['login', 'github-copilot', '--paste', '--auth-dir', dir])).toBe(1)
+    expect(err()).toContain('--paste cannot complete it')
   })
 })
 

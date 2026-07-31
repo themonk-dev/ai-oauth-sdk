@@ -29,13 +29,19 @@ describe('built-in provider descriptors', () => {
       if (!provider.usePkce) {
         continue
       }
+
       expect(provider.pkceMethod, provider.id).toBe('S256')
     }
   })
 
   it('enables PKCE for every redirect-based provider', () => {
     for (const provider of Object.values(providers)) {
-      if (provider.redirect.mode === 'custom') {continue} // device-flow only
+      /* Device-flow only. */
+      if (provider.redirect.mode === 'custom') {
+        continue
+      }
+
+
       expect(provider.usePkce, provider.id).toBe(true)
     }
   })
@@ -45,8 +51,29 @@ describe('built-in provider descriptors', () => {
     expect(defaultRedirectUri(openai)).toBe('http://localhost:1455/auth/callback')
   })
 
-  it('defaults Anthropic to its hosted redirect', () => {
-    expect(defaultRedirectUri(anthropic)).toBe('https://platform.claude.com/oauth/code/callback')
+  // Claude Code catches the callback on a local server rather than making the
+  /*
+   * The hosted page stays declared so `--paste` still has somewhere to send
+   * people over SSH.
+   */
+  it('defaults Anthropic to loopback, keeping the hosted page for pasting', () => {
+    expect(anthropic.redirect.mode).toBe('loopback')
+    expect(anthropic.redirect.loopbackPort).toBe(0)
+    expect(anthropic.redirect.hostedUri).toBe('https://platform.claude.com/oauth/code/callback')
+    // Port 0 means "pick one at bind time", so there is no static default URI.
+    expect(defaultRedirectUri(anthropic)).toBeUndefined()
+  })
+
+  /*
+   * Claude Code asks for more than this. `org:create_api_key` in particular
+   * lets a leaked token mint durable org credentials that outlive the session,
+   * so it stays opt-in rather than riding along with every chat token.
+   */
+  it('asks Anthropic for no more than chat needs', () => {
+    expect(anthropic.scopes).toContain('user:inference')
+    expect(anthropic.scopes).not.toContain('org:create_api_key')
+    expect(anthropic.scopes).not.toContain('user:file_upload')
+    expect(anthropic.scopes).not.toContain('user:mcp_servers')
   })
 
   it('gives Google an ephemeral loopback port', () => {
@@ -149,11 +176,13 @@ describe('readCallback — the shared receiver path', () => {
 
   it('throws authorization_denied with the provider detail attached', () => {
     let caught: unknown
+
     try {
       readCallback(openai, '?error=access_denied&error_description=User%20said%20no&state=xyz')
     } catch (error) {
       caught = error
     }
+
     expect(caught).toBeInstanceOf(OAuthError)
     const error = caught as OAuthError
     expect(error.code).toBe('authorization_denied')

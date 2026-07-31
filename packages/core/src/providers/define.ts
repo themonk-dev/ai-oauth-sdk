@@ -16,13 +16,16 @@ export function parseStandardCallback(input: string): CallbackParseResult {
   let query = trimmed
 
   const questionMark = trimmed.indexOf('?')
+
   if (questionMark >= 0) {
     query = trimmed.slice(questionMark + 1)
   } else if (trimmed.startsWith('#')) {
     query = trimmed.slice(1)
   }
-  // Some providers return params in the fragment rather than the query.
+
+  /* Some providers return params in the fragment rather than the query. */
   const hashIndex = query.indexOf('#')
+
   if (questionMark >= 0 && hashIndex >= 0 && !query.includes('code=')) {
     query = query.slice(hashIndex + 1)
   }
@@ -33,18 +36,23 @@ export function parseStandardCallback(input: string): CallbackParseResult {
   const state = params['state']
   const error = params['error']
   const errorDescription = params['error_description']
+
   if (code) {
     result.code = code
   }
+
   if (state) {
     result.state = state
   }
+
   if (error) {
     result.error = error
   }
+
   if (errorDescription) {
     result.errorDescription = errorDescription
   }
+
   return result
 }
 
@@ -71,6 +79,7 @@ export function readCallback(provider: ProviderConfig, input: string): CallbackR
       },
     )
   }
+
   return { code: parsed.code, ...(parsed.state ? { state: parsed.state } : {}) }
 }
 

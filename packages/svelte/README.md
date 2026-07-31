@@ -42,3 +42,11 @@ plain JS or with any other consumer of that contract.
 ## License
 
 MIT
+
+---
+
+<sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
+Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
+to their owners. These OAuth flows are not officially supported by any provider and may
+change without notice — see the
+[disclaimer](https://github.com/themonk-dev/ai-oauth-sdk/blob/main/DISCLAIMER.md).</sub>

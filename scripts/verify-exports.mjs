@@ -72,6 +72,7 @@ const report = (ok, message) => {
   if (!ok) {
     failures++
   }
+
   console.log(`${ok ? '  ok  ' : '  FAIL'}  ${message}`)
 }
 
@@ -84,6 +85,7 @@ try {
     JSON.stringify({ name: 'exports-check', type: 'module', version: '1.0.0' }),
   )
   symlinkSync(join(packagesDir, 'ai-oauth-sdk'), join(dir, 'node_modules', 'ai-oauth-sdk'))
+
   for (const name of SCOPED) {
     symlinkSync(join(packagesDir, name), join(dir, 'node_modules', '@ai-oauth-sdk', name))
   }
@@ -95,6 +97,7 @@ try {
          console.log((typeof m[${JSON.stringify(name)}] === 'function' ? 'OK' : 'MISSING_EXPORT') + ' ${spec}') }
        catch (e) { console.log('RESOLVE_ERROR ${spec}: ' + e.message) }`,
   ).join('\n')
+
   for (const line of execFileSync(process.execPath, ['--input-type=module', '-e', esmScript], {
     cwd: dir,
     encoding: 'utf8',
@@ -111,6 +114,7 @@ try {
          console.log((typeof m[${JSON.stringify(name)}] === 'function' ? 'OK' : 'MISSING_EXPORT') + ' ${spec}') }
        catch (e) { console.log('RESOLVE_ERROR ${spec}: ' + e.message) }`,
   ).join('\n')
+
   for (const line of execFileSync(process.execPath, ['--input-type=commonjs', '-e', cjsScript], {
     cwd: dir,
     encoding: 'utf8',
@@ -149,6 +153,7 @@ try {
       include: ['check.ts'],
     }),
   )
+
   try {
     execFileSync(join(repoRoot, 'node_modules', '.bin', 'tsc'), ['-p', 'tsconfig.json'], {
       cwd: dir,

@@ -35,11 +35,13 @@ const scriptedReceiver = (): CallbackReceiver => ({
   id: 'scripted',
   async start() {
     let result: Promise<{ code: string; state: string }> | undefined
+
     return {
       redirectUri: 'http://localhost/callback',
       async present(url) {
         result = fetch(url, { redirect: 'manual' }).then((response) => {
           const params = new URL(response.headers.get('location')!).searchParams
+
           return { code: params.get('code')!, state: params.get('state')! }
         })
       },
@@ -61,6 +63,18 @@ const hangingReceiver = (): CallbackReceiver => ({
   },
 })
 
+function describeStatus(auth: { isLoading: boolean; isAuthenticated: boolean }): string {
+  if (auth.isLoading) {
+    return 'loading'
+  }
+
+  if (auth.isAuthenticated) {
+    return 'signed-in'
+  }
+
+  return 'signed-out'
+}
+
 function SignIn({ storage, receiver }: { storage: AuthStorage; receiver?: CallbackReceiver }) {
   const auth = useAuth({
     provider: testProvider(server.url),
@@ -72,7 +86,7 @@ function SignIn({ storage, receiver }: { storage: AuthStorage; receiver?: Callba
   return (
     <div>
       <span data-testid="status">
-        {auth.isLoading ? 'loading' : auth.isAuthenticated ? 'signed-in' : 'signed-out'}
+        {describeStatus(auth)}
       </span>
       <span data-testid="token">{auth.tokens?.accessToken ?? ''}</span>
       <span data-testid="error">{auth.error?.message ?? ''}</span>
@@ -144,6 +158,7 @@ describe('useAuth', () => {
 
   it('surfaces an error without throwing during render', async () => {
     const failing = await startFakeAuthServer({ failWith: 'invalid_grant' })
+
     try {
       function FailingSignIn() {
         const auth = useAuth({
@@ -152,6 +167,7 @@ describe('useAuth', () => {
           storage: memoryStorage(),
           receiver: scriptedReceiver(),
         })
+
         return (
           <div>
             <span data-testid="status">{auth.isAuthenticated ? 'signed-in' : 'signed-out'}</span>
@@ -219,6 +235,7 @@ describe('useAuth', () => {
 describe('AuthProvider / useAuthContext', () => {
   function Consumer() {
     const auth = useAuthContext()
+
     return <span data-testid="ctx">{auth.isAuthenticated ? 'yes' : 'no'}</span>
   }
 
@@ -236,6 +253,7 @@ describe('AuthProvider / useAuthContext', () => {
     )
 
     await waitFor(() => expect(screen.getAllByTestId('ctx')).toHaveLength(2))
+
     for (const node of screen.getAllByTestId('ctx')) {
       expect(node.textContent).toBe('no')
     }

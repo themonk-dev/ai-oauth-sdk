@@ -12,6 +12,7 @@ const servers: FakeAuthServer[] = []
 async function server(options: Parameters<typeof startFakeAuthServer>[0] = {}) {
   const instance = await startFakeAuthServer(options)
   servers.push(instance)
+
   return instance
 }
 
@@ -128,6 +129,76 @@ describe('device authorization flow', () => {
     // Tokens are persisted just like the redirect flow.
     expect(await client.isAuthenticated()).toBe(true)
   })
+
+  // RFC 8628 does not mention PKCE, so the device request used to omit it and
+  // Qwen answered every login with a bare "HTTP 400".
+  it('binds the device request with PKCE and redeems it with the verifier', async () => {
+    const target = await server({ device: { requirePkce: true } })
+    const provider = deviceProvider(target.url)
+
+    const device = await startDeviceAuthorization({ provider, clientId: 'device-client' })
+    expect(target.deviceRequests[0]?.['code_challenge']).toBeTruthy()
+    expect(target.deviceRequests[0]?.['code_challenge_method']).toBe('S256')
+    expect(device.codeVerifier).toBeTruthy()
+
+    const tokens = await pollDeviceToken({ provider, clientId: 'device-client', device })
+    expect(tokens.accessToken).toBe('access-1')
+    expect(target.requests.at(-1)?.['code_verifier']).toBe(device.codeVerifier)
+  })
+
+  it('omits PKCE for a provider that does not use it', async () => {
+    const target = await server({ device: {} })
+    const provider = deviceProvider(target.url, { usePkce: false })
+
+    const device = await startDeviceAuthorization({ provider, clientId: 'device-client' })
+    expect(target.deviceRequests[0]?.['code_challenge']).toBeUndefined()
+    expect(device.codeVerifier).toBeUndefined()
+
+    await pollDeviceToken({ provider, clientId: 'device-client', device })
+    expect(target.requests.at(-1)?.['code_verifier']).toBeUndefined()
+  })
+
+  it("quotes the provider's complaint instead of just the status", async () => {
+    const target = await server({ device: { requirePkce: true } })
+    const provider = deviceProvider(target.url, { usePkce: false })
+
+    await expect(
+      startDeviceAuthorization({ provider, clientId: 'device-client' }),
+    ).rejects.toThrowError(/code_challenge is required for PKCE/)
+  })
+
+  it('keeps polling through a gateway 5xx rather than abandoning the code', async () => {
+    // An HTML error page from a proxy is not a verdict on the grant, and the
+    // user may already have approved it — parsing it to `{}` and reporting
+    // `unknown_error` threw away a live login.
+    const target = await server({ device: { gatewayErrorOnce: true } })
+    const provider = deviceProvider(target.url)
+
+    const device = await startDeviceAuthorization({ provider, clientId: 'device-client' })
+    const tokens = await pollDeviceToken({ provider, clientId: 'device-client', device })
+
+    expect(tokens.accessToken).toBeTruthy()
+    expect(target.devicePolls).toBe(2)
+  }, 20_000)
+
+  /*
+   * Tolerating a 5xx forever meant a proxy that was simply down blocked for the
+   * whole ~15-minute code lifetime and then reported a timeout, telling the
+   * user they were too slow to approve when the truth was a 502 all along.
+   */
+  it('gives up on a gateway that never recovers, and says what happened', async () => {
+    const target = await server({ device: { gatewayErrorAlways: true, interval: 0 } })
+    const provider = deviceProvider(target.url)
+
+    const device = await startDeviceAuthorization({ provider, clientId: 'device-client' })
+    const error = await pollDeviceToken({ provider, clientId: 'device-client', device }).catch(
+      (caught: Error) => caught,
+    )
+
+    expect(error).toMatchObject({ code: 'device_flow_failed', status: 504 })
+    expect((error as Error).message).not.toContain('expired')
+    expect(target.devicePolls).toBeLessThanOrEqual(5)
+  }, 20_000)
 
   it('explains when a provider has no device endpoint', async () => {
     const target = await server()

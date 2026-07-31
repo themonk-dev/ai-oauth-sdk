@@ -30,6 +30,7 @@ export function redirectReceiver(options: RedirectReceiverOptions = {}): Callbac
     id: 'redirect',
     async start() {
       const redirectUri = options.redirectUri ?? window.location.href.split('#')[0]!
+
       return {
         redirectUri,
         async present(url) {
@@ -39,7 +40,7 @@ export function redirectReceiver(options: RedirectReceiverOptions = {}): Callbac
             window.location.replace(url)
           }
         },
-        // The document is being torn down; nothing can resolve.
+        /** Never settles: the document is being torn down. */
         wait: () => new Promise<CallbackResult>(() => {}),
         async close() {
           /* nothing to tear down */
@@ -50,7 +51,8 @@ export function redirectReceiver(options: RedirectReceiverOptions = {}): Callbac
 }
 
 /**
- * Starts a full-page redirect login. Does not return — the page navigates away.
+ * Starts a full-page redirect login. Does not return — the page navigates
+ * away, and the pending promise exists only to give that navigation a turn.
  */
 export async function startRedirectLogin(
   client: AuthClient,
@@ -69,7 +71,6 @@ export async function startRedirectLogin(
     window.location.replace(authorization.url)
   }
 
-  // Give the navigation a turn to happen; never resolves in practice.
   return new Promise<never>(() => {})
 }
 
@@ -90,6 +91,15 @@ export interface HandleRedirectCallbackOptions {
  * const tokens = await handleRedirectCallback(client)
  * if (tokens) console.log('signed in as', tokens.email)
  * ```
+ *
+ * The whole URL is handed to `completeAuthorization` rather than the failure
+ * being re-derived here, because that is also the path that fails anyone
+ * blocked in `waitForAuthorization` — a locally thrown error would leave them
+ * hanging until their timeout.
+ *
+ * The address bar is only rewritten when the callback actually came from it.
+ * Given an explicit `url` the caller is parsing something else — a stored deep
+ * link, a test fixture — and navigating the page to it would be wrong.
  */
 export async function handleRedirectCallback(
   client: AuthClient,
@@ -104,20 +114,17 @@ export async function handleRedirectCallback(
   }
 
   try {
-    // Hand the whole URL over rather than re-deriving the failure here: this is
-    // the path that also fails anyone blocked in `waitForAuthorization`, which
-    // a locally-thrown error would leave hanging until its timeout.
     return await client.completeAuthorization({ callbackUrl: href })
   } finally {
-    // Only rewrite the address bar when the callback actually came from it.
-    // With an explicit `url` the caller is parsing something else — a stored
-    // deep link, a test fixture — and navigating the page to it would be wrong.
     const cameFromAddressBar = options.url === undefined
+
     if (options.cleanUrl !== false && cameFromAddressBar && typeof window !== 'undefined') {
       const url = new URL(window.location.href)
+
       for (const key of ['code', 'state', 'error', 'error_description', 'scope']) {
         url.searchParams.delete(key)
       }
+
       window.history.replaceState({}, '', url.pathname + url.search + url.hash)
     }
   }

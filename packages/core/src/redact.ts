@@ -26,31 +26,39 @@ const SECRET_PARAMS = [
   'assertion',
 ]
 
+/**
+ * Matches key, optional quotes, `:` or `=`, optional quotes, then the value up
+ * to a delimiter — covering `{"refresh_token":"x"}` and `refresh_token=x&…`
+ * alike.
+ */
 const PARAM_PATTERN = new RegExp(
-  // key, optional quotes, : or =, optional quotes, then the value up to a
-  // delimiter — covers {"refresh_token":"x"} and refresh_token=x&… alike.
   String.raw`(["']?\b(?:${SECRET_PARAMS.join('|')})\b["']?\s*[:=]\s*)["']?([^"'&,}\s]{4,})["']?`,
   'gi',
 )
 
 /** Token shapes the supported providers issue, in case they appear bare. */
-const TOKEN_SHAPES: RegExp[] = [
-  /\bBearer\s+[\w.~+/=-]{8,}/gi, // Authorization header value
-  /\bsk-ant-[\w-]{8,}/gi, // Anthropic
-  /\bsk-or-v1-[\w-]{8,}/gi, // OpenRouter
-  /\bsk-[A-Za-z0-9_-]{16,}/g, // OpenAI
-  /\bgh[pousr]_[A-Za-z0-9]{16,}/g, // GitHub
-  /\bya29\.[\w.-]{8,}/g, // Google
-  /\bey[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, // JWT
+const TOKEN_SHAPES: { issuer: string; pattern: RegExp }[] = [
+  { issuer: 'Authorization header value', pattern: /\bBearer\s+[\w.~+/=-]{8,}/gi },
+  { issuer: 'Anthropic', pattern: /\bsk-ant-[\w-]{8,}/gi },
+  { issuer: 'OpenRouter', pattern: /\bsk-or-v1-[\w-]{8,}/gi },
+  { issuer: 'OpenAI', pattern: /\bsk-[A-Za-z0-9_-]{16,}/g },
+  { issuer: 'GitHub', pattern: /\bgh[pousr]_[A-Za-z0-9]{16,}/g },
+  { issuer: 'Google', pattern: /\bya29\.[\w.-]{8,}/g },
+  {
+    issuer: 'JWT',
+    pattern: /\bey[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g,
+  },
 ]
 
 export const REDACTED = '[redacted]'
 
 export function redactSecrets(text: string): string {
   let out = text.replace(PARAM_PATTERN, (_match, prefix: string) => `${prefix}${REDACTED}`)
-  for (const pattern of TOKEN_SHAPES) {
+
+  for (const { pattern } of TOKEN_SHAPES) {
     out = out.replace(pattern, REDACTED)
   }
+
   return out
 }
 
@@ -60,5 +68,6 @@ export function redactSecrets(text: string): string {
  */
 export function safeSnippet(text: string, maxLength = 200): string {
   const collapsed = redactSecrets(text).replace(/\s+/g, ' ').trim()
+
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength)}…` : collapsed
 }

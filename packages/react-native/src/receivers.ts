@@ -39,6 +39,7 @@ export function deepLinkReceiver(options: DeepLinkReceiverOptions): CallbackRece
         if (!url.startsWith(options.redirectUri.split('?')[0]!)) {
           return
         }
+
         try {
           resolveCallback(readCallback(context.provider, url))
         } catch (error) {
@@ -57,11 +58,12 @@ export function deepLinkReceiver(options: DeepLinkReceiverOptions): CallbackRece
           await options.linking.openURL(url)
         },
         async wait() {
-          // Cold start: the redirect may already be waiting as the initial URL.
           const initial = await options.linking.getInitialURL()
+
           if (initial) {
             handleUrl(initial)
           }
+
           return callbackPromise
         },
         async close() {
@@ -111,6 +113,7 @@ export function authSessionReceiver(options: AuthSessionReceiverOptions): Callba
                   `Sign-in did not complete (${result.type}).`,
                 )
               }
+
               return readCallback(context.provider, result.url)
             })
         },
@@ -118,6 +121,7 @@ export function authSessionReceiver(options: AuthSessionReceiverOptions): Callba
           if (!pending) {
             throw new OAuthError('configuration_error', 'present() must be called before wait().')
           }
+
           return pending
         },
         async close() {

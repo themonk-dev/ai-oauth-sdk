@@ -19,7 +19,7 @@ import { defineProvider } from './define.js'
 export const openrouter = defineProvider({
   id: 'openrouter',
   label: 'OpenRouter',
-  // Identified by callback URL alone — no client id exists to supply.
+  /** Identified by callback URL alone — no client id exists to supply. */
   requiresClientId: false,
   authorizationUrl: 'https://openrouter.ai/auth',
   tokenUrl: 'https://openrouter.ai/api/v1/auth/keys',
@@ -30,18 +30,22 @@ export const openrouter = defineProvider({
   tokenRequest: { style: 'json', includeClientIdInBody: false },
   buildAuthParams(params) {
     const next: Record<string, string> = { callback_url: params['redirect_uri'] ?? '' }
+
     if (params['code_challenge']) {
       next['code_challenge'] = params['code_challenge']
       next['code_challenge_method'] = params['code_challenge_method'] ?? 'S256'
     }
+
     return next
   },
+  /** The key is user-controlled: no expiry, no refresh, usable forever. */
   parseTokenResponse(raw) {
     const key = raw['key']
+
     if (typeof key !== 'string') {
       return raw
     }
-    // A user-controlled API key: no expiry, no refresh, use forever.
+
     return { ...raw, access_token: key, token_type: 'Bearer' }
   },
 })

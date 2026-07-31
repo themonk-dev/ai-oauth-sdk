@@ -33,6 +33,7 @@ function fakeLinking(options: { initialUrl?: string } = {}) {
     },
     addEventListener(_type, handler) {
       handlers.push(handler)
+
       return {
         remove() {
           removed = true
@@ -40,6 +41,7 @@ function fakeLinking(options: { initialUrl?: string } = {}) {
       }
     },
   }
+
   return {
     linking,
     opened,
@@ -139,10 +141,12 @@ describe('authSessionReceiver', () => {
     calls: string[][]
   } => {
     const calls: string[][] = []
+
     return {
       calls,
       async openAuthSessionAsync(url, redirectUrl) {
         calls.push([url, redirectUrl])
+
         return result
       },
       dismissAuthSession: vi.fn(),
@@ -229,6 +233,7 @@ describe('storage adapters', () => {
     const storage = secureStoreAdapter({
       async getItemAsync(key) {
         seen.push(key)
+
         return null
       },
       async setItemAsync(key) {
@@ -258,6 +263,7 @@ describe('storage adapters', () => {
       {
         async getItemAsync(_key, options) {
           received.push(options)
+
           return null
         },
         async setItemAsync(_key, _value, options) {

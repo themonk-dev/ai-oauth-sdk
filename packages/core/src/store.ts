@@ -33,7 +33,13 @@ export interface LoginOverrides {
  * `subscribe` follows the Svelte store contract: it calls the listener
  * immediately with the current state and returns an unsubscribe function. That
  * contract also happens to suit React, Vue and Solid, so nothing else needs a
- * bespoke shape.
+ * bespoke shape — `subscribe` emits the current value immediately, as that
+ * contract requires.
+ *
+ * Notifications are skipped when nothing actually moved, so bindings that map
+ * state straight onto reactive primitives do not re-render for free. A second
+ * `login` supersedes the first rather than racing it, and an abort is treated
+ * as a user action rather than an error worth surfacing in the UI.
  */
 export interface AuthStore {
   readonly client: AuthClient
@@ -69,10 +75,10 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
     if (destroyed) {
       return
     }
+
     const next = { ...state, ...patch }
     next.isAuthenticated = next.tokens !== undefined
-    // Skip the notify when nothing actually moved, so bindings that map state
-    // straight onto reactive primitives do not re-render for free.
+
     if (
       next.tokens === state.tokens &&
       next.isLoading === state.isLoading &&
@@ -80,7 +86,9 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
     ) {
       return
     }
+
     state = next
+
     for (const listener of listeners) {
       listener(state)
     }
@@ -96,7 +104,8 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
 
     subscribe(listener) {
       listeners.add(listener)
-      listener(state) // Svelte contract: emit current value on subscribe.
+      listener(state)
+
       return () => {
         listeners.delete(listener)
       }
@@ -104,6 +113,7 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
 
     async restore() {
       setState({ isLoading: true })
+
       try {
         setState({ tokens: await client.getTokens(), isLoading: false })
       } catch (caught) {
@@ -113,21 +123,23 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
 
     async login(overrides = {}) {
       const receiver = overrides.receiver ?? options.receiver
+
       if (!receiver) {
         const error = new Error(
           'No receiver configured. Pass `receiver` when creating the store, or to login().',
         )
         setState({ error })
         options.onError?.(error)
+
         return undefined
       }
 
-      // A second login supersedes the first rather than racing it.
       abortController?.abort()
       const controller = new AbortController()
       abortController = controller
 
       setState({ isLoading: true, error: undefined })
+
       try {
         const tokens = await client.login({
           receiver,
@@ -136,15 +148,18 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
         })
         setState({ tokens, isLoading: false })
         options.onSuccess?.(tokens)
+
         return tokens
       } catch (caught) {
-        // Cancelling is a user action, not an error worth surfacing in the UI.
         if (isOAuthError(caught) && caught.code === 'aborted') {
           setState({ isLoading: false })
+
           return undefined
         }
+
         setState({ isLoading: false, error: toError(caught) })
         options.onError?.(caught)
+
         return undefined
       } finally {
         if (abortController === controller) {
@@ -160,24 +175,28 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
 
     async refresh() {
       setState({ isLoading: true })
+
       try {
         const tokens = await client.refresh()
         setState({ tokens, isLoading: false })
+
         return tokens
       } catch (caught) {
         setState({ isLoading: false, error: toError(caught) })
         options.onError?.(caught)
+
         return undefined
       }
     },
 
     async getAccessToken() {
       const accessToken = await client.getAccessToken()
-      // A refresh may have replaced the stored set; keep observers in sync.
       const latest = await client.getTokens()
+
       if (latest !== state.tokens) {
         setState({ tokens: latest })
       }
+
       return accessToken
     },
 

@@ -63,10 +63,22 @@ normalizes a non-standard token body, `parseCallback` handles an odd callback fo
 and `enrichTokens` pulls out the account id. `openrouter.ts` uses three of the four and
 is the best reference.
 
-**Do not commit client secrets.** Ship the descriptor without credentials and require
-the consumer to supply them, as `google` and `xai` do. GitHub's push protection will
-reject the commit anyway, and it is the right call regardless: a client credential
-belongs to whoever registered it.
+**Do not commit confidential client secrets.** A secret issued to a *web* application
+is confidential and must never be checked in — GitHub's push protection will reject it
+anyway, and it is the right call regardless.
+
+The one exception already in the tree is `publicClientSecrets.google`: an *installed
+application* secret, which OAuth and
+[Google's own docs](https://developers.google.com/identity/protocols/oauth2/native-app)
+treat as non-confidential, and which Google's token endpoint refuses the exchange
+without. It ships in gemini-cli's binary for the same reason. `.github/secret_scanning.yml`
+excludes the file that holds it.
+
+Adding another means meeting all three bars: the vendor publishes it in software they
+distribute, the vendor documents it as non-confidential, and the flow cannot complete
+without it. Anything short of that, ship the descriptor without credentials and let the
+consumer supply them — and always keep the value overridable via `clientSecret`,
+`--client-secret`, and `AI_OAUTH_SDK_CLIENT_SECRET`.
 
 ## Tests
 

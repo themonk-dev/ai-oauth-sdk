@@ -72,7 +72,8 @@ describe('safeSnippet', () => {
 
   it('truncates long bodies with an ellipsis', () => {
     const snippet = safeSnippet('x'.repeat(500), 50)
-    expect(snippet).toHaveLength(51) // 50 + the ellipsis
+    /* 50 characters plus the ellipsis. */
+    expect(snippet).toHaveLength(51)
     expect(snippet.endsWith('…')).toBe(true)
   })
 
@@ -96,6 +97,7 @@ describe('token errors never carry a credential', () => {
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const { port } = server.address() as { port: number }
+
     return {
       url: `http://127.0.0.1:${port}`,
       close: () =>
@@ -108,6 +110,7 @@ describe('token errors never carry a credential', () => {
 
   it('does not leak the refresh token when the endpoint echoes the request', async () => {
     const target = await echoingServer()
+
     try {
       const client = createAuthClient({
         provider: defineProvider({
@@ -143,6 +146,58 @@ describe('token errors never carry a credential', () => {
       expect((error as Error).message).toContain('502')
     } finally {
       await target.close()
+    }
+  })
+
+  /*
+   * `readTokenError` reads a nested `message` and a bare `detail`, neither of
+   * which existed when the redaction was written. Both are provider text, so
+   * both have to be scrubbed before they reach a message or a log.
+   */
+  it('redacts a credential quoted in a JSON error body', async () => {
+    const { createServer } = await import('node:http')
+    const server = createServer((_request, response) => {
+      response.writeHead(400, { 'Content-Type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          detail:
+            'Upstream received: grant_type=refresh_token&refresh_token=rt-leaked-in-detail',
+        }),
+      )
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as { port: number }
+
+    try {
+      const client = createAuthClient({
+        provider: defineProvider({
+          id: 'jsonerr',
+          label: 'JsonErr',
+          clientId: 'c',
+          authorizationUrl: `http://127.0.0.1:${port}/authorize`,
+          tokenUrl: `http://127.0.0.1:${port}/token`,
+          scopes: [],
+          redirect: { mode: 'custom' },
+        }),
+        redirectUri: 'http://localhost/cb',
+        storage: memoryStorage(),
+      })
+
+      await client.setTokens({
+        accessToken: 'at',
+        refreshToken: 'rt-leaked-in-detail',
+        tokenType: 'Bearer',
+        provider: 'jsonerr',
+        raw: {},
+      })
+
+      const error = await client.refresh().catch((caught: Error) => caught)
+      const serialized = `${(error as Error).message} ${JSON.stringify(error)}`
+
+      expect(serialized).not.toContain('rt-leaked-in-detail')
+      expect(serialized).toContain(REDACTED)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
 })
