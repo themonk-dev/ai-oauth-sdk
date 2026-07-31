@@ -1,6 +1,6 @@
 {
   "name": "@ai-oauth-sdk/react-native",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "React Native / Expo adapter for ai-oauth-sdk: deep-link and auth-session receivers plus secure token storage.",
   "keywords": [
     "oauth",
