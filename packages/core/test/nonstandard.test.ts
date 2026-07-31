@@ -10,6 +10,8 @@ import {
   publicClientIds,
   qwen,
 } from '../src/providers/index.js'
+import { defineProvider } from '../src/providers/define.js'
+import { exchangeCode } from '../src/token.js'
 import { memoryStorage } from '../src/storage.js'
 import { startFakeAuthServer, type FakeAuthServer } from './helpers/fakeAuthServer.js'
 
@@ -102,7 +104,8 @@ describe('OpenRouter — a provider that breaks the spec', () => {
     const client = createAuthClient({
       provider: {
         ...openrouter,
-        echoesState: true, // pretend it behaves
+        /* Pretend it behaves. */
+        echoesState: true,
         authorizationUrl: `${target.url}/openrouter/auth`,
         tokenUrl: `${target.url}/openrouter/keys`,
       },
@@ -193,5 +196,97 @@ describe('registry after expansion', () => {
       expect(provider.tokenUrl, provider.id).toMatch(/^https:\/\//)
       expect(provider.label, provider.id).toBeTruthy()
     }
+  })
+})
+
+describe('state on the code exchange', () => {
+  const capture = () => {
+    const bodies: string[] = []
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(String(init?.body ?? ''))
+
+      return new Response(JSON.stringify({ access_token: 'at', expires_in: 60 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+
+    return { bodies, fetchImpl }
+  }
+
+  // `state` belongs to the authorization request. Sending it here broke every
+  // OpenAI login with "Unknown parameter: 'state'".
+  it('is omitted by default', async () => {
+    const { bodies, fetchImpl } = capture()
+    await exchangeCode({
+      provider: providers.openai,
+      clientId: 'c',
+      code: 'x',
+      state: 'the-state',
+      redirectUri: 'http://localhost:1455/auth/callback',
+      fetchImpl,
+    })
+    expect(new URLSearchParams(bodies[0]!).get('state')).toBeNull()
+  })
+
+  it('is sent for a provider that asks for it', async () => {
+    const { bodies, fetchImpl } = capture()
+    await exchangeCode({
+      provider: providers.anthropic,
+      clientId: 'c',
+      code: 'x',
+      state: 'the-state',
+      redirectUri: 'http://localhost:1234/callback',
+      fetchImpl,
+    })
+    expect(new URLSearchParams(bodies[0]!).get('state')).toBe('the-state')
+  })
+})
+
+describe('token errors that are not shaped like the spec', () => {
+  const provider = defineProvider({
+    id: 'nested-error',
+    label: 'Nested Error',
+    clientId: 'c',
+    authorizationUrl: 'https://provider.test/authorize',
+    tokenUrl: 'https://provider.test/token',
+    scopes: [],
+    redirect: { mode: 'loopback' },
+  })
+
+  const respondWith = (body: unknown): typeof fetch =>
+    (async () =>
+      new Response(JSON.stringify(body), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })) as unknown as typeof fetch
+
+  const exchange = (body: unknown) =>
+    exchangeCode({
+      provider,
+      clientId: 'c',
+      code: 'x',
+      redirectUri: 'http://localhost/cb',
+      fetchImpl: respondWith(body),
+    })
+
+  // RFC 6749 says `error` is a string; OpenAI nests an object under it, and
+  // interpolating that printed a literal "[object Object]" instead of the
+  // message — hiding every token failure the line existed to explain.
+  it('unwraps a nested error object', async () => {
+    await expect(
+      exchange({
+        error: { message: 'Invalid request. Please try again later.', type: 'invalid_request_error' },
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('Invalid request. Please try again later.'),
+      providerError: 'invalid_request_error',
+    })
+  })
+
+  it('falls back to the raw body when the error is an unfamiliar shape', async () => {
+    await expect(exchange({ error: { unexpected: ['nested'] } })).rejects.toMatchObject({
+      message: expect.not.stringContaining('[object Object]'),
+    })
   })
 })

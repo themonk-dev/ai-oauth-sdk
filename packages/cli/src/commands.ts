@@ -6,6 +6,7 @@ import {
   isOAuthError,
   providers,
   publicClientIds,
+  publicClientSecrets,
   resolveProvider,
   type AuthClient,
   type ProviderConfig,
@@ -17,6 +18,7 @@ import {
   defaultReceiver,
   fileStorage,
   listStoredSessions,
+  hybridReceiver,
   loopbackReceiver,
   promptReceiver,
 } from '@ai-oauth-sdk/node'
@@ -46,6 +48,7 @@ interface CommandContext {
 function customProvider(providerId: string, args: ParsedArgs): ProviderConfig | undefined {
   const authorizationUrl = flagString(args.flags, 'authorize-url')
   const tokenUrl = flagString(args.flags, 'token-url')
+
   if (!authorizationUrl && !tokenUrl) {
     return undefined
   }
@@ -78,6 +81,7 @@ const PROVIDER_KEY_PREFIX = 'provider:'
 
 function storageFor(args: ParsedArgs) {
   const authDir = flagString(args.flags, 'auth-dir')
+
   return fileStorage(authDir ? { dir: authDir } : {})
 }
 
@@ -87,12 +91,13 @@ function storageFor(args: ParsedArgs) {
  * Without this, `ai-oauth-sdk login acme --authorize-url … --token-url …` would
  * work but every later `token`/`refresh`/`whoami` would fail with
  * "unknown provider", since only the built-ins are resolvable by id.
+ *
+ * The client secret is deliberately dropped. It arrives as a flag, so it is
+ * already in the process table and the shell history; writing it to the
+ * credential file too would turn a transient exposure into a durable one. Later
+ * commands re-read it from `--client-secret` or `AI_OAUTH_SDK_CLIENT_SECRET`.
  */
 async function rememberProvider(provider: ProviderConfig, args: ParsedArgs): Promise<void> {
-  // Never persist the secret. It arrives as a flag, so it is already in the
-  // process table and the shell history; writing it to the credential file as
-  // well would make a transient exposure a durable one. Later commands re-read
-  // it from --client-secret or AI_OAUTH_SDK_CLIENT_SECRET.
   const { clientSecret: _omitted, ...withoutSecret } = provider
   await storageFor(args).set(PROVIDER_KEY_PREFIX + provider.id, JSON.stringify(withoutSecret))
 }
@@ -102,9 +107,11 @@ async function recallProvider(
   args: ParsedArgs,
 ): Promise<ProviderConfig | undefined> {
   const stored = await storageFor(args).get(PROVIDER_KEY_PREFIX + providerId)
+
   if (!stored) {
     return undefined
   }
+
   try {
     return JSON.parse(stored) as ProviderConfig
   } catch {
@@ -126,18 +133,26 @@ function resolveClientId(providerId: string, args: ParsedArgs): string | undefin
   )
 }
 
-/** Builds a client from the shared flags every command accepts. */
+/**
+ * Builds a client from the shared flags every command accepts.
+ *
+ * The client secret is read from the environment as well as from a flag,
+ * because the env var is the better channel — a flag is visible in `ps` and
+ * lands in shell history. Falling back to a published secret follows the
+ * client-id reasoning above: only Google ships one, its token endpoint refuses
+ * the exchange without it, and an installed-app secret is non-confidential by
+ * design. Either channel overrides it.
+ */
 async function clientFor(providerId: string, args: ParsedArgs): Promise<AuthClient> {
   const clientId = resolveClientId(providerId, args)
-  // The env var is the better channel — a flag is visible in `ps` and lands in
-  // shell history — so it is supported alongside the flag rather than instead.
   const clientSecret =
-    flagString(args.flags, 'client-secret') ?? process.env['AI_OAUTH_SDK_CLIENT_SECRET']
+    flagString(args.flags, 'client-secret') ??
+    process.env['AI_OAUTH_SDK_CLIENT_SECRET'] ??
+    (publicClientSecrets as Record<string, string | undefined>)[providerId]
   const accountKey = flagString(args.flags, 'account')
   const authDir = flagString(args.flags, 'auth-dir')
   const scopes = flagString(args.flags, 'scopes')
 
-  // Explicit flags win; otherwise fall back to a descriptor saved at login time.
   const custom =
     customProvider(providerId, args) ??
     (providerId in providers ? undefined : await recallProvider(providerId, args))
@@ -155,6 +170,7 @@ async function clientFor(providerId: string, args: ParsedArgs): Promise<AuthClie
     if (isOAuthError(error) && error.code === 'configuration_error') {
       throw new CliError(error.message, 'Pass --client-id=<id> (and --client-secret if required).')
     }
+
     if (isOAuthError(error) && error.code === 'unknown_provider') {
       throw new CliError(
         `Unknown provider "${providerId}".`,
@@ -162,22 +178,56 @@ async function clientFor(providerId: string, args: ParsedArgs): Promise<AuthClie
           'For anything else, pass --authorize-url and --token-url.',
       )
     }
+
     throw error
   }
 }
 
+/** Whether `--device` will work: RFC 8628, or a provider-supplied flow. */
+function supportsDevice(provider: ProviderConfig): boolean {
+  return Boolean(provider.deviceAuthorizationUrl || provider.deviceFlow)
+}
+
+/**
+ * How to sign in, for the providers table. A provider with no redirect can only
+ * do device; one with both is worth advertising as both, since the headless
+ * option is the whole reason someone reads this column.
+ */
+function describeFlow(provider: ProviderConfig): string {
+  if (provider.redirect.mode === 'custom') {
+    return 'device'
+  }
+
+  if (supportsDevice(provider)) {
+    return `${provider.redirect.mode} +device`
+  }
+
+  return provider.redirect.mode
+}
+
 function requireProvider(args: ParsedArgs, command: string): string {
   const providerId = args.positionals[0]
+
   if (!providerId) {
     throw new CliError(
       `Missing provider for "${command}".`,
       `Try: ai-oauth-sdk ${command} openai    (see: ai-oauth-sdk providers)`,
     )
   }
+
   return providerId
 }
 
-
+/**
+ * Signs in, choosing the flow from the provider and the flags.
+ *
+ * A provider with no redirect can only be completed by device code, so it runs
+ * one without `--device` being asked for: the alternative is a loopback server
+ * that can never receive anything and a user waiting for a callback that is not
+ * coming. That also makes `--paste` impossible for those providers, and the
+ * combination is rejected here rather than in `pickReceiver`, which the
+ * device-only path never reaches.
+ */
 export async function login({ args, json }: CommandContext): Promise<void> {
   const providerId = requireProvider(args, 'login')
   const client = await clientFor(providerId, args)
@@ -187,39 +237,75 @@ export async function login({ args, json }: CommandContext): Promise<void> {
     warn(`${provider.label} support is experimental — endpoints may change.`)
   }
 
-  // Save non-built-in descriptors so later commands can resolve this id.
   if (!(providerId in providers)) {
     await rememberProvider(provider, args)
   }
 
-  // A provider with no redirect can only be completed by device code. Requiring
-  // `--device` for those means the default lands on a loopback server that can
-  // never receive anything, and the user waits for a callback that is not coming.
-  const deviceOnly = provider.redirect.mode === 'custom' && Boolean(provider.deviceAuthorizationUrl)
+  const deviceOnly = provider.redirect.mode === 'custom' && supportsDevice(provider)
 
   const timeoutSeconds = flagNumber(args.flags, 'timeout')
   const timeoutMs = timeoutSeconds === undefined ? undefined : timeoutSeconds * 1000
 
-  const tokens = flagBoolean(args.flags, 'device') || deviceOnly
-    ? await loginWithDevice(client, timeoutMs)
-    : await client.login({
-        receiver: pickReceiver(provider, args),
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      })
+  if (deviceOnly && flagBoolean(args.flags, 'paste')) {
+    throw new CliError(
+      `${provider.label} has no redirect to paste back, so --paste cannot complete it.`,
+      `Run: ai-oauth-sdk login ${provider.id} --device`,
+    )
+  }
+
+  let tokens: TokenSet
+
+  if (flagBoolean(args.flags, 'device') || deviceOnly) {
+    tokens = await loginWithDevice(client, timeoutMs)
+  } else {
+    tokens = await client.login({
+      receiver: pickReceiver(provider, args),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    })
+  }
 
   if (json) {
     outputJson(summarize(providerId, tokens, flagString(args.flags, 'account')))
+
     return
   }
-  success(
-    `Signed in to ${bold(provider.label)}` +
-      (tokens.email ? ` as ${cyan(tokens.email)}` : tokens.accountId ? ` (${tokens.accountId})` : ''),
-  )
+
+  success(`Signed in to ${bold(provider.label)}${describeAccount(tokens)}`)
   info(dim(`  token expires in ${formatExpiry(tokens.expiresAt)}`))
   info(dim(`  stored in ${flagString(args.flags, 'auth-dir') ?? defaultAuthDir()}/auth.json`))
 }
 
+/** Renders the account suffix on the sign-in line, when the token identifies one. */
+function describeAccount(tokens: TokenSet): string {
+  if (tokens.email) {
+    return ` as ${cyan(tokens.email)}`
+  }
+
+  if (tokens.accountId) {
+    return ` (${tokens.accountId})`
+  }
+
+  return ''
+}
+
+/**
+ * Chooses how the callback comes back.
+ *
+ * Under `--paste`, a provider with a hosted page — Anthropic — shows the code
+ * itself, so pasting is the whole flow and there is nothing to listen for.
+ * Everyone else redirects to a loopback port whose number we already know, so
+ * the hybrid receiver listens on it and the callback lands without anything
+ * being pasted whenever the browser is on this machine.
+ *
+ * Otherwise the URL is always printed, even though a browser is also being
+ * opened: the launch fails silently over SSH, in containers and on minimal
+ * desktops, and the printed link is then the only way forward. Only the
+ * loopback receiver is wrapped to do that, because `defaultReceiver` already
+ * announces in the headless branch it falls back to.
+ */
 function pickReceiver(provider: ProviderConfig, args: ParsedArgs) {
+  const port = flagNumber(args.flags, 'port')
+
   if (flagBoolean(args.flags, 'paste')) {
     if (provider.redirect.mode === 'custom') {
       throw new CliError(
@@ -227,17 +313,22 @@ function pickReceiver(provider: ProviderConfig, args: ParsedArgs) {
         `Run: ai-oauth-sdk login ${provider.id} --device`,
       )
     }
-    // A specific port still has to appear in the redirect URI, because the
-    // provider matches it against the one sent at the token exchange.
-    const port = flagNumber(args.flags, 'port')
-    return promptReceiver(
-      port !== undefined ? { redirectUri: buildLoopbackRedirectUri(provider, port) } : {},
-    )
+
+    if (provider.redirect.hostedUri) {
+      return promptReceiver(
+        port !== undefined ? { redirectUri: buildLoopbackRedirectUri(provider, port) } : {},
+      )
+    }
+
+    return hybridReceiver({
+      ...(port !== undefined ? { port } : {}),
+      message: (url) =>
+        `\nOpen this URL to sign in:\n\n  ${url}\n\n` +
+        'Waiting for the redirect — if your browser is on another machine it will show\n' +
+        '"This site can\'t be reached"; paste that URL here instead.\n',
+    })
   }
 
-  // Always show the URL, even when a browser is being opened: if the launch
-  // silently fails — common over SSH, in containers, and on minimal desktops —
-  // the printed link is the only way forward.
   const announce = (url: string) => {
     info('')
     info(`  Opening ${cyan(url)}`)
@@ -245,16 +336,17 @@ function pickReceiver(provider: ProviderConfig, args: ParsedArgs) {
     info('')
   }
 
-  const port = flagNumber(args.flags, 'port')
   if (port !== undefined) {
     return loopbackReceiver({ port, onAuthorizationUrl: announce })
   }
 
   const receiver = defaultReceiver(provider)
-  // defaultReceiver already announces in its headless branch; wrap the others.
-  return receiver.id === 'loopback'
-    ? loopbackReceiver({ onAuthorizationUrl: announce })
-    : receiver
+
+  if (receiver.id === 'loopback') {
+    return loopbackReceiver({ onAuthorizationUrl: announce })
+  }
+
+  return receiver
 }
 
 /**
@@ -263,22 +355,55 @@ function pickReceiver(provider: ProviderConfig, args: ParsedArgs) {
  * `deviceLogin` takes a signal rather than a timeout, so `--timeout` is wired
  * through one here. Without it the flag is silently ignored and polling runs to
  * the provider's own expiry — typically fifteen minutes of a hung terminal.
+ *
+ * The core reports our own abort as `aborted`, which reads like the user
+ * pressed ctrl-C, so `timedOut` records that the timer was what fired.
+ *
+ * A `devicePrerequisite` is printed before the code rather than after — one the
+ * user reads only once the browser has already refused them is no help — and
+ * again on failure, because a provider that rejects the *request* never reaches
+ * `onCode` and would otherwise never show it at all.
  */
 async function loginWithDevice(client: AuthClient, timeoutMs?: number): Promise<TokenSet> {
   const controller = timeoutMs === undefined ? undefined : new AbortController()
-  const timer = controller && setTimeout(() => controller.abort(), timeoutMs)
+  let timedOut = false
+  const timer =
+    controller &&
+    setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
 
   try {
     return await client.deviceLogin({
       ...(controller ? { signal: controller.signal } : {}),
       onCode: (device) => {
         info('')
+
+        if (client.provider.devicePrerequisite) {
+          warn(client.provider.devicePrerequisite)
+          info('')
+        }
+
         info(`  Open ${cyan(device.verificationUriComplete ?? device.verificationUri)}`)
         info(`  Enter code ${bold(device.userCode)}`)
         info('')
         info(dim('  Waiting for approval…'))
       },
     })
+  } catch (error) {
+    if (timedOut && isOAuthError(error) && error.code === 'aborted') {
+      throw new CliError(
+        `Timed out after ${Math.round((timeoutMs ?? 0) / 1000)}s waiting for approval.`,
+        'Approve the code sooner, or raise --timeout.',
+      )
+    }
+
+    if (isOAuthError(error) && error.code === 'device_flow_failed' && client.provider.devicePrerequisite) {
+      throw new CliError(error.message, client.provider.devicePrerequisite)
+    }
+
+    throw error
   } finally {
     if (timer) {
       clearTimeout(timer)
@@ -294,17 +419,20 @@ export async function token({ args, json }: CommandContext): Promise<void> {
     const accessToken = await client.getAccessToken(
       flagBoolean(args.flags, 'force-refresh') ? { forceRefresh: true } : {},
     )
+
     if (json) {
       const tokens = await client.getTokens()
       outputJson({ provider: providerId, accessToken, expiresAt: tokens?.expiresAt ?? null })
+
       return
     }
-    // Bare token on stdout — this is the whole point of the command.
+
     output(accessToken)
   } catch (error) {
     if (isOAuthError(error) && error.code === 'refresh_failed') {
       throw new CliError(error.message, `Run: ai-oauth-sdk login ${providerId}`)
     }
+
     throw error
   }
 }
@@ -317,10 +445,13 @@ export async function whoami({ args, json }: CommandContext): Promise<void> {
   if (!tokens) {
     throw new CliError(`Not signed in to ${providerId}.`, `Run: ai-oauth-sdk login ${providerId}`)
   }
+
   if (json) {
     outputJson(summarize(providerId, tokens, flagString(args.flags, 'account')))
+
     return
   }
+
   info(`${bold(client.provider.label)}`)
   info(`  account   ${tokens.email ?? tokens.accountId ?? dim('unknown')}`)
   info(`  expires   ${formatExpiry(tokens.expiresAt)}`)
@@ -336,10 +467,13 @@ export async function list({ args, json }: CommandContext): Promise<void> {
   if (sessions.length === 0) {
     if (json) {
       outputJson([])
+
       return
     }
+
     info(dim('No stored sessions.'))
     info(dim('Run: ai-oauth-sdk login openai'))
+
     return
   }
 
@@ -347,6 +481,7 @@ export async function list({ args, json }: CommandContext): Promise<void> {
     sessions.map(async (session) => {
       const raw = await storage.get(session.key)
       const tokens = raw ? (JSON.parse(raw) as TokenSet) : undefined
+
       return { session, tokens }
     }),
   )
@@ -357,6 +492,7 @@ export async function list({ args, json }: CommandContext): Promise<void> {
         summarize(session.provider, tokens, session.accountKey),
       ),
     )
+
     return
   }
 
@@ -370,6 +506,13 @@ export async function list({ args, json }: CommandContext): Promise<void> {
   )
 }
 
+/**
+ * Clears the stored tokens, and the descriptor that was saved alongside them.
+ *
+ * A custom provider's descriptor is written at login so later commands can
+ * resolve the id. Once the tokens are gone it is orphaned, so it goes too —
+ * otherwise `logout` leaves the credential file dirtier than it found it.
+ */
 export async function logout({ args, json }: CommandContext): Promise<void> {
   const providerId = requireProvider(args, 'logout')
   const client = await clientFor(providerId, args)
@@ -381,17 +524,16 @@ export async function logout({ args, json }: CommandContext): Promise<void> {
 
   await client.logout(shouldRevoke ? { revoke: true } : {})
 
-  // A custom provider's descriptor was saved at login so later commands could
-  // resolve it. With the tokens gone it is orphaned, so forget it too —
-  // otherwise `logout` leaves the credential file dirtier than it found it.
   if (!(providerId in providers) && !flagString(args.flags, 'account')) {
     await storageFor(args).delete(PROVIDER_KEY_PREFIX + providerId)
   }
 
   if (json) {
     outputJson({ provider: providerId, signedOut: true, revoked: shouldRevoke })
+
     return
   }
+
   success(`Signed out of ${client.provider.label}.`)
 }
 
@@ -401,41 +543,53 @@ export async function refresh({ args, json }: CommandContext): Promise<void> {
 
   try {
     const tokens = await client.refresh()
+
     if (json) {
       outputJson(summarize(providerId, tokens, flagString(args.flags, 'account')))
+
       return
     }
+
     success(`Refreshed ${client.provider.label} — expires in ${formatExpiry(tokens.expiresAt)}.`)
   } catch (error) {
     if (isOAuthError(error) && error.code === 'refresh_failed') {
       throw new CliError(error.message, `Run: ai-oauth-sdk login ${providerId}`)
     }
+
     throw error
   }
 }
 
+/** What a user has to supply before this provider can be used. */
+function describeCredentials(id: string, provider: ProviderConfig): string {
+  if (provider.requiresClientId === false) {
+    return 'none needed'
+  }
+
+  if (id in publicClientIds) {
+    return 'published id'
+  }
+
+  return 'bring your own'
+}
+
 export async function listProviders({ json }: CommandContext): Promise<void> {
   const entries = Object.entries(providers).map(([id, provider]) => {
-    // The CLI opts into a published id where one exists; otherwise you supply one.
-    const published = id in publicClientIds
     return {
       id,
       label: provider.label,
-      flow: provider.redirect.mode === 'custom' ? 'device' : provider.redirect.mode,
-      credentials:
-        provider.requiresClientId === false
-          ? 'none needed'
-          : published
-            ? 'published id'
-            : 'bring your own',
+      flow: describeFlow(provider),
+      credentials: describeCredentials(id, provider),
       experimental: Boolean(provider.experimental),
     }
   })
 
   if (json) {
     outputJson(entries)
+
     return
   }
+
   table(
     ['ID', 'PROVIDER', 'FLOW', 'CREDENTIALS'],
     entries.map((entry) => [
@@ -461,9 +615,14 @@ const SIGNAL_NUMBERS: Record<string, number> = {
  *
  * Keeps the token off the process table and out of shell history, which
  * `--header "Authorization: Bearer $(ai-oauth-sdk token …)"` does not.
+ *
+ * A signalled child has a null exit code, so signals are reported the way a
+ * shell reports them: `ai-oauth-sdk exec … ; echo $?` matches what running the
+ * command directly would have given.
  */
 export async function exec({ args }: CommandContext): Promise<number> {
   const providerId = requireProvider(args, 'exec')
+
   if (args.passthrough.length === 0) {
     throw new CliError(
       'No command to run.',
@@ -476,6 +635,7 @@ export async function exec({ args }: CommandContext): Promise<number> {
   const envVar = flagString(args.flags, 'env-var') ?? 'AI_OAUTH_SDK_TOKEN'
 
   const [command, ...commandArgs] = args.passthrough as [string, ...string[]]
+
   return new Promise<number>((resolve, reject) => {
     const child = spawn(command, commandArgs, {
       stdio: 'inherit',
@@ -492,12 +652,12 @@ export async function exec({ args }: CommandContext): Promise<number> {
     })
 
     child.on('close', (code, signal) => {
-      // A signalled child has a null exit code. Report it the way a shell does,
-      // so `ai-oauth-sdk exec … ; echo $?` matches running the command directly.
       if (signal) {
         resolve(128 + (SIGNAL_NUMBERS[signal] ?? 0))
+
         return
       }
+
       resolve(code ?? 0)
     })
   })

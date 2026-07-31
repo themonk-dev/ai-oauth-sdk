@@ -10,17 +10,31 @@
  *   open http://localhost:3000
  */
 import { createServer } from 'node:http'
-import { createAuthClient, isOAuthError, memoryStorage, publicClientIds } from '@ai-oauth-sdk/core'
+import {
+  createAuthClient,
+  isOAuthError,
+  memoryStorage,
+  publicClientIds,
+  publicClientSecrets,
+} from '@ai-oauth-sdk/core'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const ORIGIN = `http://localhost:${PORT}`
 
 // One shared storage means every request sees the same pending flows. Swap for
 // Redis or a database and this works across several server processes too.
+const providerId = process.env.PROVIDER ?? 'openai'
+
+// CLIENT_ID / CLIENT_SECRET win; otherwise the pair that provider's own CLI
+// publishes. Note that a *web* redirect like this one is not what the published
+// ids are registered for — they expect a loopback URI — so a real run wants
+// your own client with `http://localhost:3000/callback` registered on it.
+const clientSecret = process.env.CLIENT_SECRET ?? publicClientSecrets[providerId]
+
 const client = createAuthClient({
-  provider: process.env.PROVIDER ?? 'openai',
-  // CLIENT_ID wins; otherwise the id that provider's own CLI publishes.
-  clientId: process.env.CLIENT_ID ?? publicClientIds[process.env.PROVIDER ?? 'openai'],
+  provider: providerId,
+  clientId: process.env.CLIENT_ID ?? publicClientIds[providerId],
+  ...(clientSecret ? { clientSecret } : {}),
   redirectUri: `${ORIGIN}/callback`,
   storage: memoryStorage(),
 })
@@ -43,6 +57,7 @@ const server = createServer(async (request, response) => {
       // Hand the caller the state so it can poll /wait/:state independently.
       response.writeHead(302, { Location: authorizeUrl, 'X-Auth-State': state })
       response.end()
+
       return
     }
 
@@ -60,6 +75,7 @@ const server = createServer(async (request, response) => {
               }</code></p>
               <p><a href="/">Back</a></p>`),
       )
+
       return
     }
 
@@ -70,6 +86,7 @@ const server = createServer(async (request, response) => {
       const tokens = await client.waitForAuthorization(state, { timeoutMs: 120_000 })
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify({ accountId: tokens.accountId, email: tokens.email }, null, 2))
+
       return
     }
 

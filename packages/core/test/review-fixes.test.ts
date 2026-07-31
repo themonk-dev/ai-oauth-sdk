@@ -116,6 +116,7 @@ describe('storage adapters keep keys() so prune() works', () => {
   /** The three methods every store has, over a plain Map. */
   function fakeWebStorage() {
     const map = new Map<string, string>()
+
     return {
       getItem: (key: string) => map.get(key) ?? null,
       setItem: (key: string, value: string) => void map.set(key, value),
@@ -155,6 +156,7 @@ describe('storage adapters keep keys() so prune() works', () => {
         codeVerifier: `verifier-${i}`,
       })
     }
+
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(await registry.prune()).toBe(5)
@@ -277,6 +279,7 @@ describe('the 401 retry never replays a drained body', () => {
       raw: {},
     }
     await client.setTokens(tokens)
+
     return client
   }
 
@@ -287,6 +290,7 @@ describe('the 401 retry never replays a drained body', () => {
     const api = createAuthenticatedFetch(client, {
       fetch: async (_url, init) => {
         seen.push(init?.body ? await new Response(init.body as BodyInit).text() : '<none>')
+
         return new Response('', { status: 401 })
       },
     })
@@ -316,6 +320,7 @@ describe('the 401 retry never replays a drained body', () => {
     const api = createAuthenticatedFetch(client, {
       fetch: async (_url, init) => {
         seen.push(String(init?.body))
+
         return new Response('', { status: seen.length === 1 ? 401 : 200 })
       },
     })

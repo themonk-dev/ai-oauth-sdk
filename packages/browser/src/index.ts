@@ -49,6 +49,7 @@ export async function loginWithPopup(
 ): Promise<TokenSet> {
   const { signal, timeoutMs, scopes, ...clientOptions } = options
   const client = createBrowserAuthClient({ ...clientOptions, provider })
+
   return client.login({
     receiver: popupReceiver(options.redirectUri ? { redirectUri: options.redirectUri } : {}),
     ...(signal ? { signal } : {}),

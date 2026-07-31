@@ -26,6 +26,7 @@ describe('sha256 (pure JS fallback)', () => {
     // 55/56/63/64/65 are where SHA-256 padding logic goes wrong if mishandled.
     for (const length of [0, 1, 55, 56, 63, 64, 65, 119, 120, 127, 128, 1000]) {
       const input = new Uint8Array(length)
+
       for (let i = 0; i < length; i++) {
         input[i] = (i * 7 + 13) & 0xff
       }
@@ -46,9 +47,11 @@ describe('base64url', () => {
   it('round-trips arbitrary bytes', () => {
     for (let length = 0; length < 40; length++) {
       const bytes = new Uint8Array(length)
+
       for (let i = 0; i < length; i++) {
         bytes[i] = (i * 31 + 7) & 0xff
       }
+
       expect(Array.from(base64UrlDecode(base64UrlEncode(bytes)))).toEqual(Array.from(bytes))
     }
   })
@@ -74,6 +77,7 @@ describe('base64url', () => {
 describe('utf8 fallback encoder', () => {
   it('matches TextEncoder including surrogate pairs', () => {
     const samples = ['', 'ascii', 'héllo', '世界', '🌍🚀', 'mixed 世界 🌍 text']
+
     for (const sample of samples) {
       expect(Array.from(utf8Encode(sample))).toEqual(Array.from(new TextEncoder().encode(sample)))
       expect(utf8Decode(utf8Encode(sample))).toBe(sample)
@@ -99,6 +103,7 @@ describe('PKCE', () => {
       value: { getRandomValues: original.getRandomValues.bind(original) },
       configurable: true,
     })
+
     try {
       const fallback = await deriveChallenge(createDefaultCrypto(), verifier, 'S256')
       expect(fallback).toBe(native)
@@ -115,12 +120,14 @@ describe('PKCE', () => {
   it('generates 43-character verifiers, as the RFC recommends', () => {
     const crypto = createDefaultCrypto()
     const seen = new Set<string>()
+
     for (let i = 0; i < 50; i++) {
       const verifier = base64UrlEncode(crypto.randomBytes(32))
       expect(verifier).toHaveLength(43)
       expect(verifier).toMatch(/^[A-Za-z0-9\-_]+$/)
       seen.add(verifier)
     }
+
     expect(seen.size).toBe(50)
   })
 })
@@ -129,6 +136,7 @@ describe('secure randomness', () => {
   it('refuses to run without a CSPRNG rather than falling back to Math.random', () => {
     const original = globalThis.crypto
     Object.defineProperty(globalThis, 'crypto', { value: {}, configurable: true })
+
     try {
       expect(() => createDefaultCrypto().randomBytes(32)).toThrowError(
         /No cryptographically secure random source/,

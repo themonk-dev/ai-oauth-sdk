@@ -20,16 +20,19 @@ describe('encodeQuery — parity with URLSearchParams', () => {
   // other runtime would have sent, so assert it rather than assume it.
   it('matches URLSearchParams across the ASCII range', () => {
     const mismatches: string[] = []
+
     for (let code = 0; code < 128; code++) {
       for (const suffix of ['', 'x', ' ', '%']) {
         const value = String.fromCharCode(code) + suffix
         const ours = encodeQuery({ k: value })
         const theirs = new URLSearchParams({ k: value }).toString()
+
         if (ours !== theirs) {
           mismatches.push(`${JSON.stringify(value)}: ${ours} !== ${theirs}`)
         }
       }
     }
+
     expect(mismatches).toEqual([])
   })
 
@@ -44,6 +47,7 @@ describe('encodeQuery — parity with URLSearchParams', () => {
       'a+b&c=d%20e',
       '',
     ]
+
     for (const value of values) {
       expect(encodeQuery({ k: value })).toBe(new URLSearchParams({ k: value }).toString())
     }
@@ -116,6 +120,7 @@ describe('the OAuth path on a runtime with no usable URL/URLSearchParams', () =>
     delete globalThis.URL
     // @ts-expect-error deliberately removing a global for the duration
     delete globalThis.URLSearchParams
+
     try {
       return body()
     } finally {

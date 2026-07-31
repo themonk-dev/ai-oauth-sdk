@@ -27,6 +27,7 @@ async function followAuthorization(authorizationUrl: string): Promise<{ code: st
   const response = await fetch(authorizationUrl, { redirect: 'manual' })
   const location = response.headers.get('location')!
   const params = new URL(location).searchParams
+
   return { code: params.get('code')!, state: params.get('state')! }
 }
 
@@ -205,6 +206,7 @@ describe('waitForAuthorization — the state-keyed handoff', () => {
 
   it('propagates a failure to waiters', async () => {
     const failing = await startFakeAuthServer({ failWith: 'invalid_grant' })
+
     try {
       const client = createAuthClient({
         provider: testProvider(failing.url),
@@ -251,12 +253,14 @@ describe('waitForAuthorization — the state-keyed handoff', () => {
 describe('token refresh', () => {
   it('refreshes automatically once the token is inside the skew window', async () => {
     const shortLived = await startFakeAuthServer({ expiresIn: 1 })
+
     try {
       const client = createAuthClient({
         provider: testProvider(shortLived.url),
         redirectUri: 'http://localhost:9999/callback',
         storage: memoryStorage(),
-        expirySkewMs: 60_000, // 1s lifetime is always inside a 60s skew
+        /* A 1s lifetime is always inside a 60s skew. */
+        expirySkewMs: 60_000,
       })
       const authorization = await client.createAuthorization()
       const { code, state } = await followAuthorization(authorization.url)
@@ -287,6 +291,7 @@ describe('token refresh', () => {
 
   it('collapses concurrent refreshes into a single request', async () => {
     const slow = await startFakeAuthServer({ expiresIn: 1, delayMs: 40 })
+
     try {
       const client = createAuthClient({
         provider: testProvider(slow.url),
@@ -309,6 +314,7 @@ describe('token refresh', () => {
 
   it('keeps the old refresh token when renewal omits one', async () => {
     const rotating = await startFakeAuthServer({ expiresIn: 1, omitRefreshOnRenew: true })
+
     try {
       const client = createAuthClient({
         provider: testProvider(rotating.url),
@@ -329,6 +335,7 @@ describe('token refresh', () => {
 
   it('reports a missing refresh token clearly', async () => {
     const noRefresh = await startFakeAuthServer({ extraTokenFields: { refresh_token: undefined } })
+
     try {
       const client = createAuthClient({
         provider: testProvider(noRefresh.url),
@@ -343,6 +350,7 @@ describe('token refresh', () => {
 
   it('adopts a token another process already refreshed', async () => {
     const shortLived = await startFakeAuthServer({ expiresIn: 1 })
+
     try {
       // Two clients over one store, as two terminal windows would be.
       const storage = memoryStorage()
@@ -377,6 +385,7 @@ describe('token refresh', () => {
 
   it('still refreshes when the stored token is also expired', async () => {
     const shortLived = await startFakeAuthServer({ expiresIn: 1 })
+
     try {
       const client = createAuthClient({
         provider: testProvider(shortLived.url),
@@ -473,6 +482,7 @@ describe('login() with a receiver', () => {
     id: 'scripted',
     async start() {
       let result: Promise<{ code: string; state: string }> | undefined
+
       return {
         redirectUri,
         async present(url) {
@@ -509,7 +519,12 @@ describe('configuration errors', () => {
     // The Passport model: nothing is silently defaulted, so a missing
     // credential is always an explicit error rather than a surprise identity.
     for (const id of Object.keys(providers)) {
-      if (id === 'openrouter') {continue} // sends no client_id at all
+      /* OpenRouter sends no client_id at all. */
+      if (id === 'openrouter') {
+        continue
+      }
+
+
       expect(() => createAuthClient({ provider: id }), id).toThrowError(OAuthError)
     }
   })
@@ -527,18 +542,21 @@ describe('configuration errors', () => {
     }
   })
 
-  it('points at the vendor console when there is no published id', () => {
+  // Every built-in now has a published id to point at, so the guidance is
+  // about how to opt into one rather than where to go and register your own.
+  it('names the published credential in the error', () => {
     try {
       createAuthClient({ provider: 'google' })
       expect.unreachable('should have thrown')
     } catch (error) {
-      expect((error as OAuthError).message).toMatch(/Google Cloud console/)
+      expect((error as OAuthError).message).toMatch(/publicClientIds\['google'\]/)
     }
+
     try {
       createAuthClient({ provider: 'xai' })
       expect.unreachable('should have thrown')
     } catch (error) {
-      expect((error as OAuthError).message).toMatch(/does not publish a public client id/)
+      expect((error as OAuthError).message).toMatch(/publicClientIds\['xai'\]/)
     }
   })
 
@@ -575,6 +593,7 @@ describe('provider-specific token handling', () => {
         'https://api.openai.com/auth': { chatgpt_account_id: 'acct-123' },
       },
     })
+
     try {
       const client = createAuthClient({
         provider: {
@@ -604,6 +623,7 @@ describe('provider-specific token handling', () => {
         'https://api.openai.com/auth': { organizations: [{ id: 'org-777' }, { id: 'org-888' }] },
       },
     })
+
     try {
       const { openai } = await import('../src/providers/openai.js')
       const client = createAuthClient({
@@ -630,6 +650,7 @@ describe('provider-specific token handling', () => {
     const withAccount = await startFakeAuthServer({
       extraTokenFields: { account: { uuid: 'uuid-9', email_address: 'claude@example.com' } },
     })
+
     try {
       const { anthropic } = await import('../src/providers/anthropic.js')
       const client = createAuthClient({

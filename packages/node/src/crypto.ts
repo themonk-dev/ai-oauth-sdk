@@ -22,6 +22,7 @@ export function nodeCrypto(): CryptoAdapter {
     },
     async sha256(data) {
       const digest = await webcrypto.subtle.digest('SHA-256', Uint8Array.from(data))
+
       return new Uint8Array(digest)
     },
   }

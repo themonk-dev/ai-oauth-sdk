@@ -21,6 +21,7 @@ export {
   parseStandardCallback,
   providerFromDiscovery,
   publicClientIds,
+  publicClientSecrets,
   providers,
   qwen,
   readCallback,
@@ -35,18 +36,18 @@ export type {
   PublicClientIdProvider,
 } from './providers/index.js'
 
-// observable state, shared by every UI binding
+/* observable state, shared by every UI binding */
 export { createAuthStore } from './store.js'
 export type { AuthState, AuthStore, AuthStoreOptions, LoginOverrides } from './store.js'
 
-// using the token
+/* using the token */
 export { createAuthenticatedFetch, fetchUserInfo } from './fetch.js'
 export type { AuthenticatedFetchOptions, UserInfo } from './fetch.js'
 export { fetchWithSignal } from './http.js'
 export { revokeToken } from './revoke.js'
 export type { RevocableTokenType, RevokeTokenInput } from './revoke.js'
 
-// flow primitives
+/* flow primitives */
 export { buildAuthorizationUrl, buildLoopbackRedirectUri, defaultRedirectUri } from './authorize.js'
 export type { BuildAuthorizationUrlInput } from './authorize.js'
 export { DEFAULT_EXPIRY_SKEW_MS, exchangeCode, isExpired, refreshTokens } from './token.js'
@@ -57,11 +58,13 @@ export type { AuthorizationRegistryOptions } from './registry.js'
 export { manualReceiver } from './receivers/manual.js'
 export type { ManualReceiverOptions } from './receivers/manual.js'
 export { pollDeviceToken, startDeviceAuthorization } from './receivers/device.js'
+export { openaiDeviceFlow } from './receivers/openai-device.js'
 export type {
   DeviceCodeResponse,
   PollDeviceTokenInput,
   StartDeviceAuthorizationInput,
 } from './receivers/device.js'
+export type { DeviceFlow, DeviceFlowPollInput, DeviceFlowStartInput } from './types.js'
 
 export { createDefaultCrypto, hasSecureRandom } from './crypto/adapter.js'
 export type { CryptoAdapter } from './crypto/adapter.js'
@@ -74,7 +77,7 @@ export { decodeJwtPayload, getClaim, getStringClaim } from './jwt.js'
 export { fromSyncStorage, memoryStorage, prefixedStorage } from './storage.js'
 export type { SyncStorageLike } from './storage.js'
 
-// hardening helpers
+/* hardening helpers */
 export { timingSafeEqual } from './compare.js'
 export { REDACTED, redactSecrets, safeSnippet } from './redact.js'
 

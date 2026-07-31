@@ -156,6 +156,7 @@ describe('waitFor', () => {
 
   it('does not fire the timeout after resolving', async () => {
     vi.useFakeTimers()
+
     try {
       const registry = make()
       const waiting = registry.waitFor('s1', { timeoutMs: 50 })
@@ -227,6 +228,7 @@ describe('abandoned flows are swept from storage', () => {
     for (let i = 0; i < 5; i++) {
       await registry.create({ state: `abandoned-${i}`, provider: 'p', redirectUri: 'http://x/cb' })
     }
+
     expect((await storage.keys!()).filter((k) => k.startsWith('pending:'))).toHaveLength(5)
 
     now += 500
@@ -267,6 +269,7 @@ describe('abandoned flows are swept from storage', () => {
     for (let i = 0; i < 3; i++) {
       await registry.create({ state: `s${i}`, provider: 'p', redirectUri: 'http://x/cb' })
     }
+
     now += 500
     expect(await registry.prune()).toBe(3)
     expect(await registry.prune()).toBe(0)
@@ -296,17 +299,20 @@ describe('buffered results are bounded', () => {
     for (let i = 0; i < 500; i++) {
       registry.resolve(`state-${i}`, tokens())
     }
+
     expect(registry.bufferedCount).toBeLessThanOrEqual(10)
   })
 
   it('evicts the oldest first', () => {
     const registry = new AuthorizationRegistry({ storage: memoryStorage(), maxSettled: 3 })
+
     for (const state of ['a', 'b', 'c', 'd']) {
       registry.resolve(state, tokens(state))
     }
 
     // 'a' was pushed out; 'd' is the newest and must survive.
     expect(registry.bufferedCount).toBe(3)
+
     return expect(registry.waitFor('d')).resolves.toMatchObject({ accessToken: 'd' })
   })
 
@@ -341,6 +347,7 @@ describe('buffered results are bounded', () => {
     for (let i = 0; i < 5; i++) {
       registry.resolve(`old-${i}`, tokens())
     }
+
     expect(registry.bufferedCount).toBe(5)
 
     now += 500
@@ -366,11 +373,13 @@ describe('buffered results are bounded', () => {
 describe('cleanup', () => {
   it('does not retain empty waiter sets after a timeout', async () => {
     const registry = make()
+
     for (let i = 0; i < 100; i++) {
       await expect(registry.waitFor(`s${i}`, { timeoutMs: 1 })).rejects.toMatchObject({
         code: 'timeout',
       })
     }
+
     // Nothing buffered, and no per-state residue left behind.
     expect(registry.bufferedCount).toBe(0)
   })

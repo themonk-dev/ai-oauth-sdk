@@ -18,6 +18,8 @@ export { nodeCrypto } from './crypto.js'
 export { loopbackReceiver } from './loopback.js'
 export type { LoopbackReceiverOptions } from './loopback.js'
 export { promptReceiver } from './prompt.js'
+export { hybridReceiver } from './hybrid.js'
+export type { HybridReceiverOptions } from './hybrid.js'
 export type { PromptReceiverOptions } from './prompt.js'
 export { defaultAuthDir, fileStorage, listStoredSessions } from './storage.js'
 export type { FileStorageOptions, StoredSession } from './storage.js'
@@ -30,17 +32,27 @@ export * from '@ai-oauth-sdk/core'
  * same host, so headless environments (no `DISPLAY`, or an explicit SSH
  * session) fall back to paste. Providers that only support a hosted redirect
  * skip loopback entirely.
+ *
+ * A provider that supports *both* — Anthropic, which prefers loopback locally
+ * but publishes a page that displays the code — takes the hosted route once the
+ * machine is headless. Sending a remote box's `localhost` URI to a browser on
+ * the user's laptop produces a redirect nothing can receive and a command that
+ * hangs, with no device flow to fall back to.
  */
-export function defaultReceiver(provider: { redirect: { mode: string } }): CallbackReceiver {
+export function defaultReceiver(provider: {
+  redirect: { mode: string; hostedUri?: string }
+}): CallbackReceiver {
   const isRemote = Boolean(process.env['SSH_TTY'] ?? process.env['SSH_CONNECTION'])
-  if (provider.redirect.mode === 'loopback' && canOpenBrowser() && !isRemote) {
+  const isHeadless = !canOpenBrowser() || isRemote
+
+  if (provider.redirect.mode === 'loopback' && !isHeadless) {
     return loopbackReceiver()
   }
-  if (provider.redirect.mode === 'hosted') {
+
+  if (provider.redirect.mode === 'hosted' || provider.redirect.hostedUri) {
     return promptReceiver()
   }
-  // Loopback provider on a headless box: still print the URL, but keep the
-  // local server so a forwarded port (ssh -L) works.
+
   return loopbackReceiver({ openBrowser: false, onAuthorizationUrl: (url) => {
     process.stdout.write(`\nOpen this URL to sign in:\n\n  ${url}\n\n`)
   } })
@@ -61,14 +73,17 @@ export interface NodeClientOptions extends Omit<AuthClientOptions, 'storage'> {
  */
 export function createNodeAuthClient(options: NodeClientOptions): AuthClient {
   const { persist = true, authDir, ...rest } = options
+
+  let storage = rest.storage
+
+  if (!storage && persist) {
+    storage = fileStorage(authDir ? { dir: authDir } : {})
+  }
+
   return createAuthClient({
     crypto: nodeCrypto(),
     ...rest,
-    ...(rest.storage
-      ? { storage: rest.storage }
-      : persist
-        ? { storage: fileStorage(authDir ? { dir: authDir } : {}) }
-        : {}),
+    ...(storage ? { storage } : {}),
   })
 }
 
@@ -93,6 +108,7 @@ export async function login(
 ): Promise<TokenSet> {
   const { receiver, signal, timeoutMs, ...clientOptions } = options
   const client = createNodeAuthClient({ ...clientOptions, provider })
+
   return client.login({
     receiver: receiver ?? defaultReceiver(client.provider),
     ...(signal ? { signal } : {}),

@@ -21,6 +21,18 @@ export interface AuthenticatedFetchOptions {
   baseUrl?: string
   /** Extra headers merged into every request. */
   headers?: Record<string, string>
+  /**
+   * Let an `Authorization` header on the request survive instead of replacing
+   * it with the managed token. Default false.
+   *
+   * This defaults to off because the common wrapper — an SDK that takes a
+   * `fetch` and an `apiKey` — sets `Authorization` from its own `apiKey`
+   * before ever calling us. The Vercel AI SDK does exactly that, and sends the
+   * header even when `apiKey` is empty or omitted, so deferring to the caller
+   * silently shipped a placeholder credential while the real token was
+   * refreshed and then discarded.
+   */
+  respectCallerAuthorization?: boolean
 }
 
 /**
@@ -29,9 +41,10 @@ export interface AuthenticatedFetchOptions {
  * Strings, buffers, `Blob`s, `URLSearchParams` and `FormData` are all
  * re-serialised on each send. A `ReadableStream` (and anything exotic enough
  * not to be recognised here) is read once and then locked.
+ *
+ * Each global is feature-detected, because not every runtime defines them all.
  */
 function isReplayable(body: RequestInit['body']): boolean {
-  // Each global is feature-detected: not every runtime defines all of them.
   return (
     body === undefined ||
     body === null ||
@@ -55,6 +68,26 @@ function isReplayable(body: RequestInit['body']): boolean {
  * const api = createAuthenticatedFetch(client)
  * const response = await api('/v1/models')
  * ```
+ *
+ * It also drops straight into any SDK that accepts a `fetch`, which is how you
+ * use an OAuth token with a client built for API keys:
+ *
+ * ```ts
+ * const openai = createOpenAI({
+ *   apiKey: 'unused', // the SDK insists on one; this fetch replaces it
+ *   baseURL: client.provider.apiBaseUrl,
+ *   fetch: createAuthenticatedFetch(client),
+ * })
+ * ```
+ *
+ * The caller's signal is stripped from `init` and passed separately, because it
+ * may come from another realm and `fetchWithSignal` is what knows how to handle
+ * that. A 401 whose body cannot be replayed is returned as-is rather than
+ * throwing, which would turn a recoverable failure into a hard one; the 401's
+ * own body is cancelled first, since leaving it undrained leaks a socket on
+ * some runtimes. If the retry's refresh fails, the error is rewritten to say so
+ * — the original 401 is the useful diagnosis, not a network error from the
+ * retry path.
  */
 export function createAuthenticatedFetch(
   client: AuthClient,
@@ -67,6 +100,7 @@ export function createAuthenticatedFetch(
     if (!baseUrl || /^[a-z][a-z0-9+.-]*:/i.test(input)) {
       return input
     }
+
     return `${baseUrl.replace(/\/$/, '')}/${input.replace(/^\//, '')}`
   }
 
@@ -74,11 +108,12 @@ export function createAuthenticatedFetch(
     const accessToken = await client.getAccessToken(forceRefresh ? { forceRefresh: true } : {})
     const tokens = await client.getTokens()
 
-    // Start from the caller's headers so an explicit Authorization still wins.
     const headers = new Headers(init?.headers)
-    if (!headers.has('Authorization')) {
+
+    if (!options.respectCallerAuthorization || !headers.has('Authorization')) {
       headers.set('Authorization', `${tokens?.tokenType ?? 'Bearer'} ${accessToken}`)
     }
+
     if (tokens) {
       for (const [key, value] of Object.entries(client.provider.apiHeaders?.(tokens) ?? {})) {
         if (!headers.has(key)) {
@@ -86,18 +121,18 @@ export function createAuthenticatedFetch(
         }
       }
     }
+
     for (const [key, value] of Object.entries(options.headers ?? {})) {
       if (!headers.has(key)) {
         headers.set(key, value)
       }
     }
+
     return headers
   }
 
   return async (input: string, init?: RequestInit): Promise<Response> => {
     const url = resolveUrl(input)
-    // The caller's signal may come from another realm; fetchWithSignal handles
-    // that, so strip it from `init` and pass it separately.
     const { signal, ...rest } = init ?? {}
 
     const response = await fetchWithSignal(
@@ -106,18 +141,15 @@ export function createAuthenticatedFetch(
       { ...rest, headers: await buildHeaders(init, false) },
       signal ?? undefined,
     )
+
     if (response.status !== 401 || options.retryOnUnauthorized === false) {
       return response
     }
-    // Replaying a body the first attempt already drained throws rather than
-    // retrying, which would turn a recoverable 401 into a hard failure. Hand
-    // the 401 back instead and let the caller decide.
+
     if (!isReplayable(rest.body)) {
       return response
     }
 
-    // The body of a 401 is not interesting, but leaving it undrained leaks a
-    // socket on some runtimes.
     void response.body?.cancel().catch(() => {})
 
     try {
@@ -128,8 +160,6 @@ export function createAuthenticatedFetch(
         signal ?? undefined,
       )
     } catch (error) {
-      // A failed refresh should surface the original 401's meaning, not a
-      // confusing network error from the retry path.
       if (error instanceof OAuthError && error.code === 'refresh_failed') {
         throw new OAuthError(
           'refresh_failed',
@@ -138,6 +168,7 @@ export function createAuthenticatedFetch(
           { cause: error, status: 401 },
         )
       }
+
       throw error
     }
   }
@@ -162,6 +193,7 @@ export async function fetchUserInfo(
   options: { fetch?: FetchLike; signal?: AbortSignal } = {},
 ): Promise<UserInfo> {
   const { userInfoUrl } = client.provider
+
   if (!userInfoUrl) {
     throw new OAuthError(
       'configuration_error',
@@ -184,5 +216,6 @@ export async function fetchUserInfo(
       { status: response.status },
     )
   }
+
   return (await response.json()) as UserInfo
 }

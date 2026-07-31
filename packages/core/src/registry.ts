@@ -58,7 +58,8 @@ export class AuthorizationRegistry {
    * Most completions have no waiter — a CLI that calls `completeAuthorization`
    * directly never waits — so without expiry this map would grow once per login
    * for the lifetime of a long-running server. Entries expire, and a hard cap
-   * bounds it even if the clock misbehaves.
+   * bounds it even if the clock misbehaves — evicting from the front, since a
+   * `Map` preserves insertion order and its first key is therefore the oldest.
    */
   #buffer(state: string, result: { tokens?: TokenSet; error?: unknown }): void {
     const now = this.#now()
@@ -68,18 +69,30 @@ export class AuthorizationRegistry {
         this.#settled.delete(key)
       }
     }
-    // Map preserves insertion order, so the first key is the oldest.
+
     while (this.#settled.size >= this.#maxSettled) {
       const oldest = this.#settled.keys().next()
+
       if (oldest.done) {
         break
       }
+
       this.#settled.delete(oldest.value)
     }
 
     this.#settled.set(state, { ...result, at: now })
   }
 
+  /**
+   * Persists a started flow, and writes a pointer to it as the newest one so
+   * that providers which never echo `state` still have something to resolve
+   * against. See {@link consumeLatest}.
+   *
+   * Pruning runs from here because abandoned flows are the norm, not the
+   * exception — the user closes the browser or hits Ctrl-C and nothing ever
+   * consumes the record. Without it, a CLI's credential file grows by one entry
+   * per abandoned login, forever.
+   */
   async create(
     input: Omit<PendingAuthorization, 'createdAt' | 'expiresAt'>,
   ): Promise<PendingAuthorization> {
@@ -90,15 +103,9 @@ export class AuthorizationRegistry {
       expiresAt: createdAt + this.#ttlMs,
     }
     await this.#storage.set(PENDING_PREFIX + pending.state, JSON.stringify(pending))
-    // Pointer to the newest flow, so providers that never echo `state` still
-    // have something to resolve against. See `consumeLatest`.
     await this.#storage.set(LATEST_PREFIX + pending.provider, pending.state)
-
-    // Abandoned flows are the norm, not the exception — the user closes the
-    // browser or hits Ctrl-C, and nothing ever consumes the record. Without
-    // this, a CLI's credential file grows by one entry per abandoned login,
-    // forever.
     await this.prune()
+
     return pending
   }
 
@@ -116,29 +123,37 @@ export class AuthorizationRegistry {
 
     let removed = 0
     const now = this.#now()
+
     for (const key of await this.#storage.keys()) {
       if (!key.startsWith(PENDING_PREFIX)) {
         continue
       }
+
       const stored = await this.#storage.get(key)
+
       if (!stored) {
         continue
       }
 
       let record: PendingAuthorization | undefined
+
       try {
         record = JSON.parse(stored) as PendingAuthorization
       } catch {
-        // Unparseable records can never be used; drop them too.
+        /* Unparseable records can never be used, so they are dropped below. */
       }
+
       if (record === undefined || now > record.expiresAt) {
         await this.#storage.delete(key)
+
         if (record) {
           await this.#clearLatestPointer(record.provider, record.state)
         }
+
         removed++
       }
     }
+
     return removed
   }
 
@@ -152,21 +167,25 @@ export class AuthorizationRegistry {
    */
   async consumeLatest(provider: string): Promise<PendingAuthorization> {
     const state = await this.#storage.get(LATEST_PREFIX + provider)
+
     if (!state) {
       throw new OAuthError(
         'unknown_state',
         `No pending authorization for provider "${provider}".`,
       )
     }
+
     return this.consume(state)
   }
 
   /** Reads a pending authorization without consuming it. */
   async get(state: string): Promise<PendingAuthorization | undefined> {
     const stored = await this.#storage.get(PENDING_PREFIX + state)
+
     if (!stored) {
       return undefined
     }
+
     try {
       return JSON.parse(stored) as PendingAuthorization
     } catch {
@@ -193,6 +212,7 @@ export class AuthorizationRegistry {
    */
   async consume(state: string): Promise<PendingAuthorization> {
     const pending = await this.get(state)
+
     if (!pending) {
       throw new OAuthError(
         'unknown_state',
@@ -201,18 +221,21 @@ export class AuthorizationRegistry {
         { state },
       )
     }
+
     await this.#storage.delete(PENDING_PREFIX + state)
     await this.#clearLatestPointer(pending.provider, state)
+
     if (this.#now() > pending.expiresAt) {
       throw new OAuthError('state_expired', `Authorization for state "${state}" expired.`, { state })
     }
+
     return pending
   }
 
   async delete(state: string): Promise<void> {
-    // Read before deleting, so the pointer can be cleaned up too.
     const pending = await this.get(state)
     await this.#storage.delete(PENDING_PREFIX + state)
+
     if (pending) {
       await this.#clearLatestPointer(pending.provider, state)
     }
@@ -223,18 +246,25 @@ export class AuthorizationRegistry {
    *
    * Safe to call before or after the result lands — results that arrive early
    * are buffered, so there is no race between starting the wait and the
-   * callback arriving.
+   * callback arriving. An *expired* buffer is treated as absent: the caller
+   * waits, exactly as it would have if nothing had ever been buffered.
+   *
+   * The timer is unreferenced so it cannot hold a CLI process open on its own,
+   * and `cleanup` drops the waiter set once it empties — otherwise a server
+   * that times out many waits keeps one `Map` entry per state forever.
    */
   waitFor(state: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<TokenSet> {
     const alreadySettled = this.#settled.get(state)
+
     if (alreadySettled) {
       this.#settled.delete(state)
-      // An expired buffer is treated as absent: the caller waits, as it would
-      // have if the result had never been buffered at all.
+
       if (this.#now() - alreadySettled.at <= this.#settledTtlMs) {
-        return alreadySettled.error !== undefined
-          ? Promise.reject(alreadySettled.error)
-          : Promise.resolve(alreadySettled.tokens as TokenSet)
+        if (alreadySettled.error !== undefined) {
+          return Promise.reject(alreadySettled.error)
+        }
+
+        return Promise.resolve(alreadySettled.tokens as TokenSet)
       }
     }
 
@@ -256,11 +286,11 @@ export class AuthorizationRegistry {
         if (timer) {
           clearTimeout(timer)
         }
+
         options.signal?.removeEventListener('abort', onAbort)
         const set = this.#waiters.get(state)
         set?.delete(waiter)
-        // Drop the empty set too, or a server that times out many waits keeps
-        // one entry per state forever.
+
         if (set && set.size === 0) {
           this.#waiters.delete(state)
         }
@@ -274,8 +304,10 @@ export class AuthorizationRegistry {
 
       if (options.signal?.aborted) {
         reject(new OAuthError('aborted', `Authorization for state "${state}" was aborted.`, { state }))
+
         return
       }
+
       options.signal?.addEventListener('abort', onAbort, { once: true })
 
       if (options.timeoutMs !== undefined) {
@@ -288,15 +320,16 @@ export class AuthorizationRegistry {
             ),
           )
         }, options.timeoutMs)
-        // Do not hold a CLI process open purely for this timer.
         ;(timer as { unref?: () => void }).unref?.()
       }
 
       let set = this.#waiters.get(state)
+
       if (!set) {
         set = new Set()
         this.#waiters.set(state, set)
       }
+
       set.add(waiter)
     })
   }
@@ -304,11 +337,15 @@ export class AuthorizationRegistry {
   /** Hands `tokens` to everyone waiting on `state`. */
   resolve(state: string, tokens: TokenSet): void {
     const waiters = this.#waiters.get(state)
+
     if (!waiters?.size) {
       this.#buffer(state, { tokens })
+
       return
     }
+
     this.#waiters.delete(state)
+
     for (const waiter of waiters) {
       waiter.resolve(tokens)
     }
@@ -317,11 +354,15 @@ export class AuthorizationRegistry {
   /** Fails everyone waiting on `state`. */
   reject(state: string, error: unknown): void {
     const waiters = this.#waiters.get(state)
+
     if (!waiters?.size) {
       this.#buffer(state, { error })
+
       return
     }
+
     this.#waiters.delete(state)
+
     for (const waiter of waiters) {
       waiter.reject(error)
     }

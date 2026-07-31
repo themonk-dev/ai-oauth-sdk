@@ -19,6 +19,45 @@ interface TokenEndpointResponse {
   [key: string]: unknown
 }
 
+/**
+ * Pulls a printable error out of a token response.
+ *
+ * The spec says `error` and `error_description` are strings. Providers disagree:
+ * OpenAI nests `{"error":{"message":…,"type":…,"code":…}}`, and some gateways
+ * return `{"detail":"…"}`. Anything that is not a string is unwrapped where we
+ * recognise the shape and dropped otherwise, so the caller falls back to a
+ * snippet of the raw body rather than printing `[object Object]`.
+ *
+ * Every extracted string goes through {@link safeSnippet}. These fields come
+ * from the provider, not from us: a gateway that reflects the request would
+ * otherwise put a live `refresh_token` into the error message, and SECURITY.md
+ * requires anything quoted out of a response to be redacted first.
+ */
+function readTokenError(parsed: TokenEndpointResponse): {
+  error?: string
+  description?: string
+} {
+  const asString = (value: unknown): string | undefined => {
+    if (typeof value !== 'string' || !value) {
+      return undefined
+    }
+
+    return safeSnippet(value)
+  }
+
+  const nested = typeof parsed.error === 'object' && parsed.error !== null
+    ? (parsed.error as Record<string, unknown>)
+    : undefined
+
+  return {
+    error: asString(parsed.error) ?? asString(nested?.['type']) ?? asString(nested?.['code']),
+    description:
+      asString(parsed.error_description) ??
+      asString(nested?.['message']) ??
+      asString(parsed['detail']),
+  }
+}
+
 function encodeBody(params: Record<string, string>, style: 'form' | 'json'): {
   body: string
   contentType: string
@@ -26,9 +65,16 @@ function encodeBody(params: Record<string, string>, style: 'form' | 'json'): {
   if (style === 'json') {
     return { body: JSON.stringify(params), contentType: 'application/json' }
   }
+
   return { body: encodeQuery(params), contentType: 'application/x-www-form-urlencoded' }
 }
 
+/**
+ * Posts to the token endpoint and returns the parsed body.
+ *
+ * A provider's `parseTokenResponse` runs before the error check, because one
+ * with a non-standard success shape may also report errors differently.
+ */
 async function postToTokenEndpoint(
   provider: ProviderConfig,
   params: Record<string, string>,
@@ -55,6 +101,7 @@ async function postToTokenEndpoint(
 
   const text = await response.text()
   let parsed: TokenEndpointResponse
+
   try {
     parsed = text ? (JSON.parse(text) as TokenEndpointResponse) : {}
   } catch {
@@ -65,21 +112,20 @@ async function postToTokenEndpoint(
     )
   }
 
-  // Normalize before the error check: a provider with a non-standard success
-  // shape may also report errors differently.
   if (provider.parseTokenResponse && response.ok) {
     parsed = provider.parseTokenResponse(parsed as Record<string, unknown>) as TokenEndpointResponse
   }
 
   if (!response.ok || parsed.error) {
-    const detail = parsed.error_description ?? parsed.error ?? safeSnippet(text)
+    const { error, description } = readTokenError(parsed)
+    const detail = description ?? error ?? safeSnippet(text)
     throw new OAuthError(
       'token_request_failed',
       `Token request to ${provider.tokenUrl} failed (HTTP ${response.status}): ${detail}`,
       {
         status: response.status,
-        ...(parsed.error ? { providerError: parsed.error } : {}),
-        ...(parsed.error_description ? { providerErrorDescription: parsed.error_description } : {}),
+        ...(error ? { providerError: error } : {}),
+        ...(description ? { providerErrorDescription: description } : {}),
       },
     )
   }
@@ -87,12 +133,20 @@ async function postToTokenEndpoint(
   return parsed
 }
 
+/**
+ * Shapes a token endpoint response into a {@link TokenSet}.
+ *
+ * `previous` carries a renewal's omissions forward. Providers commonly leave
+ * `refresh_token` out of a refresh response, and identity fields with it, so
+ * dropping either would quietly downgrade the stored credential.
+ */
 function toTokenSet(
   provider: ProviderConfig,
   raw: TokenEndpointResponse,
   previous?: TokenSet,
 ): TokenSet {
   const accessToken = raw.access_token
+
   if (typeof accessToken !== 'string' || !accessToken) {
     throw new OAuthError(
       'invalid_token_response',
@@ -102,7 +156,6 @@ function toTokenSet(
 
   const tokens: TokenSet = {
     accessToken,
-    // Providers commonly omit refresh_token on renewal; keep the existing one.
     ...(raw.refresh_token ?? previous?.refreshToken
       ? { refreshToken: raw.refresh_token ?? previous?.refreshToken }
       : {}),
@@ -118,13 +171,15 @@ function toTokenSet(
 
   const enriched = provider.enrichTokens?.(raw as Record<string, unknown>, tokens)
   const merged = enriched ? { ...tokens, ...enriched } : tokens
-  // Carry identity forward when a refresh response omits it.
+
   if (!merged.accountId && previous?.accountId) {
     merged.accountId = previous.accountId
   }
+
   if (!merged.email && previous?.email) {
     merged.email = previous.email
   }
+
   return merged
 }
 
@@ -139,6 +194,14 @@ export interface ExchangeCodeInput {
   signal?: AbortSignal
 }
 
+/**
+ * Trades an authorization code for tokens.
+ *
+ * `state` belongs to the authorization request, not this one, so it is sent
+ * only where a provider opts in. Anthropic accepts it here too, which is why it
+ * was once sent unconditionally — but OpenAI rejects the whole exchange with
+ * "Unknown parameter: 'state'".
+ */
 export async function exchangeCode(input: ExchangeCodeInput): Promise<TokenSet> {
   const { provider } = input
   const params: Record<string, string> = {
@@ -147,17 +210,20 @@ export async function exchangeCode(input: ExchangeCodeInput): Promise<TokenSet> 
     redirect_uri: input.redirectUri,
     ...provider.tokenRequest.extraParams,
   }
+
   if (provider.tokenRequest.includeClientIdInBody !== false) {
     params['client_id'] = input.clientId
   }
+
   if (provider.clientSecret) {
     params['client_secret'] = provider.clientSecret
   }
+
   if (input.codeVerifier) {
     params['code_verifier'] = input.codeVerifier
   }
-  // Anthropic validates `state` on the token request as well as the redirect.
-  if (input.state) {
+
+  if (input.state && provider.tokenRequest.includeState) {
     params['state'] = input.state
   }
 
@@ -167,6 +233,7 @@ export async function exchangeCode(input: ExchangeCodeInput): Promise<TokenSet> 
     input.fetchImpl ?? globalThis.fetch,
     input.signal,
   )
+
   return toTokenSet(provider, raw)
 }
 
@@ -180,6 +247,7 @@ export interface RefreshTokensInput {
 
 export async function refreshTokens(input: RefreshTokensInput): Promise<TokenSet> {
   const { provider, tokens } = input
+
   if (!tokens.refreshToken) {
     throw new OAuthError(
       'refresh_failed',
@@ -192,12 +260,15 @@ export async function refreshTokens(input: RefreshTokensInput): Promise<TokenSet
     refresh_token: tokens.refreshToken,
     ...provider.tokenRequest.extraParams,
   }
+
   if (provider.tokenRequest.includeClientIdInBody !== false) {
     params['client_id'] = input.clientId
   }
+
   if (provider.clientSecret) {
     params['client_secret'] = provider.clientSecret
   }
+
   if (tokens.scope) {
     params['scope'] = tokens.scope
   }
@@ -209,6 +280,7 @@ export async function refreshTokens(input: RefreshTokensInput): Promise<TokenSet
       input.fetchImpl ?? globalThis.fetch,
       input.signal,
     )
+
     return toTokenSet(provider, raw, tokens)
   } catch (error) {
     if (error instanceof OAuthError && error.code === 'token_request_failed') {
@@ -218,6 +290,7 @@ export async function refreshTokens(input: RefreshTokensInput): Promise<TokenSet
         ...(error.providerError ? { providerError: error.providerError } : {}),
       })
     }
+
     throw error
   }
 }
@@ -227,8 +300,10 @@ export function isExpired(tokens: TokenSet | undefined, skewMs = DEFAULT_EXPIRY_
   if (!tokens) {
     return true
   }
+
   if (tokens.expiresAt === undefined) {
     return false
   }
+
   return Date.now() >= tokens.expiresAt - skewMs
 }

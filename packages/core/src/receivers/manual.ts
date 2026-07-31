@@ -25,16 +25,29 @@ export interface ManualReceiverOptions {
  * rather than refused, including for providers that accept any port (`0`),
  * where nothing is listening anyway and the value only has to round-trip
  * unchanged into the token request.
+ *
+ * A hosted URI wins even for a loopback provider. Pasting needs a page that
+ * *shows* the user a code, and that is exactly what a hosted callback is;
+ * sending them to a loopback URI nothing is listening on shows a connection
+ * error and asks them to read the address bar instead.
  */
 function resolveRedirectUri(context: ReceiverContext): string | undefined {
   const { provider } = context
+
+  if (provider.redirect.hostedUri) {
+    return provider.redirect.hostedUri
+  }
+
   const declared = defaultRedirectUri(provider)
+
   if (declared) {
     return declared
   }
+
   if (provider.redirect.mode === 'loopback') {
     return buildLoopbackRedirectUri(provider, PASTE_FALLBACK_PORT)
   }
+
   return undefined
 }
 
@@ -43,12 +56,19 @@ function resolveRedirectUri(context: ReceiverContext): string | undefined {
  *
  * Works on headless boxes, over SSH, inside containers, and in any runtime at
  * all — the caller owns how the URL is shown and how the response is collected.
+ *
+ * The prompt both displays the URL and collects the reply, so `present()` kicks
+ * it off and `wait()` awaits the same promise. That promise gets a no-op
+ * `catch` because `wait()` may never be called — the caller gives up, or
+ * another receiver wins a race — and a rejection would otherwise surface as an
+ * unhandled one. `wait()` still sees it.
  */
 export function manualReceiver(options: ManualReceiverOptions): CallbackReceiver {
   return {
     id: 'manual',
     async start(context) {
       const redirectUri = options.redirectUri ?? resolveRedirectUri(context)
+
       if (!redirectUri) {
         throw new OAuthError(
           'configuration_error',
@@ -63,11 +83,10 @@ export function manualReceiver(options: ManualReceiverOptions): CallbackReceiver
       return {
         redirectUri,
         async present(url) {
-          // The prompt both displays the URL and collects the reply, so kick it
-          // off here and let `wait()` await the same promise.
           const collected = options.prompt(url, context).then((input) => {
             const parse = context.provider.parseCallback ?? parseStandardCallback
             const parsed = parse(input)
+
             if (parsed.error) {
               throw new OAuthError(
                 'authorization_denied',
@@ -80,17 +99,16 @@ export function manualReceiver(options: ManualReceiverOptions): CallbackReceiver
                 },
               )
             }
+
             if (!parsed.code) {
               throw new OAuthError(
                 'invalid_token_response',
                 'Could not find an authorization code in the pasted value.',
               )
             }
+
             return { code: parsed.code, ...(parsed.state ? { state: parsed.state } : {}) }
           })
-          // `wait()` may never be called — if the caller gives up, or a
-          // different receiver wins a race — so keep a rejection here from
-          // surfacing as an unhandled promise rejection. `wait()` still sees it.
           collected.catch(() => {})
           pending = collected
           await context.openUrl?.(url)
@@ -99,6 +117,7 @@ export function manualReceiver(options: ManualReceiverOptions): CallbackReceiver
           if (!pending) {
             throw new OAuthError('configuration_error', 'present() must be called before wait().')
           }
+
           return pending
         },
         async close() {

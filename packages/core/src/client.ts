@@ -122,12 +122,15 @@ export class AuthClient {
 
   constructor(options: AuthClientOptions) {
     const overrides: Partial<ProviderConfig> = {}
+
     if (options.clientId) {
       overrides.clientId = options.clientId
     }
+
     if (options.clientSecret) {
       overrides.clientSecret = options.clientSecret
     }
+
     if (options.scopes) {
       overrides.scopes = options.scopes
     }
@@ -146,8 +149,9 @@ export class AuthClient {
             : (this.provider.note ?? 'Pass `clientId` to createAuthClient().')),
       )
     }
-    // Providers that send no client_id (OpenRouter) still need a placeholder for
-    // the request builders; it is never transmitted.
+
+    /* Providers that send no client_id (OpenRouter) still need a placeholder
+       for the request builders; it is never transmitted. */
     this.#clientId = this.provider.clientId ?? this.provider.id
     this.#storage = options.storage ?? memoryStorage()
     this.#crypto = options.crypto ?? createDefaultCrypto()
@@ -175,6 +179,7 @@ export class AuthClient {
   async createAuthorization(options: CreateAuthorizationOptions = {}): Promise<CreatedAuthorization> {
     const redirectUri =
       options.redirectUri ?? this.#redirectUri ?? defaultRedirectUri(this.provider)
+
     if (!redirectUri) {
       throw new OAuthError(
         'configuration_error',
@@ -215,6 +220,9 @@ export class AuthClient {
    * Accepts either an explicit `code`/`state` pair or a raw `callbackUrl`, so
    * an HTTP handler can pass `req.url` straight through. Also notifies anyone
    * blocked in {@link waitForAuthorization} for the same `state`.
+   *
+   * Providers that never echo `state` (OpenRouter) resolve against the most
+   * recently started flow instead, that being the only correlation available.
    */
   async completeAuthorization(input: CompleteAuthorizationInput): Promise<TokenSet> {
     let { code, state } = input
@@ -222,6 +230,7 @@ export class AuthClient {
     if (input.callbackUrl) {
       const parse = this.provider.parseCallback ?? parseStandardCallback
       const parsed = parse(input.callbackUrl)
+
       if (parsed.error) {
         const error = new OAuthError(
           'authorization_denied',
@@ -232,11 +241,14 @@ export class AuthClient {
             ...(parsed.state ? { state: parsed.state } : {}),
           },
         )
+
         if (parsed.state) {
           this.#registry.reject(parsed.state, error)
         }
+
         throw error
       }
+
       code = parsed.code ?? code
       state = parsed.state ?? state
     }
@@ -245,8 +257,6 @@ export class AuthClient {
       throw new OAuthError('invalid_token_response', 'No authorization code supplied.')
     }
 
-    // Providers that never echo `state` (OpenRouter) resolve against the most
-    // recently started flow instead — the only correlation available.
     if (!state && this.provider.echoesState === false) {
       const pending = await this.#registry.consumeLatest(this.provider.id)
       const tokens = await exchangeCode({
@@ -260,6 +270,7 @@ export class AuthClient {
       })
       await this.setTokens(tokens)
       this.#registry.resolve(pending.state, tokens)
+
       return tokens
     }
 
@@ -284,6 +295,7 @@ export class AuthClient {
       })
       await this.setTokens(tokens)
       this.#registry.resolve(state, tokens)
+
       return tokens
     } catch (error) {
       this.#registry.reject(state, error)
@@ -315,7 +327,17 @@ export class AuthClient {
   }
 
 
-  /** Runs an entire login through a receiver and returns the tokens. */
+  /**
+   * Runs an entire login through a receiver and returns the tokens.
+   *
+   * A callback carrying no `state` is rejected rather than waved through:
+   * anyone can reach a loopback port or post to an opener, so omitting the
+   * parameter must not become a way to skip the check. Only providers that
+   * documented they never echo it are exempt, and those correlate on the most
+   * recently started flow instead, with the caveats on `echoesState`. The
+   * comparison itself is constant-time, because `callback.state` is attacker
+   * controlled.
+   */
   async login(options: LoginOptions): Promise<TokenSet> {
     const context = {
       provider: this.provider,
@@ -336,19 +358,13 @@ export class AuthClient {
 
       const deadline = this.#rejectOnSignal(options.signal, options.timeoutMs)
       let callback: CallbackResult
+
       try {
         callback = await Promise.race([started.wait(), deadline.promise])
       } finally {
-        // The losing side of the race never settles, so its timer and abort
-        // listener have to be released by hand.
         deadline.cancel()
       }
 
-      // A callback with no `state` is not verifiable, so it is not acceptable.
-      // Anyone can reach a loopback port or post to an opener, and omitting the
-      // parameter must not be a way to skip the check. Only providers that
-      // documented they never echo it are exempt — those correlate on the most
-      // recently started flow instead, with the caveats on `echoesState`.
       if (this.provider.echoesState !== false) {
         if (!callback.state) {
           throw new OAuthError(
@@ -358,7 +374,7 @@ export class AuthClient {
             { state: authorization.state },
           )
         }
-        // Constant-time: `callback.state` comes from outside.
+
         if (!timingSafeEqual(callback.state, authorization.state)) {
           throw new OAuthError(
             'state_mismatch',
@@ -378,18 +394,35 @@ export class AuthClient {
     }
   }
 
-  /** RFC 8628 device flow, for boxes with no reachable browser. */
+  /**
+   * Device flow, for boxes with no reachable browser.
+   *
+   * RFC 8628 unless the provider supplies its own — OpenAI's shares the shape
+   * but none of the wire format.
+   */
   async deviceLogin(options: DeviceLoginOptions): Promise<TokenSet> {
-    const device = await startDeviceAuthorization({
-      provider: this.provider,
-      clientId: this.#clientId,
-      ...(options.scopes ? { scopes: options.scopes } : {}),
-      fetchImpl: this.#fetch,
-      ...(options.signal ? { signal: options.signal } : {}),
-    })
+    const custom = this.provider.deviceFlow
+
+    const device = custom
+      ? await custom.start({
+          provider: this.provider,
+          clientId: this.#clientId,
+          ...(options.scopes ? { scopes: options.scopes } : {}),
+          fetchImpl: this.#fetch,
+          ...(options.signal ? { signal: options.signal } : {}),
+        })
+      : await startDeviceAuthorization({
+          provider: this.provider,
+          clientId: this.#clientId,
+          ...(options.scopes ? { scopes: options.scopes } : {}),
+          fetchImpl: this.#fetch,
+          crypto: this.#crypto,
+          ...(options.signal ? { signal: options.signal } : {}),
+        })
     await options.onCode(device)
 
-    const tokens = await pollDeviceToken({
+    const poll = custom ? custom.poll : pollDeviceToken
+    const tokens = await poll({
       provider: this.provider,
       clientId: this.#clientId,
       device,
@@ -397,6 +430,7 @@ export class AuthClient {
       ...(options.signal ? { signal: options.signal } : {}),
     })
     await this.setTokens(tokens)
+
     return tokens
   }
 
@@ -418,12 +452,15 @@ export class AuthClient {
     const promise = new Promise<never>((_resolve, reject) => {
       if (signal?.aborted) {
         reject(new OAuthError('aborted', 'Login was aborted.'))
+
         return
       }
+
       if (signal) {
         onAbort = () => reject(new OAuthError('aborted', 'Login was aborted.'))
         signal.addEventListener('abort', onAbort, { once: true })
       }
+
       if (timeoutMs !== undefined) {
         timer = setTimeout(
           () => reject(new OAuthError('timeout', `Login timed out after ${timeoutMs}ms.`)),
@@ -439,6 +476,7 @@ export class AuthClient {
         if (timer) {
           clearTimeout(timer)
         }
+
         if (onAbort) {
           signal?.removeEventListener('abort', onAbort)
         }
@@ -450,9 +488,11 @@ export class AuthClient {
   /** Reads straight from storage, ignoring the in-memory cache. */
   async #readStoredTokens(): Promise<TokenSet | undefined> {
     const stored = await this.#storage.get(this.#tokenKey)
+
     if (!stored) {
       return undefined
     }
+
     try {
       return JSON.parse(stored) as TokenSet
     } catch {
@@ -464,8 +504,10 @@ export class AuthClient {
     if (this.#tokensLoaded) {
       return this.#cachedTokens
     }
+
     this.#cachedTokens = await this.#readStoredTokens()
     this.#tokensLoaded = true
+
     return this.#cachedTokens
   }
 
@@ -478,6 +520,7 @@ export class AuthClient {
   /** True when a token exists and has not passed the renewal window. */
   async isAuthenticated(): Promise<boolean> {
     const tokens = await this.getTokens()
+
     return tokens !== undefined && !isExpired(tokens, this.#expirySkewMs)
   }
 
@@ -490,16 +533,20 @@ export class AuthClient {
    */
   async getAccessToken(options: { forceRefresh?: boolean; signal?: AbortSignal } = {}): Promise<string> {
     const tokens = await this.getTokens()
+
     if (!tokens) {
       throw new OAuthError(
         'refresh_failed',
         `Not authenticated with "${this.provider.id}". Run the login flow first.`,
       )
     }
+
     if (!options.forceRefresh && !isExpired(tokens, this.#expirySkewMs)) {
       return tokens.accessToken
     }
+
     const refreshed = await this.refresh(options)
+
     return refreshed.accessToken
   }
 
@@ -509,6 +556,12 @@ export class AuthClient {
    * Note that joining an in-flight refresh means joining its cancellation too:
    * a later caller's `signal` is not attached, and the first caller's abort
    * fails everyone. That is the trade for never issuing two refreshes at once.
+   *
+   * Storage is re-read before refreshing because another *process* may have
+   * refreshed since. Two CLI windows racing is ordinary, and with providers
+   * that rotate refresh tokens the loser's token is already dead — so take the
+   * stored one if it is usable. `#refreshInFlight` covers in-process
+   * concurrency; this covers the cross-process case, which no promise can.
    */
   async refresh(options: { signal?: AbortSignal } = {}): Promise<TokenSet> {
     if (this.#refreshInFlight) {
@@ -517,16 +570,13 @@ export class AuthClient {
 
     const run = (async () => {
       const tokens = await this.getTokens()
+
       if (!tokens) {
         throw new OAuthError('refresh_failed', `No tokens stored for "${this.provider.id}".`)
       }
 
-      // Another process may have refreshed since we last read. Two CLI windows
-      // racing here is ordinary, and with providers that rotate refresh tokens
-      // the loser's token is already dead — so re-read first and take theirs if
-      // it is usable. In-process concurrency is handled by #refreshInFlight;
-      // this covers the cross-process case, which no promise can.
       const stored = await this.#readStoredTokens()
+
       if (
         stored &&
         stored.accessToken !== tokens.accessToken &&
@@ -534,6 +584,7 @@ export class AuthClient {
       ) {
         this.#cachedTokens = stored
         this.#tokensLoaded = true
+
         return stored
       }
 
@@ -545,10 +596,12 @@ export class AuthClient {
         ...(options.signal ? { signal: options.signal } : {}),
       })
       await this.setTokens(refreshed)
+
       return refreshed
     })()
 
     this.#refreshInFlight = run
+
     try {
       return await run
     } finally {
@@ -556,12 +609,17 @@ export class AuthClient {
     }
   }
 
-  /** `Authorization` header value, refreshing first if needed. */
+  /**
+   * `Authorization` header value, refreshing first if needed.
+   *
+   * The token is fetched before the type is read, because a refresh replaces
+   * the whole token set — reading the type first would pair the old one with
+   * the new token.
+   */
   async authorizationHeader(): Promise<string> {
-    // Refresh first, then read the type: a refresh can replace the whole token
-    // set, and reading it beforehand would pair the old type with the new token.
     const accessToken = await this.getAccessToken()
     const tokens = await this.getTokens()
+
     return `${tokens?.tokenType ?? 'Bearer'} ${accessToken}`
   }
 
@@ -579,9 +637,11 @@ export class AuthClient {
     options: { tokenType?: RevocableTokenType; signal?: AbortSignal } = {},
   ): Promise<void> {
     const tokens = await this.getTokens()
+
     if (!tokens) {
       return
     }
+
     await revokeToken({
       provider: this.provider,
       clientId: this.#clientId,
@@ -607,6 +667,7 @@ export class AuthClient {
         /* fall through — clearing local tokens still has to happen */
       }
     }
+
     this.#cachedTokens = undefined
     this.#tokensLoaded = true
     await this.#storage.delete(this.#tokenKey)

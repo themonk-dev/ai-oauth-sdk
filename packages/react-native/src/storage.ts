@@ -47,6 +47,7 @@ export function secureStoreAdapter(
   options: SecureStoreOptions = {},
 ): AuthStorage {
   const safeKey = encodeSecureStoreKey
+
   return {
     get: (key) => store.getItemAsync(safeKey(key), options.options),
     set: (key, value) => store.setItemAsync(safeKey(key), value, options.options),

@@ -28,6 +28,7 @@ export async function deriveChallenge(
   if (method === 'plain') {
     return verifier
   }
+
   return base64UrlEncode(await crypto.sha256(utf8Encode(verifier)))
 }
 
@@ -36,6 +37,7 @@ export async function createPkce(
   method: PkceMethod = 'S256',
 ): Promise<PkcePair> {
   const verifier = createVerifier(crypto)
+
   return { verifier, challenge: await deriveChallenge(crypto, verifier, method), method }
 }
 

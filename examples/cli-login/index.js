@@ -6,7 +6,14 @@
  *   node index.js token openai
  *   node index.js logout openai
  */
-import { createNodeAuthClient, login, isOAuthError, providers, publicClientIds } from '@ai-oauth-sdk/node'
+import {
+  createNodeAuthClient,
+  login,
+  isOAuthError,
+  providers,
+  publicClientIds,
+  publicClientSecrets,
+} from '@ai-oauth-sdk/node'
 
 const [command, providerId = 'openai', ...rest] = process.argv.slice(2)
 
@@ -25,21 +32,32 @@ Providers: ${Object.keys(providers).join(', ')}
   process.exit(0)
 }
 
-// xAI does not publish a client id, so allow supplying one on the command line.
-const clientIdFlag = rest.find((arg) => arg.startsWith('--client-id='))
-// Your own id wins; otherwise opt into the one that provider's CLI publishes.
-const clientId = clientIdFlag?.split('=')[1] ?? publicClientIds[providerId]
+// Your own credential wins; otherwise opt into the one that provider's CLI
+// publishes. Only Google ships a secret, and only Google's token endpoint
+// requires one.
+const flag = (name) => rest.find((arg) => arg.startsWith(`--${name}=`))?.split('=')[1]
 
-const clientOptions = { provider: providerId, ...(clientId ? { clientId } : {}) }
+const clientId = flag('client-id') ?? publicClientIds[providerId]
+const clientSecret =
+  flag('client-secret') ?? process.env.AI_OAUTH_SDK_CLIENT_SECRET ?? publicClientSecrets[providerId]
+
+const credentials = {
+  ...(clientId ? { clientId } : {}),
+  ...(clientSecret ? { clientSecret } : {}),
+}
+
+const clientOptions = { provider: providerId, ...credentials }
 
 try {
   switch (command) {
     case 'login': {
-      const tokens = await login(providerId, clientId ? { clientId } : {})
+      const tokens = await login(providerId, credentials)
       console.log(`\nSigned in to ${providerId}${tokens.email ? ` as ${tokens.email}` : ''}.`)
+
       if (tokens.expiresAt) {
         console.log(`Token expires ${new Date(tokens.expiresAt).toLocaleString()}.`)
       }
+
       break
     }
 
@@ -53,10 +71,12 @@ try {
     case 'whoami': {
       const client = createNodeAuthClient(clientOptions)
       const tokens = await client.getTokens()
+
       if (!tokens) {
         console.log(`Not signed in to ${providerId}. Run: ai-login login ${providerId}`)
         process.exit(1)
       }
+
       console.log(`${providerId}: ${tokens.email ?? tokens.accountId ?? 'signed in'}`)
       break
     }
@@ -75,10 +95,13 @@ try {
   // OAuthError carries a machine-readable `code` worth branching on.
   if (isOAuthError(error)) {
     console.error(`\n${error.code}: ${error.message}`)
+
     if (error.code === 'refresh_failed') {
       console.error(`Run: ai-login login ${providerId}`)
     }
+
     process.exit(1)
   }
+
   throw error
 }

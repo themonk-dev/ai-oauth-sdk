@@ -26,23 +26,26 @@ export function buildAuthorizationUrl(input: BuildAuthorizationUrlInput): string
   }
 
   const scopes = input.scopes ?? provider.scopes
+
   if (scopes.length) {
     params['scope'] = scopes.join(' ')
   }
+
   if (input.codeChallenge) {
     params['code_challenge'] = input.codeChallenge
     params['code_challenge_method'] = input.codeChallengeMethod ?? provider.pkceMethod
   }
 
-  // Providers that deviate from the spec get the last word.
   const finalParams = provider.buildAuthParams ? provider.buildAuthParams(params) : params
 
   const supplied: Record<string, string> = {}
+
   for (const [key, value] of Object.entries(finalParams)) {
     if (value !== undefined && value !== '') {
       supplied[key] = value
     }
   }
+
   return appendQuery(provider.authorizationUrl, supplied)
 }
 
@@ -50,6 +53,7 @@ export function buildAuthorizationUrl(input: BuildAuthorizationUrlInput): string
 export function buildLoopbackRedirectUri(provider: ProviderConfig, port: number): string {
   const host = provider.redirect.loopbackHost ?? 'localhost'
   const path = provider.redirect.loopbackPath ?? '/callback'
+
   return `http://${host}:${port}${path.startsWith('/') ? path : `/${path}`}`
 }
 
@@ -59,11 +63,14 @@ export function buildLoopbackRedirectUri(provider: ProviderConfig, port: number)
  */
 export function defaultRedirectUri(provider: ProviderConfig): string | undefined {
   const { redirect } = provider
+
   if (redirect.mode === 'hosted') {
     return redirect.hostedUri
   }
+
   if (redirect.mode === 'loopback' && redirect.loopbackPort) {
     return buildLoopbackRedirectUri(provider, redirect.loopbackPort)
   }
+
   return undefined
 }

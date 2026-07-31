@@ -3,6 +3,7 @@ import type { AuthStorage } from './types.js'
 /** In-process storage. The default, and all a short-lived CLI run needs. */
 export function memoryStorage(initial?: Map<string, string>): AuthStorage {
   const map = initial ?? new Map<string, string>()
+
   return {
     async get(key) {
       return map.get(key) ?? null
@@ -36,12 +37,14 @@ export function prefixedStorage(storage: AuthStorage, prefix: string): AuthStora
   }
 
   const backingKeys = storage.keys
+
   if (backingKeys) {
     adapter.keys = async () =>
       (await backingKeys.call(storage))
         .filter((k) => k.startsWith(prefix))
         .map((k) => k.slice(prefix.length))
   }
+
   return adapter
 }
 
@@ -61,7 +64,13 @@ export interface SyncStorageLike {
   key?(index: number): string | null
 }
 
-/** Adapts a {@link SyncStorageLike} to {@link AuthStorage}. */
+/**
+ * Adapts a {@link SyncStorageLike} to {@link AuthStorage}.
+ *
+ * `keys` is exposed only when the backing store can actually enumerate, since
+ * callers feature-detect it. `length` is read fresh on each iteration because
+ * it is a live getter on Web Storage.
+ */
 export function fromSyncStorage(storage: SyncStorageLike): AuthStorage {
   const adapter: AuthStorage = {
     async get(key) {
@@ -75,20 +84,21 @@ export function fromSyncStorage(storage: SyncStorageLike): AuthStorage {
     },
   }
 
-  // Web Storage can enumerate; a bare three-method store cannot. Expose `keys`
-  // only when it will actually work, since callers feature-detect it.
   if (typeof storage.key === 'function' && typeof storage.length === 'number') {
     adapter.keys = async () => {
       const found: string[] = []
-      // Read `length` fresh — it is a live getter on Web Storage.
+
       for (let index = 0; index < (storage.length ?? 0); index++) {
         const key = storage.key?.(index)
+
         if (key !== null && key !== undefined) {
           found.push(key)
         }
       }
+
       return found
     }
   }
+
   return adapter
 }

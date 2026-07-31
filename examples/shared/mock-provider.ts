@@ -72,9 +72,11 @@ export function mockProvider(): Plugin {
         const url = new URL(request.url ?? '/', 'http://localhost')
         const params = url.searchParams
         const redirectUri = params.get('redirect_uri')
+
         if (!redirectUri) {
           response.statusCode = 400
           response.end('missing redirect_uri')
+
           return
         }
 
@@ -83,6 +85,7 @@ export function mockProvider(): Plugin {
 
         const approve = new URL(redirectUri)
         approve.searchParams.set('code', code)
+
         if (params.get('state')) {
           approve.searchParams.set('state', params.get('state')!)
         }
@@ -90,6 +93,7 @@ export function mockProvider(): Plugin {
         const deny = new URL(redirectUri)
         deny.searchParams.set('error', 'access_denied')
         deny.searchParams.set('error_description', 'You clicked Deny on the mock consent screen.')
+
         if (params.get('state')) {
           deny.searchParams.set('state', params.get('state')!)
         }
@@ -111,10 +115,12 @@ export function mockProvider(): Plugin {
 
           if (params.get('grant_type') === 'refresh_token') {
             issuedTokens++
+
             return json(200, tokenResponse(issuedTokens))
           }
 
           const code = params.get('code') ?? ''
+
           if (!issued.has(code)) {
             return json(400, { error: 'invalid_grant', error_description: 'unknown code' })
           }
@@ -123,12 +129,16 @@ export function mockProvider(): Plugin {
           // fail here, not silently pass.
           const challenge = issued.get(code)
           issued.delete(code)
+
           if (challenge) {
             const verifier = params.get('code_verifier')
+
             if (!verifier) {
               return json(400, { error: 'invalid_request', error_description: 'missing code_verifier' })
             }
+
             const expected = createHash('sha256').update(verifier).digest('base64url')
+
             if (expected !== challenge) {
               return json(400, { error: 'invalid_grant', error_description: 'PKCE mismatch' })
             }

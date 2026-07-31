@@ -10,58 +10,95 @@ import { defineProvider, parseStandardCallback } from './define.js'
 function parseAnthropicCallback(input: string): CallbackParseResult {
   const trimmed = input.trim()
 
-  // A real URL (loopback mode) — let the standard parser handle it.
   if (trimmed.includes('?') || trimmed.startsWith('http')) {
     return parseStandardCallback(trimmed)
   }
 
   const hashIndex = trimmed.indexOf('#')
+
   if (hashIndex === -1) {
     return { code: trimmed }
   }
+
   return { code: trimmed.slice(0, hashIndex), state: trimmed.slice(hashIndex + 1) }
 }
 
 /**
  * Anthropic / Claude — the flow Claude Code uses.
  *
- * Defaults to `hosted` redirect + paste, which works on headless boxes and over
- * SSH. Pass a loopback receiver to use `http://localhost:54545/callback`
- * instead; Anthropic registers loopback URIs with the port component ignored
- * (RFC 8252), so any port works.
+ * Defaults to a loopback redirect, so a local server catches the callback and
+ * nothing is pasted. Anthropic registers loopback URIs with the port component
+ * ignored (RFC 8252), so any port works. `--paste` falls back to the hosted
+ * page that displays a code, which is the right answer over SSH.
  */
 export const anthropic = defineProvider({
   id: 'anthropic',
   label: 'Claude (Anthropic)',
   authorizationUrl: 'https://claude.ai/oauth/authorize',
   tokenUrl: 'https://platform.claude.com/v1/oauth/token',
-  scopes: ['user:inference', 'user:profile'],
+  /**
+   * Enough to chat, and nothing more.
+   *
+   * `user:inference` is the Messages API, `user:profile` is the identity
+   * `whoami` reads, and `user:sessions:claude_code` is the session this grant
+   * belongs to. Claude Code also requests `org:create_api_key`,
+   * `user:file_upload` and `user:mcp_servers`; those are left out because none
+   * is needed to send a prompt, and the first in particular turns a leaked
+   * token into durable organization credentials that outlive the OAuth session.
+   *
+   * Ask for them explicitly when you want them:
+   *
+   * ```ts
+   * createAuthClient({
+   *   provider: 'anthropic',
+   *   clientId: publicClientIds.anthropic,
+   *   scopes: [...anthropic.scopes, 'org:create_api_key', 'user:file_upload'],
+   * })
+   * ```
+   */
+  scopes: ['user:inference', 'user:profile', 'user:sessions:claude_code'],
   apiBaseUrl: 'https://api.anthropic.com/v1',
   redirect: {
-    mode: 'hosted',
+    mode: 'loopback',
     hostedUri: 'https://platform.claude.com/oauth/code/callback',
-    loopbackPort: 54545,
+    loopbackPort: 0,
     loopbackPath: '/callback',
   },
-  // The token endpoint rejects JSON bodies; form encoding is required.
-  tokenRequest: { style: 'form', includeClientIdInBody: true },
+  /**
+   * Asks for an authorization code rather than a redirect-fragment token.
+   * Claude Code sends it alongside a loopback `redirect_uri`, so it does not
+   * conflict with catching the callback locally.
+   */
+  extraAuthParams: { code: 'true' },
+  /**
+   * The endpoint accepts both form and JSON bodies — verified live, where an
+   * invalid grant is answered identically either way. Other clients send JSON;
+   * we send the RFC 6749 form encoding. Anthropic also accepts `state` on the
+   * exchange, which most providers reject.
+   */
+  tokenRequest: { style: 'form', includeClientIdInBody: true, includeState: true },
   parseCallback: parseAnthropicCallback,
   enrichTokens(raw, _tokens: TokenSet) {
     const account = raw['account']
+
     if (typeof account !== 'object' || account === null) {
       return {}
     }
+
     const record = account as Record<string, unknown>
     const accountId = record['uuid']
     const email = record['email_address']
+
     return {
       ...(typeof accountId === 'string' ? { accountId } : {}),
       ...(typeof email === 'string' ? { email } : {}),
     }
   },
+  /**
+   * The Messages API requires a version header, and OAuth-bearer requests (as
+   * opposed to `x-api-key`) require opting into the OAuth beta.
+   */
   apiHeaders() {
-    // The Messages API requires a version header, and OAuth-bearer requests
-    // (as opposed to `x-api-key`) require opting into the OAuth beta.
     return {
       'anthropic-version': '2023-06-01',
       'anthropic-beta': 'oauth-2025-04-20',

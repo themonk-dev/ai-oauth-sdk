@@ -54,6 +54,7 @@ describe('fileStorage', () => {
 
     const record = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8'))
     expect(Object.keys(record)).toHaveLength(10)
+
     for (let i = 0; i < 10; i++) {
       expect(record[`key-${i}`]).toBe(String(i))
     }

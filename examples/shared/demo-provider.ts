@@ -33,10 +33,13 @@ export const demoProvider: ProviderConfig = defineProvider({
   redirect: { mode: 'custom' },
   enrichTokens(raw) {
     const account = raw['account']
+
     if (typeof account !== 'object' || account === null) {
       return {}
     }
+
     const record = account as Record<string, unknown>
+
     return {
       ...(typeof record['uuid'] === 'string' ? { accountId: record['uuid'] } : {}),
       ...(typeof record['email_address'] === 'string' ? { email: record['email_address'] } : {}),

@@ -1,5 +1,6 @@
 import { decodeJwtPayload, getStringClaim } from '../jwt.js'
 import type { TokenSet } from '../types.js'
+import { openaiDeviceFlow } from '../receivers/openai-device.js'
 import { defineProvider } from './define.js'
 
 /**
@@ -10,6 +11,7 @@ const AUTH_CLAIM = 'https://api.openai.com/auth'
 
 function readAuthClaim(payload: Record<string, unknown> | undefined): Record<string, unknown> {
   const claim = payload?.[AUTH_CLAIM]
+
   return typeof claim === 'object' && claim !== null ? (claim as Record<string, unknown>) : {}
 }
 
@@ -20,12 +22,20 @@ function readAuthClaim(payload: Record<string, unknown> | undefined): Record<str
  * Codex CLI. PKCE means no secret is involved either way. The three extra
  * authorize params are OpenAI-specific — they ask for organization claims in the
  * id_token and select the simplified CLI consent screen.
+ *
+ * Headless machines should use `client.deviceLogin()`. OpenAI's device flow is
+ * not RFC 8628, so it arrives as a `deviceFlow` implementation rather than a
+ * `deviceAuthorizationUrl` — see `receivers/openai-device.ts`.
  */
 export const openai = defineProvider({
   id: 'openai',
   label: 'ChatGPT (OpenAI)',
   authorizationUrl: 'https://auth.openai.com/oauth/authorize',
   tokenUrl: 'https://auth.openai.com/oauth/token',
+  deviceFlow: openaiDeviceFlow,
+  devicePrerequisite:
+    'Turn on "Enable device code authorization for Codex" in ChatGPT → Settings → Security first. ' +
+    'Without it the verification page refuses the code, and this command waits for an approval that cannot arrive.',
   scopes: ['openid', 'profile', 'email', 'offline_access'],
   apiBaseUrl: 'https://api.openai.com/v1',
   redirect: { mode: 'loopback', loopbackPort: 1455, loopbackPath: '/auth/callback' },
@@ -34,9 +44,11 @@ export const openai = defineProvider({
     codex_cli_simplified_flow: 'true',
   },
   tokenRequest: { style: 'form', includeClientIdInBody: true },
+  /**
+   * The account id lives in the `id_token`, in one of three shapes depending on
+   * whether the user is on a personal plan or in an organization.
+   */
   enrichTokens(raw, tokens: TokenSet) {
-    // The account id lives in the id_token, in one of three shapes depending on
-    // whether the user is on a personal plan or in an organization.
     const payload = decodeJwtPayload(tokens.idToken ?? String(raw['id_token'] ?? ''))
     const authClaim = readAuthClaim(payload)
 
@@ -53,11 +65,14 @@ export const openai = defineProvider({
       (typeof firstOrgId === 'string' ? firstOrgId : undefined)
 
     const email = getStringClaim(payload, 'email')
+
     return { ...(accountId ? { accountId } : {}), ...(email ? { email } : {}) }
   },
+  /**
+   * Requests made with a ChatGPT-subscription token must name the account they
+   * are billed against.
+   */
   apiHeaders(tokens): Record<string, string> {
-    // Requests made with a ChatGPT-subscription token must name the account
-    // they are billed against.
     return tokens.accountId ? { 'chatgpt-account-id': tokens.accountId } : {}
   },
 })

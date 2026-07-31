@@ -8,6 +8,9 @@
  *
  * {@link ../adapter.ts} prefers the native implementation whenever it exists;
  * this is only reached when it does not.
+ *
+ * The message is padded to a multiple of 64 bytes: `0x80`, then zeroes, then a
+ * 64-bit big-endian bit length in the final 8 bytes.
  */
 
 // prettier-ignore
@@ -29,8 +32,6 @@ export function sha256(message: Uint8Array): Uint8Array {
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
   ])
 
-  // Pad to a multiple of 64 bytes: 0x80, then zeroes, then a 64-bit big-endian
-  // bit length in the final 8 bytes.
   const bitLength = message.length * 8
   const paddedLength = ((message.length + 9 + 63) >> 6) << 6
   const block = new Uint8Array(paddedLength)
@@ -42,10 +43,12 @@ export function sha256(message: Uint8Array): Uint8Array {
   view.setUint32(paddedLength - 4, bitLength >>> 0, false)
 
   const w = new Uint32Array(64)
+
   for (let offset = 0; offset < paddedLength; offset += 64) {
     for (let i = 0; i < 16; i++) {
       w[i] = view.getUint32(offset + i * 4, false)
     }
+
     for (let i = 16; i < 64; i++) {
       const x = w[i - 15]!
       const y = w[i - 2]!
@@ -93,8 +96,10 @@ export function sha256(message: Uint8Array): Uint8Array {
 
   const digest = new Uint8Array(32)
   const digestView = new DataView(digest.buffer)
+
   for (let i = 0; i < 8; i++) {
     digestView.setUint32(i * 4, h[i]!, false)
   }
+
   return digest
 }

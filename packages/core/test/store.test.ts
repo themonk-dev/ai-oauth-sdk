@@ -26,11 +26,13 @@ const scriptedReceiver = (redirectUri = 'http://localhost:9999/callback'): Callb
   id: 'scripted',
   async start() {
     let result: Promise<{ code: string; state: string }> | undefined
+
     return {
       redirectUri,
       async present(url) {
         result = fetch(url, { redirect: 'manual' }).then((response) => {
           const params = new URL(response.headers.get('location')!).searchParams
+
           return { code: params.get('code')!, state: params.get('state')! }
         })
       },
@@ -55,6 +57,7 @@ const hangingReceiver = (): CallbackReceiver => ({
 
 function makeStore(storage: AuthStorage = memoryStorage(), receiver = scriptedReceiver()) {
   const client = createAuthClient({ provider: testProvider(server.url), storage })
+
   return createAuthStore({ client, receiver })
 }
 
@@ -123,6 +126,7 @@ describe('createAuthStore', () => {
 
   it('records an error without throwing', async () => {
     const failing = await startFakeAuthServer({ failWith: 'invalid_grant' })
+
     try {
       const onError = vi.fn()
       const client = createAuthClient({
@@ -227,6 +231,7 @@ describe('createAuthStore', () => {
 
   it('syncs state when getAccessToken triggers a refresh', async () => {
     const shortLived = await startFakeAuthServer({ expiresIn: 1 })
+
     try {
       const client = createAuthClient({
         provider: testProvider(shortLived.url),

@@ -65,6 +65,7 @@ function stubNavigation(): { assign: string[]; replace: string[] } {
     replace: (url: string) => calls.replace.push(url),
   }
   Object.defineProperty(window, 'location', { value: stub, configurable: true })
+
   return calls
 }
 

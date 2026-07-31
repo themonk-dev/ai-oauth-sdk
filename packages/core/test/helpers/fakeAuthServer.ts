@@ -15,6 +15,15 @@ export interface DeviceFlowOptions {
   interval?: number
   /** Terminate the flow with this error instead of succeeding. */
   failWith?: string
+  /**
+   * Refuse a device request that carries no `code_challenge`, and a poll whose
+   * `code_verifier` does not derive from it. Qwen behaves exactly this way.
+   */
+  requirePkce?: boolean
+  /** Answer the first poll with a 5xx from a gateway rather than an OAuth error. */
+  gatewayErrorOnce?: boolean
+  /** Answer *every* poll with a gateway 5xx, as a proxy that is simply down would. */
+  gatewayErrorAlways?: boolean
 }
 
 export interface FakeAuthServerOptions {
@@ -44,6 +53,8 @@ export interface FakeAuthServer {
   apiRequests: Array<Record<string, string>>
   /** Bodies posted to `/revoke`, in order. */
   revocations: Array<Record<string, string>>
+  /** Bodies posted to `/device/code`, in order. */
+  deviceRequests: Array<Record<string, string>>
   tokenCount: number
   refreshCount: number
   apiCount: number
@@ -57,6 +68,7 @@ export interface FakeAuthServer {
 function fakeJwt(claims: Record<string, unknown>): string {
   const header = base64UrlEncode(utf8Encode(JSON.stringify({ alg: 'none', typ: 'JWT' })))
   const payload = base64UrlEncode(utf8Encode(JSON.stringify(claims)))
+
   return `${header}.${payload}.`
 }
 
@@ -79,7 +91,9 @@ export async function startFakeAuthServer(
   let currentAccessToken: string | undefined
   let revoked = false
   let openrouterChallenge: string | undefined
+  let deviceChallenge: string | undefined
   let devicePolls = 0
+  const deviceRequests: Array<Record<string, string>> = []
 
   const server: Server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost')
@@ -100,12 +114,29 @@ export async function startFakeAuthServer(
       location.searchParams.set('state', state)
       response.writeHead(302, { Location: location.toString() })
       response.end()
+
       return
     }
 
     // device authorization (RFC 8628)
     if (url.pathname === '/device/code') {
       const device = options.device ?? {}
+      const body = await new Promise<string>((resolve) => {
+        let data = ''
+        request.on('data', (chunk) => (data += chunk))
+        request.on('end', () => resolve(data))
+      })
+      const params = Object.fromEntries(new URLSearchParams(body))
+      deviceRequests.push(params)
+      deviceChallenge = params['code_challenge']
+
+      if (device.requirePkce && !deviceChallenge) {
+        response.writeHead(400, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ detail: 'code_challenge is required for PKCE' }))
+
+        return
+      }
+
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end(
         JSON.stringify({
@@ -114,9 +145,11 @@ export async function startFakeAuthServer(
           verification_uri: 'https://example.test/device',
           verification_uri_complete: 'https://example.test/device?code=WXYZ-1234',
           expires_in: device.expiresIn ?? 900,
-          interval: device.interval ?? 0, // 0 keeps tests fast
+          /* An interval of 0 keeps tests fast. */
+          interval: device.interval ?? 0,
         }),
       )
+
       return
     }
 
@@ -129,6 +162,7 @@ export async function startFakeAuthServer(
       location.searchParams.set('code', 'or-code-1')
       response.writeHead(302, { Location: location.toString() })
       response.end()
+
       return
     }
 
@@ -143,14 +177,18 @@ export async function startFakeAuthServer(
 
       if (openrouterChallenge) {
         const expected = base64UrlEncode(sha256(utf8Encode(params['code_verifier'] ?? '')))
+
         if (expected !== openrouterChallenge) {
           response.writeHead(400, { 'Content-Type': 'application/json' })
           response.end(JSON.stringify({ error: 'invalid_grant' }))
+
           return
         }
       }
+
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify({ key: 'sk-or-v1-userkey' }))
+
       return
     }
 
@@ -166,10 +204,13 @@ export async function startFakeAuthServer(
       if (!currentAccessToken || presented !== currentAccessToken) {
         response.writeHead(401, { 'Content-Type': 'application/json' })
         response.end(JSON.stringify({ error: 'invalid_token' }))
+
         return
       }
+
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify({ ok: true, headers: request.headers, method: request.method }))
+
       return
     }
 
@@ -185,18 +226,23 @@ export async function startFakeAuthServer(
       currentAccessToken = undefined
       response.writeHead(200)
       response.end()
+
       return
     }
 
     if (url.pathname === '/userinfo') {
       const authorization = request.headers.authorization ?? ''
+
       if (!currentAccessToken || !authorization.includes(currentAccessToken)) {
         response.writeHead(401)
         response.end()
+
         return
       }
+
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify({ sub: 'user-1', email: 'dev@example.com', name: 'Dev' }))
+
       return
     }
 
@@ -221,6 +267,7 @@ export async function startFakeAuthServer(
       if (options.failWith) {
         response.writeHead(400, { 'Content-Type': 'application/json' })
         response.end(JSON.stringify({ error: options.failWith, error_description: 'fake failure' }))
+
         return
       }
 
@@ -229,21 +276,47 @@ export async function startFakeAuthServer(
         const device = options.device ?? {}
         devicePolls++
 
+        if (device.gatewayErrorAlways || (device.gatewayErrorOnce && devicePolls === 1)) {
+          // Not JSON, and not an OAuth error — a proxy in front of the provider.
+          response.writeHead(504, { 'Content-Type': 'text/html' })
+          response.end('<html><body><h1>504 Gateway Time-out</h1></body></html>')
+
+          return
+        }
+
+        if (device.requirePkce) {
+          const verifier = params['code_verifier'] ?? ''
+          const derived = base64UrlEncode(await sha256(utf8Encode(verifier)))
+
+          if (!verifier || derived !== deviceChallenge) {
+            response.writeHead(400, { 'Content-Type': 'application/json' })
+            response.end(JSON.stringify({ error: 'invalid_grant' }))
+
+            return
+          }
+        }
+
         if (device.slowDownOnce && devicePolls === 1) {
           response.writeHead(400, { 'Content-Type': 'application/json' })
           response.end(JSON.stringify({ error: 'slow_down' }))
+
           return
         }
+
         const pendingPolls = device.pendingPolls ?? 0
         const effectivePoll = device.slowDownOnce ? devicePolls - 1 : devicePolls
+
         if (effectivePoll <= pendingPolls) {
           response.writeHead(400, { 'Content-Type': 'application/json' })
           response.end(JSON.stringify({ error: 'authorization_pending' }))
+
           return
         }
+
         if (device.failWith) {
           response.writeHead(400, { 'Content-Type': 'application/json' })
           response.end(JSON.stringify({ error: device.failWith }))
+
           return
         }
 
@@ -258,48 +331,62 @@ export async function startFakeAuthServer(
             token_type: 'Bearer',
           }),
         )
+
         return
       }
 
       const isRefresh = params['grant_type'] === 'refresh_token'
+
       if (isRefresh) {
         refreshCount++
+
         // A revoked session cannot be refreshed back to life.
         if (revoked) {
           response.writeHead(400, { 'Content-Type': 'application/json' })
           response.end(JSON.stringify({ error: 'invalid_grant', error_description: 'revoked' }))
+
           return
         }
       } else {
         tokenCount++
         // Verify PKCE the way a real server does.
         const record = issuedCodes.get(params['code'] ?? '')
+
         if (!record) {
           response.writeHead(400, { 'Content-Type': 'application/json' })
           response.end(JSON.stringify({ error: 'invalid_grant', error_description: 'unknown code' }))
+
           return
         }
+
         if (record.challenge) {
           const verifier = params['code_verifier']
+
           if (!verifier) {
             response.writeHead(400, { 'Content-Type': 'application/json' })
             response.end(JSON.stringify({ error: 'invalid_request', error_description: 'missing verifier' }))
+
             return
           }
+
           const expected =
             record.method === 'plain' ? verifier : base64UrlEncode(sha256(utf8Encode(verifier)))
+
           if (expected !== record.challenge) {
             response.writeHead(400, { 'Content-Type': 'application/json' })
             response.end(JSON.stringify({ error: 'invalid_grant', error_description: 'PKCE mismatch' }))
+
             return
           }
         }
       }
 
       const includeRefresh = !isRefresh || !options.omitRefreshOnRenew
+
       if (includeRefresh) {
         issuedRefresh++
       }
+
       currentAccessToken = `access-${tokenCount + refreshCount}`
 
       response.writeHead(200, { 'Content-Type': 'application/json' })
@@ -314,6 +401,7 @@ export async function startFakeAuthServer(
           ...options.extraTokenFields,
         }),
       )
+
       return
     }
 
@@ -329,6 +417,7 @@ export async function startFakeAuthServer(
     requests,
     apiRequests,
     revocations,
+    deviceRequests,
     issuedCodes,
     get tokenCount() {
       return tokenCount

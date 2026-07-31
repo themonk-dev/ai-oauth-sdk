@@ -75,6 +75,64 @@ export interface TokenRequestSpec {
   includeClientIdInBody?: boolean
   /** Extra fields merged into every token/refresh request body. */
   extraParams?: Record<string, string>
+  /**
+   * Send `state` on the code exchange. Default false.
+   *
+   * The spec puts `state` on the authorization request only. Anthropic also
+   * accepts it on the exchange; OpenAI rejects the request outright, so this
+   * cannot be on by default.
+   */
+  includeState?: boolean
+}
+
+export interface DeviceCodeResponse {
+  deviceCode: string
+  userCode: string
+  verificationUri: string
+  /** Pre-filled variant, when the provider supplies one. */
+  verificationUriComplete?: string
+  expiresAt: number
+  intervalMs: number
+  /**
+   * Present when the device request carried a PKCE challenge, and the token
+   * request must present the matching verifier. Treat it like `deviceCode`:
+   * it is half of a credential, so keep it out of logs.
+   */
+  codeVerifier?: string
+  /** Scratch space for a non-RFC-8628 flow to carry its own state. */
+  extra?: Record<string, string>
+}
+
+export interface DeviceFlowStartInput {
+  provider: ProviderConfig
+  clientId: string
+  scopes?: string[]
+  fetchImpl?: FetchLike
+  signal?: AbortSignal
+}
+
+export interface DeviceFlowPollInput {
+  provider: ProviderConfig
+  clientId: string
+  device: DeviceCodeResponse
+  fetchImpl?: FetchLike
+  signal?: AbortSignal
+  onPoll?: (attempt: number) => void
+}
+
+/**
+ * A device flow that is not RFC 8628.
+ *
+ * The RFC is the common case and needs no hook — `deviceAuthorizationUrl` is
+ * enough. OpenAI is the exception: JSON request bodies rather than form
+ * encoding, HTTP 403/404 as the "still pending" signal rather than
+ * `authorization_pending`, a server-generated PKCE verifier, and a second hop
+ * through the ordinary token endpoint. None of that is expressible as
+ * configuration, so a provider supplies the two steps itself.
+ */
+export interface DeviceFlow {
+  start(input: DeviceFlowStartInput): Promise<DeviceCodeResponse>
+  poll(input: DeviceFlowPollInput): Promise<TokenSet>
 }
 
 export interface CallbackParseResult {
@@ -117,6 +175,18 @@ export interface ProviderConfig {
   tokenRequest: TokenRequestSpec
   /** RFC 8628 device authorization endpoint, when supported. */
   deviceAuthorizationUrl?: string
+  /** Overrides the RFC 8628 implementation for providers that deviate. */
+  deviceFlow?: DeviceFlow
+  /**
+   * Something the user must do before a device login can succeed, shown
+   * alongside the code.
+   *
+   * OpenAI needs the flow switched on per account, and refuses it on the
+   * verification page rather than at the endpoint — so the CLI keeps polling a
+   * code that can never be approved. Saying it up front is the only fix
+   * available on our side.
+   */
+  devicePrerequisite?: string
   /** RFC 7009 revocation endpoint, when supported. */
   revocationUrl?: string
   /** OIDC userinfo endpoint, when supported. */

@@ -10,11 +10,14 @@ import { base64UrlDecode, utf8Decode } from './crypto/encoding.js'
  */
 export function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
   const parts = token.split('.')
+
   if (parts.length < 2) {
     return undefined
   }
+
   try {
     const parsed: unknown = JSON.parse(utf8Decode(base64UrlDecode(parts[1]!)))
+
     return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : undefined
   } catch {
     return undefined
@@ -26,13 +29,17 @@ export function getClaim(payload: Record<string, unknown> | undefined, path: str
   if (!payload) {
     return undefined
   }
+
   let current: unknown = payload
+
   for (const segment of path.split('.')) {
     if (typeof current !== 'object' || current === null) {
       return undefined
     }
+
     current = (current as Record<string, unknown>)[segment]
   }
+
   return current
 }
 
@@ -42,5 +49,6 @@ export function getStringClaim(
   path: string,
 ): string | undefined {
   const value = getClaim(payload, path)
+
   return typeof value === 'string' ? value : undefined
 }

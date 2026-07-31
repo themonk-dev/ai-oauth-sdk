@@ -1,31 +1,19 @@
+import { createDefaultCrypto, type CryptoAdapter } from '../crypto/adapter.js'
 import { OAuthError } from '../errors.js'
+import { createPkce } from '../pkce.js'
 import { encodeQuery } from '../query.js'
 import { fetchWithSignal } from '../http.js'
-import type { FetchLike, ProviderConfig, TokenSet } from '../types.js'
+import { safeSnippet } from '../redact.js'
+import type { DeviceCodeResponse, FetchLike, ProviderConfig, TokenSet } from '../types.js'
 
-/**
- * RFC 8628 device authorization grant.
- *
- * Not a {@link CallbackReceiver} — there is no redirect at all. The user opens
- * a URL on a *different* device and types a short code, while this side polls
- * the token endpoint. That makes it the right choice for TVs, containers, and
- * SSH sessions where no browser can reach back to the client.
- */
-export interface DeviceCodeResponse {
-  deviceCode: string
-  userCode: string
-  verificationUri: string
-  /** Pre-filled variant, when the provider supplies one. */
-  verificationUriComplete?: string
-  expiresAt: number
-  intervalMs: number
-}
+export type { DeviceCodeResponse } from '../types.js'
 
 /** Reads a numeric field from an untrusted response, bounded and with a default. */
 function clamp(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return fallback
   }
+
   return Math.min(Math.max(value, min), max)
 }
 
@@ -35,12 +23,33 @@ export interface StartDeviceAuthorizationInput {
   scopes?: string[]
   fetchImpl?: FetchLike
   signal?: AbortSignal
+  crypto?: CryptoAdapter
 }
 
+/**
+ * Opens an RFC 8628 device authorization grant.
+ *
+ * Not a {@link CallbackReceiver} — there is no redirect at all. The user opens
+ * a URL on a *different* device and types a short code, while this side polls
+ * the token endpoint. That makes it the right choice for containers and SSH
+ * sessions where no browser can reach back to the client.
+ *
+ * PKCE goes on the request even though RFC 8628 says nothing about it: the
+ * device code is handed to a user who types it on another machine, so binding
+ * the exchange to this process is worth two extra parameters — and Qwen refuses
+ * the request outright without them ("code_challenge is required for PKCE").
+ *
+ * `expires_in` and `interval` are clamped because they come from the server.
+ * `interval: 0` is a valid number and taking it literally turns the poll loop
+ * into an unthrottled flood of the token endpoint, while the ceiling stops a
+ * broken server pinning us to one request a minute. A short `expires_in` needs
+ * no floor — it simply ends the loop, which is the server's call to make.
+ */
 export async function startDeviceAuthorization(
   input: StartDeviceAuthorizationInput,
 ): Promise<DeviceCodeResponse> {
   const { provider } = input
+
   if (!provider.deviceAuthorizationUrl) {
     throw new OAuthError(
       'configuration_error',
@@ -48,9 +57,14 @@ export async function startDeviceAuthorization(
     )
   }
 
+  const pkce = provider.usePkce
+    ? await createPkce(input.crypto ?? createDefaultCrypto(), provider.pkceMethod)
+    : undefined
+
   const body = encodeQuery({
     client_id: input.clientId,
     scope: (input.scopes ?? provider.scopes).join(' '),
+    ...(pkce ? { code_challenge: pkce.challenge, code_challenge_method: pkce.method } : {}),
   })
 
   const fetchImpl = input.fetchImpl ?? globalThis.fetch
@@ -67,9 +81,10 @@ export async function startDeviceAuthorization(
   )
 
   if (!response.ok) {
+    const detail = safeSnippet(await response.text().catch(() => ''))
     throw new OAuthError(
       'device_flow_failed',
-      `Device authorization request failed (HTTP ${response.status}).`,
+      `Device authorization request failed (HTTP ${response.status})${detail ? `: ${detail}` : '.'}`,
       { status: response.status },
     )
   }
@@ -78,14 +93,11 @@ export async function startDeviceAuthorization(
   const deviceCode = raw['device_code']
   const userCode = raw['user_code']
   const verificationUri = raw['verification_uri'] ?? raw['verification_url']
+
   if (typeof deviceCode !== 'string' || typeof userCode !== 'string' || typeof verificationUri !== 'string') {
     throw new OAuthError('device_flow_failed', 'Device authorization response was missing required fields.')
   }
 
-  // `interval: 0` is a number, and taking it literally turns the poll loop into
-  // an unthrottled flood of the token endpoint; the ceiling stops a broken
-  // server pinning us to one request a minute. A short `expires_in` needs no
-  // floor — it simply ends the loop, which is the server's call to make.
   const expiresIn = clamp(raw['expires_in'], 900, 0, 24 * 60 * 60)
   const interval = clamp(raw['interval'], 5, 1, 60)
 
@@ -98,6 +110,7 @@ export async function startDeviceAuthorization(
       : {}),
     expiresAt: Date.now() + expiresIn * 1000,
     intervalMs: interval * 1000,
+    ...(pkce ? { codeVerifier: pkce.verifier } : {}),
   }
 }
 
@@ -111,13 +124,26 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
       clearTimeout(timer)
       reject(new OAuthError('aborted', 'Device authorization polling was aborted.'))
     }
+
     if (signal?.aborted) {
       clearTimeout(timer)
       reject(new OAuthError('aborted', 'Device authorization polling was aborted.'))
+
       return
     }
+
     signal?.addEventListener('abort', onAbort, { once: true })
   })
+
+/** Consecutive 5xx responses tolerated before polling gives up and reports one. */
+const MAX_SERVER_ERRORS = 3
+
+/**
+ * Added per 5xx. Much smaller than the `slow_down` step, because the server's
+ * own `interval` already paces us and a gateway blip does not mean we are
+ * polling too fast — it only has to survive a few seconds of restart.
+ */
+const SERVER_ERROR_BACKOFF_MS = 1_000
 
 export interface PollDeviceTokenInput {
   provider: ProviderConfig
@@ -131,12 +157,25 @@ export interface PollDeviceTokenInput {
 /**
  * Polls until the user approves, honouring the server's `interval` and backing
  * off on `slow_down` as the RFC requires — polling faster gets you rate limited.
+ *
+ * Each response is read as text before being parsed, because a gateway sitting
+ * in front of the token endpoint answers with an HTML error page; parsing that
+ * straight to `{}` would report `unknown_error` for what is really a 504 from
+ * someone's proxy. For the same reason a 5xx keeps polling: it is the
+ * provider's infrastructure talking, not a verdict on the grant, and giving up
+ * would throw away a code the user may already have approved.
+ *
+ * That tolerance is bounded at {@link MAX_SERVER_ERRORS}. A gateway that is
+ * simply down answers every poll, and retrying to the device code's expiry
+ * would block for a quarter of an hour and then report a timeout — telling the
+ * user they were too slow to approve when the truth was a 502 all along.
  */
 export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<TokenSet> {
   const { provider, device } = input
   const fetchImpl = input.fetchImpl ?? globalThis.fetch
   let intervalMs = device.intervalMs
   let attempt = 0
+  let serverErrors = 0
 
   while (Date.now() < device.expiresAt) {
     await sleep(intervalMs, input.signal)
@@ -146,6 +185,7 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
       grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
       device_code: device.deviceCode,
       client_id: input.clientId,
+      ...(device.codeVerifier ? { code_verifier: device.codeVerifier } : {}),
     })
 
     const response = await fetchWithSignal(
@@ -159,7 +199,14 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
       input.signal,
       'Device authorization polling was aborted.',
     )
-    const raw = (await response.json().catch(() => ({}))) as Record<string, unknown>
+    const text = await response.text().catch(() => '')
+    let raw: Record<string, unknown> = {}
+
+    try {
+      raw = JSON.parse(text) as Record<string, unknown>
+    } catch {
+      raw = {}
+    }
 
     if (response.ok && typeof raw['access_token'] === 'string') {
       return {
@@ -177,17 +224,32 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
     }
 
     const error = typeof raw['error'] === 'string' ? raw['error'] : 'unknown_error'
+
     if (error === 'authorization_pending') {
       continue
     }
+
     if (error === 'slow_down') {
       intervalMs += 5_000
       continue
     }
-    throw new OAuthError('device_flow_failed', `Device authorization failed: ${error}`, {
-      providerError: error,
-      status: response.status,
-    })
+
+    if (response.status >= 500 && error === 'unknown_error' && serverErrors < MAX_SERVER_ERRORS) {
+      serverErrors++
+      intervalMs += SERVER_ERROR_BACKOFF_MS
+      continue
+    }
+
+    const described = raw['error_description']
+    const detail =
+      typeof described === 'string' && described
+        ? safeSnippet(described, 120)
+        : safeSnippet(text, 120)
+    throw new OAuthError(
+      'device_flow_failed',
+      `Device authorization failed: ${error}${detail ? ` (${detail})` : ''}`,
+      { providerError: error, status: response.status },
+    )
   }
 
   throw new OAuthError('timeout', 'Device code expired before the user approved it.')

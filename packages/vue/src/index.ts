@@ -38,7 +38,11 @@ export interface UseAuthResult {
  * Vue 3 composable over the shared auth store.
  *
  * Cleans itself up through `onScopeDispose`, so it works inside `setup()`, a
- * detached `effectScope()`, or a Pinia store without leaking the subscription.
+ * detached `effectScope()`, or a Pinia store without leaking the subscription —
+ * and is a no-op outside a component or effect scope, which is exactly right.
+ *
+ * `shallowRef` is enough for the token: a `TokenSet` is replaced wholesale and
+ * never mutated in place, so deep reactivity would only cost proxy overhead.
  */
 export function useAuth(options: UseAuthOptions): UseAuthResult {
   const { receiver, restoreOnMount = true, onSuccess, onError, ...clientOptions } = options
@@ -50,8 +54,6 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
     ...(onError ? { onError } : {}),
   })
 
-  // shallowRef: TokenSet is replaced wholesale and never mutated in place, so
-  // deep reactivity would only cost proxy overhead.
   const tokens = shallowRef<TokenSet | undefined>(undefined)
   const isLoading = ref(false)
   const error = shallowRef<Error | undefined>(undefined)
@@ -63,11 +65,11 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
   }
 
   const unsubscribe = store.subscribe(apply)
+
   if (restoreOnMount) {
     void store.restore()
   }
 
-  // No-op outside a component or effect scope, which is exactly right.
   onScopeDispose(() => {
     unsubscribe()
     store.destroy()

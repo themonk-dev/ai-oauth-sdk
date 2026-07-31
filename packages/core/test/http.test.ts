@@ -15,6 +15,7 @@ describe('fetchWithSignal', () => {
     const seen: Array<RequestInit | undefined> = []
     const fetchImpl: FetchLike = async (_url, init) => {
       seen.push(init)
+
       return okResponse()
     }
 
@@ -27,6 +28,7 @@ describe('fetchWithSignal', () => {
     const seen: Array<RequestInit | undefined> = []
     const fetchImpl: FetchLike = async (_url, init) => {
       seen.push(init)
+
       return okResponse()
     }
     const controller = new AbortController()
@@ -52,7 +54,9 @@ describe('fetchWithSignal', () => {
     const fetchImpl: FetchLike = async (_url, init) => {
       // If the signal leaked through, the real undici would have thrown already.
       expect(init).not.toHaveProperty('signal')
-      return new Promise<Response>(() => {}) // never settles
+
+      /* Never settles. */
+      return new Promise<Response>(() => {})
     }
 
     const controller = new AbortController()
@@ -109,9 +113,11 @@ describe('fetchWithSignal', () => {
 
     const fetchImpl: FetchLike = async () => okResponse()
     const controller = new AbortController()
+
     for (let i = 0; i < 5; i++) {
       await fetchWithSignal(fetchImpl, 'http://x.test/', {}, controller.signal)
     }
+
     // A probe per token request would be wasteful; one is enough.
     expect(constructed).toBe(1)
   })
@@ -123,6 +129,7 @@ describe('fetchWithSignal', () => {
     const seen: Array<RequestInit | undefined> = []
     const fetchImpl: FetchLike = async (_url, init) => {
       seen.push(init)
+
       return okResponse()
     }
     const controller = new AbortController()

@@ -12,10 +12,15 @@ import { OAuthError } from './errors.js'
  * the request is even attempted.
  *
  * So: detect once whether this runtime's `fetch` will accept a signal we can
- * make, and if it will not, honour the abort on our side instead. The caller's
- * promise still rejects promptly either way — the only thing lost in the
- * fallback is cancelling the in-flight socket, which for a single small token
- * request is a fair trade against not working at all.
+ * make, and if it will not, honour the abort on our side instead by racing it.
+ * The caller's promise still rejects promptly either way — the only thing lost
+ * in the fallback is cancelling the in-flight socket, which for a single small
+ * token request is a fair trade against not working at all.
+ *
+ * The probe constructs a `Request`, which ships alongside `fetch` and so
+ * validates against the same realm undici will, without making a network call.
+ * A runtime missing either constructor has nothing to check and is assumed to
+ * take the happy path.
  */
 let signalAccepted: boolean | undefined
 
@@ -23,20 +28,23 @@ function fetchAcceptsOurSignal(): boolean {
   if (signalAccepted !== undefined) {
     return signalAccepted
   }
+
   try {
     const RequestCtor = (globalThis as { Request?: typeof Request }).Request
     const ControllerCtor = (globalThis as { AbortController?: typeof AbortController }).AbortController
+
     if (!RequestCtor || !ControllerCtor) {
-      signalAccepted = true // nothing to check; assume the happy path
+      signalAccepted = true
+
       return signalAccepted
     }
-    // `Request` ships alongside `fetch`, so it validates against the same realm
-    // undici will — without making a network call.
+
     new RequestCtor('http://localhost/', { signal: new ControllerCtor().signal })
     signalAccepted = true
   } catch {
     signalAccepted = false
   }
+
   return signalAccepted
 }
 
@@ -45,8 +53,10 @@ function rejectOnAbort(signal: AbortSignal, message: string): Promise<never> {
   return new Promise<never>((_resolve, reject) => {
     if (signal.aborted) {
       reject(new OAuthError('aborted', message))
+
       return
     }
+
     signal.addEventListener('abort', () => reject(new OAuthError('aborted', message)), {
       once: true,
     })
@@ -68,7 +78,6 @@ export async function fetchWithSignal(
     return fetchImpl(url, { ...init, signal })
   }
 
-  // Cross-realm signal: race instead of handing it to fetch.
   return Promise.race([fetchImpl(url, init), rejectOnAbort(signal, abortMessage)])
 }
 

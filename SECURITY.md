@@ -90,13 +90,16 @@ pass third-party tokens to `decodeJwtPayload` and treat the result as authentica
 
 ### Client credentials
 
-The client ids shipped for OpenAI, Anthropic, GitHub Copilot, OpenRouter and Qwen are
-public, PKCE-protected values published by those vendors. They are not secrets. No
-client *secret* is embedded for any provider — `google` and `xai` require you to
-supply your own credentials.
+The client ids shipped for OpenAI, Anthropic, GitHub Copilot, Qwen, Google and xAI are
+public, PKCE-protected values published by those vendors' own CLIs. They are not
+secrets. One client *secret* is embedded: Google's, because its token endpoint refuses
+an installed-app exchange without one and Google documents those secrets as
+non-confidential. Everything is overridable — see
+[docs/credentials.md](docs/credentials.md).
 
 Using a vendor's CLI client id means presenting yourself as that CLI. Review the
-provider's terms before shipping it in a product.
+provider's terms before shipping it in a product — and see [DISCLAIMER.md](DISCLAIMER.md),
+which covers what this project is and is not in relation to those vendors.
 
 **The CLI never persists a client secret.** It reads one from `--client-secret` or
 `AI_OAUTH_SDK_CLIENT_SECRET` per invocation and keeps it out of the credential file, so a

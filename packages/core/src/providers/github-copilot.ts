@@ -28,7 +28,7 @@ export const githubCopilot = defineProvider({
   deviceAuthorizationUrl: 'https://github.com/login/device/code',
   apiBaseUrl: 'https://api.githubcopilot.com',
   scopes: ['read:user', 'copilot'],
-  // GitHub's device flow does not use PKCE.
+  /** GitHub's device flow does not use PKCE. */
   usePkce: false,
   redirect: { mode: 'custom' },
   tokenRequest: { style: 'form', includeClientIdInBody: true },
@@ -79,6 +79,7 @@ export async function exchangeForCopilotToken(
 
   const raw = (await response.json()) as Record<string, unknown>
   const token = raw['token']
+
   if (typeof token !== 'string') {
     throw new OAuthError('invalid_token_response', 'Copilot token exchange returned no token.')
   }

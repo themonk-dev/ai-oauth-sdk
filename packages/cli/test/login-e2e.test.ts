@@ -21,10 +21,12 @@ beforeEach(async () => {
   stderr = []
   vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
     stdout.push(String(chunk))
+
     return true
   })
   vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
     stderr.push(String(chunk))
+
     return true
   })
   startFakeBrowser()
@@ -55,9 +57,11 @@ function startFakeBrowser(): void {
     // `g` so a second login's URL is seen even with the first still in stderr.
     for (const match of err().matchAll(/(http:\/\/127\.0\.0\.1:\d+\/authorize\?[^\s]+)/g)) {
       const url = match[1]!
+
       if (followed.has(url)) {
         continue
       }
+
       followed.add(url)
       void fetch(url, { redirect: 'follow' }).catch(() => {})
     }
@@ -69,6 +73,7 @@ function stopFakeBrowser(): void {
   if (browserTimer) {
     clearInterval(browserTimer)
   }
+
   browserTimer = undefined
   followed.clear()
 }
@@ -210,6 +215,7 @@ describe('custom provider bookkeeping', () => {
 
   it('reads the client secret from the environment', async () => {
     process.env['AI_OAUTH_SDK_CLIENT_SECRET'] = 'from-the-environment'
+
     try {
       const code = await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
       expect(code).toBe(0)
@@ -252,6 +258,7 @@ describe('custom provider validation', () => {
 
   it('reports a token endpoint that rejects the exchange', async () => {
     const failing = await startFakeAuthServer({ failWith: 'invalid_grant' })
+
     try {
         const code = await run(['login', 'acme', ...customFlags(failing, ['--port', '0'])])
       expect(code).toBe(1)

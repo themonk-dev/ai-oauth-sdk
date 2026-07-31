@@ -21,13 +21,9 @@
  * provider's terms before shipping it in a product, and register your own client
  * wherever one is on offer.
  *
- * Two providers are deliberately absent:
- *
- * - **Google** requires an installed-app `clientSecret` as well. Google
- *   documents such secrets as non-confidential, but it is still a credential
- *   registered by someone else, so this library does not carry it. Register a
- *   "Desktop app" client in the Google Cloud console.
- * - **xAI** does not publish a client id at all.
+ * **Google is the odd one out**: its installed-app clients carry a
+ * `clientSecret` as well, published alongside the id in {@link
+ * publicClientSecrets}.
  */
 export const publicClientIds = {
   /** OpenAI's Codex CLI. */
@@ -38,6 +34,46 @@ export const publicClientIds = {
   'github-copilot': 'Iv1.b507a08c87ecfe98',
   /** Alibaba's qwen-code. */
   qwen: 'f0304373b74a44d2b584a3fb70ca9e56',
+  /** Google's gemini-cli. Pair with {@link publicClientSecrets.google}. */
+  google: '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com',
+  /**
+   * xAI's grok-cli.
+   *
+   * Unlike the others this is not merely convenient — xAI rejects any client it
+   * has not allowlisted (`invalid_client`, "Unknown or disabled client"), and
+   * offers no self-service registration for a desktop CLI, so there is no
+   * alternative id to supply.
+   */
+  xai: 'b1a00492-073a-47ea-816f-4c329264a828',
+} as const
+
+/**
+ * Client secrets for the public clients that ship with one.
+ *
+ * Only Google. OAuth for installed applications treats these as non-secret —
+ * they ship inside a binary anyone can read, and Google
+ * [documents them as such](https://developers.google.com/identity/protocols/oauth2/native-app).
+ * PKCE, not the secret, is what protects the flow, and Google's token endpoint
+ * simply refuses the exchange without one.
+ *
+ * ```ts
+ * createAuthClient({
+ *   provider: 'google',
+ *   clientId: publicClientIds.google,
+ *   clientSecret: publicClientSecrets.google,
+ * })
+ * ```
+ *
+ * Because it is published in a repository, automated secret scanning may report
+ * this value to Google and get it rotated. That breaks nothing structurally —
+ * pass `clientSecret` explicitly, set `AI_OAUTH_SDK_CLIENT_SECRET`, or use
+ * `--client-secret` — but if `login google` starts failing with
+ * `invalid_client`, a rotation is the first thing to check. Registering your own
+ * "Desktop app" client in the Google Cloud console avoids the question entirely.
+ */
+export const publicClientSecrets = {
+  /** Google's gemini-cli, paired with {@link publicClientIds.google}. */
+  google: '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',
 } as const
 
 export type PublicClientIdProvider = keyof typeof publicClientIds

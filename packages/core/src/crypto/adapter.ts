@@ -12,8 +12,10 @@ export interface CryptoAdapter {
   sha256(data: Uint8Array): Promise<Uint8Array>
 }
 
-// Declared locally rather than using the DOM's `BufferSource`, so core
-// typechecks in projects that do not include the DOM lib (Node, React Native).
+/**
+ * Declared locally rather than using the DOM's `BufferSource`, so core
+ * typechecks in projects that do not include the DOM lib (Node, React Native).
+ */
 type BinaryInput = ArrayBufferView | ArrayBuffer
 
 interface WebCryptoLike {
@@ -23,6 +25,7 @@ interface WebCryptoLike {
 
 function getWebCrypto(): WebCryptoLike | undefined {
   const candidate = (globalThis as { crypto?: WebCryptoLike }).crypto
+
   return typeof candidate === 'object' && candidate !== null ? candidate : undefined
 }
 
@@ -42,15 +45,23 @@ const NO_SECURE_RANDOM_MESSAGE =
  * point of both. Hashing, by contrast, has a pure-JS fallback: SHA-256 handles
  * no secrets, so computing it in JS is safe and keeps PKCE working on Hermes
  * where `crypto.subtle` is undefined.
+ *
+ * Digest input is copied into a standalone buffer because some runtimes reject
+ * views with a non-zero `byteOffset`, and `SharedArrayBuffer`-backed views are
+ * not valid `BufferSource` everywhere. A `subtle` that exists but refuses to
+ * work — some React Native shims, locked-down embedders — falls back to the
+ * pure-JS digest rather than breaking login.
  */
 export function createDefaultCrypto(): CryptoAdapter {
   const webCrypto = getWebCrypto()
 
   const randomBytes = (length: number): Uint8Array => {
     const getRandomValues = webCrypto?.getRandomValues
+
     if (typeof getRandomValues !== 'function') {
       throw new OAuthError('unsupported_runtime', NO_SECURE_RANDOM_MESSAGE)
     }
+
     return getRandomValues.call(webCrypto, new Uint8Array(length))
   }
 
@@ -59,14 +70,10 @@ export function createDefaultCrypto(): CryptoAdapter {
     typeof subtle?.digest === 'function'
       ? async (data: Uint8Array): Promise<Uint8Array> => {
           try {
-            // Copy into a standalone buffer: some runtimes reject views with a
-            // non-zero byteOffset, and SharedArrayBuffer-backed views are not
-            // valid BufferSource everywhere.
             const buffer = await subtle.digest('SHA-256', Uint8Array.from(data))
+
             return new Uint8Array(buffer)
           } catch {
-            // A `subtle` that exists but refuses to work (some RN shims, locked
-            // -down embedders) should degrade rather than break login.
             return sha256Fallback(data)
           }
         }

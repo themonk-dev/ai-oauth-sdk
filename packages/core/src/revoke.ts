@@ -23,10 +23,13 @@ export interface RevokeTokenInput {
  * cascade from refresh to access, which is why that is the default.
  *
  * Per the RFC an unknown or already-revoked token is still a success — the
- * desired end state (that token does not work) holds either way.
+ * desired end state (that token does not work) holds either way. HTTP 400 is
+ * accepted for the same reason: `unsupported_token_type` and an unknown token
+ * are both terminal, and retrying will not help.
  */
 export async function revokeToken(input: RevokeTokenInput): Promise<void> {
   const { provider, tokens } = input
+
   if (!provider.revocationUrl) {
     throw new OAuthError(
       'configuration_error',
@@ -37,6 +40,7 @@ export async function revokeToken(input: RevokeTokenInput): Promise<void> {
 
   const tokenType = input.tokenType ?? 'refresh_token'
   const token = tokenType === 'refresh_token' ? tokens.refreshToken : tokens.accessToken
+
   if (!token) {
     throw new OAuthError('configuration_error', `No ${tokenType} available to revoke.`)
   }
@@ -46,6 +50,7 @@ export async function revokeToken(input: RevokeTokenInput): Promise<void> {
     token_type_hint: tokenType,
     client_id: input.clientId,
   }
+
   if (provider.clientSecret) {
     body['client_secret'] = provider.clientSecret
   }
@@ -63,8 +68,6 @@ export async function revokeToken(input: RevokeTokenInput): Promise<void> {
     'Revocation request was aborted.',
   )
 
-  // 200 is the specified success. 400 with `unsupported_token_type` or an
-  // unknown token is also terminal, and retrying will not help.
   if (!response.ok && response.status !== 400) {
     throw new OAuthError(
       'token_request_failed',

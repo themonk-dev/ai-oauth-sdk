@@ -12,6 +12,8 @@ export interface PromptReceiverOptions {
   openBrowser?: boolean
   /** Overrides the printed instructions. */
   message?: (url: string) => string
+  /** Abandons the pending read, for racing this against another receiver. */
+  signal?: AbortSignal
 }
 
 const defaultMessage = (url: string) =>
@@ -29,13 +31,19 @@ export function promptReceiver(options: PromptReceiverOptions = {}): CallbackRec
     ...(options.redirectUri ? { redirectUri: options.redirectUri } : {}),
     async prompt(url) {
       stdout.write((options.message ?? defaultMessage)(url))
+
       if (options.openBrowser !== false) {
         openBrowser(url)
       }
 
       const rl = createInterface({ input: stdin, output: stdout })
+
       try {
-        const answer = await rl.question('Paste the authorization code or URL: ')
+        const answer = await rl.question(
+          'Paste the authorization code or URL: ',
+          options.signal ? { signal: options.signal } : {},
+        )
+
         return answer.trim()
       } finally {
         rl.close()
