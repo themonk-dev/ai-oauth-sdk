@@ -369,11 +369,11 @@ pnpm install
 pnpm verify      # lint && typecheck && build && test && exports check
 ```
 
-CI runs the gate on Node 22, 24 and 26. **433 tests** — the flow tests drive a real
+CI runs the gate on Node 22, 24 and 26. **434 tests** — the flow tests drive a real
 OAuth server that validates PKCE by recomputing the S256 challenge, so a broken verifier
-fails the suite rather than only failing in production. [`examples/`](examples) has
-runnable React, Vue, Svelte and Solid apps, a CLI and a server-side callback handler.
-server-side callback handler, and a CDN page.
+fails the suite rather than only failing in production. [`examples/`](examples) has a
+login CLI, an API caller, a server-side callback handler and a CDN page — every one of
+them against a real provider.
 
 <div align="center">
 <br />

@@ -22,18 +22,22 @@ const providerId = process.argv[2] ?? 'openai'
 /** What to ask each provider for, since their APIs differ. */
 const countModels = (body) => `${body.data?.length ?? 0} models available`
 
+const whoami = (body) => `signed in as ${body.email ?? body.sub ?? 'unknown'}`
+
 const REQUESTS = {
-  openai: { path: '/models', describe: countModels },
   anthropic: { path: '/models', describe: countModels },
   openrouter: { path: '/models', describe: countModels },
   xai: { path: '/models', describe: countModels },
   qwen: { path: '/models', describe: countModels },
-  google: {
-    // Google's coding endpoint is not a model list, so identity stands in.
-    // An absolute URL bypasses `apiBaseUrl`, which the fetch honours.
-    path: 'https://openidconnect.googleapis.com/v1/userinfo',
-    describe: (body) => `signed in as ${body.email ?? body.sub}`,
-  },
+
+  // Not every OAuth token is an API key. OpenAI's authorization server offers
+  // only openid/profile/email/offline_access, so a ChatGPT sign-in cannot list
+  // models — `/v1/models` answers 403 "Missing scopes: api.model.read". Google's
+  // coding endpoint is not a model list either. Identity is what both grant, so
+  // that is what they are asked for. An absolute URL bypasses `apiBaseUrl`,
+  // which `createAuthenticatedFetch` honours.
+  openai: { path: 'https://auth.openai.com/api/accounts/oauth/userinfo', describe: whoami },
+  google: { path: 'https://openidconnect.googleapis.com/v1/userinfo', describe: whoami },
 }
 
 const request = REQUESTS[providerId]
@@ -56,9 +60,12 @@ const credentials = {
 
 const client = createNodeAuthClient({ provider: providerId, ...credentials })
 
-// Sign in only if we have to — the token from a previous run is reused, and
-// refreshed transparently when it is close to expiring.
-if (!(await client.isAuthenticated())) {
+// Sign in only when there is nothing stored at all. Note the test: an *expired*
+// token is not a reason to open a browser, because `createAuthenticatedFetch`
+// renews it transparently below. Gating on `isAuthenticated()` instead would
+// force a full login every time a token aged out, which is the whole thing the
+// refresh token exists to avoid.
+if (!(await client.getTokens())) {
   console.log(`Not signed in to ${providerId}. Starting login…`)
   const tokens = await login(providerId, credentials)
   console.log(`Signed in${tokens.email ? ` as ${tokens.email}` : ''}.\n`)

@@ -37,6 +37,15 @@ export const openai = defineProvider({
     'Turn on "Enable device code authorization for Codex" in ChatGPT → Settings → Security first. ' +
     'Without it the verification page refuses the code, and this command waits for an approval that cannot arrive.',
   scopes: ['openid', 'profile', 'email', 'offline_access'],
+  userInfoUrl: 'https://auth.openai.com/api/accounts/oauth/userinfo',
+  /**
+   * Note what a token from this flow is *not*: an API key. OpenAI's
+   * authorization server advertises exactly four scopes — `openid`, `profile`,
+   * `email`, `offline_access` — so a ChatGPT sign-in grants identity and the
+   * ChatGPT-subscription surface, not the REST API. `GET /v1/models` answers
+   * `403 … Missing scopes: api.model.read`, and no scope here can fix that.
+   * Issue an API key for that.
+   */
   apiBaseUrl: 'https://api.openai.com/v1',
   redirect: { mode: 'loopback', loopbackPort: 1455, loopbackPath: '/auth/callback' },
   extraAuthParams: {

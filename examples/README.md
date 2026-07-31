@@ -1,36 +1,11 @@
 # Examples
 
-Every package has one. The four framework demos are runnable in a single command
-and complete a real sign-in.
+Every example here talks to a **real provider**. None of them mocks one.
 
-## Framework bindings
-
-| Example | Shows |
-|---|---|
-| [`react`](react) | `useAuth()` from [`@ai-oauth-sdk/react`](../packages/react) |
-| [`vue`](vue) | `useAuth()` composable from [`@ai-oauth-sdk/vue`](../packages/vue) |
-| [`svelte`](svelte) | `$auth` store from [`@ai-oauth-sdk/svelte`](../packages/svelte) |
-| [`solid`](solid) | `createAuth()` signals from [`@ai-oauth-sdk/solid`](../packages/solid) |
-
-```bash
-pnpm install
-pnpm --filter @ai-oauth-sdk-example/react dev     # or vue / svelte / solid
-```
-
-Click **Sign in** → a popup shows a consent screen → approve → you're signed in
-with a refreshable token. No accounts, no API keys, no network.
-
-That works because Vite serves a mock provider alongside the app
-([`shared/mock-provider.ts`](shared/mock-provider.ts)). The *flow* is real —
-PKCE with S256, and the mock recomputes the challenge from the verifier and
-rejects a mismatch — only the provider is pretend. Each example's README shows
-the two-line change to point it at a real one.
-
-> Real providers can't be used directly here: the ids in `publicClientIds` are
-> registered for loopback redirects, not web origins, so they'd reject
-> `http://localhost:5173/callback.html` outright.
-
-## Scenarios
+That constraint decides the shape of each: OAuth to these providers happens
+against a loopback redirect, which means Node. A browser-only example would need
+a client id registered for a web origin, and the published ones are not — see
+[browser-cdn](#browser-cdn) below.
 
 | Example | Shows |
 |---|---|
@@ -42,28 +17,55 @@ the two-line change to point it at a real one.
 ```bash
 pnpm install && pnpm build
 
-node examples/call-the-api/index.js openai    # signs in, then lists models
+node examples/call-the-api/index.js anthropic   # signs in, then lists models
 node examples/cli-login/index.js login openai
-node examples/server-callback/index.js        # then open http://localhost:3000
+node examples/server-callback/index.js          # then open http://localhost:3000
 ```
 
 > Want a CLI rather than an example of one? [`@ai-oauth-sdk/cli`](../packages/cli) is the
 > real thing: `npx @ai-oauth-sdk/cli login openai`. `cli-login` exists to show how little
 > code building your own takes.
 
-For `browser-cdn`, serve the directory over HTTP (WebCrypto needs a secure context;
-`localhost` counts) and set your own registered web client id in `index.html`:
+## What each provider's token can actually do
+
+Signing in is not the same as being allowed to call an API, and the difference
+is scopes rather than plumbing. `call-the-api` picks an endpoint each token can
+genuinely reach:
+
+| Provider | Sample request | Why |
+|---|---|---|
+| `anthropic`, `xai`, `openrouter`, `qwen` | `GET /models` | the token carries an inference scope |
+| `openai`, `google` | identity endpoint | OAuth grants only `openid profile email offline_access` — `/v1/models` answers `403 … Missing scopes: api.model.read` |
+
+An OAuth token from a ChatGPT sign-in is not an API key, and no scope makes it
+one. Issue an API key if that is what you need.
+
+## browser-cdn
+
+Serve the directory over HTTP — WebCrypto needs a secure context, and
+`localhost` counts:
 
 ```bash
 npx serve examples/browser-cdn
 ```
 
+Then set **your own** registered client id in `index.html`. The values in
+`publicClientIds` will not work from a web origin: they are registered for
+loopback redirects (`http://localhost:1455/auth/callback`), so a provider
+rejects `http://localhost:3000/callback.html` before a consent screen appears.
+Google and Microsoft both let you register a web client; do that and the popup
+flow works as written.
+
 ## Client ids
 
-You name the client id at initialization — no provider defaults to one. `openai`,
-`anthropic`, `github-copilot` and `qwen` have published ids you can opt into via
-`publicClientIds`; `google` and `xai` need credentials you register yourself:
+You name the client id at initialization — no provider defaults to one. Every
+built-in provider has a published id to opt into via `publicClientIds`, and
+`google` additionally needs the secret in `publicClientSecrets`. Override either
+at any time:
 
 ```bash
-node examples/cli-login/index.js login xai --client-id=YOUR_CLIENT_ID
+node examples/cli-login/index.js login google --client-id=YOUR_ID --client-secret=YOUR_SECRET
 ```
+
+→ [**docs/credentials.md**](../docs/credentials.md) for every value and how to
+pass it.
