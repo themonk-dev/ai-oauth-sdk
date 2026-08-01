@@ -146,7 +146,16 @@ describe('storage adapters keep keys() so prune() works', () => {
 
   it('sweeps abandoned logins out of a web store', async () => {
     const backing = fakeWebStorage()
-    const registry = new AuthorizationRegistry({ storage: fromSyncStorage(backing), ttlMs: 1 })
+    // On a controlled clock rather than a real one. `create` prunes as it goes,
+    // so with a 1ms TTL and a real clock the earlier entries were already being
+    // swept by the later `create` calls, and how many survived to the explicit
+    // prune came down to how fast the loop happened to run.
+    let now = 1_000
+    const registry = new AuthorizationRegistry({
+      storage: fromSyncStorage(backing),
+      ttlMs: 1_000,
+      now: () => now,
+    })
 
     for (let i = 0; i < 5; i++) {
       await registry.create({
@@ -157,7 +166,7 @@ describe('storage adapters keep keys() so prune() works', () => {
       })
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    now += 1_001
 
     expect(await registry.prune()).toBe(5)
     // The PKCE verifiers are gone; nothing is left pointing at them either.
