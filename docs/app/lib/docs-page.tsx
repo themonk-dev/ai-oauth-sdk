@@ -1,5 +1,5 @@
 import { useFumadocsLoader } from 'fumadocs-core/source/client'
-import { DocsLayout } from 'fumadocs-ui/layouts/docs'
+import { DocsLayout, type DocsLayoutProps } from 'fumadocs-ui/layouts/docs'
 import {
   DocsBody,
   DocsDescription,
@@ -11,6 +11,7 @@ import {
 import { use } from 'react'
 
 import { useMDXComponents } from '@/components/mdx'
+import { VersionPicker } from '@/components/version-picker'
 import { icons } from './icons'
 import { baseOptions } from './layout.shared'
 import { gitConfig } from './shared'
@@ -91,11 +92,15 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
   )
 }
 
+const sidebar: DocsLayoutProps['sidebar'] = {
+  footer: <VersionPicker />,
+}
+
 export function DocsPageView({ loaderData }: { loaderData: DocsPageData }) {
   const { pageTree, path, markdownUrl } = useFumadocsLoader(loaderData)
 
   return (
-    <DocsLayout {...baseOptions()} tree={pageTree}>
+    <DocsLayout {...baseOptions()} tree={pageTree} sidebar={sidebar}>
       <Content path={path} markdownUrl={markdownUrl} />
     </DocsLayout>
   )
