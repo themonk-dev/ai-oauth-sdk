@@ -19,6 +19,18 @@ export function escapeForCmd(value: string): string {
 }
 
 /**
+ * Whether launching a browser has been switched off for this process.
+ *
+ * Set `AI_OAUTH_SDK_NO_BROWSER` in a test suite or a CI job that drives a login
+ * end to end. Without it every completed flow spawns the machine's URL handler,
+ * which on a developer's laptop means a tab per test pointing at a port that
+ * closed when the fixture did.
+ */
+function browserDisabled(): boolean {
+  return Boolean(process.env['AI_OAUTH_SDK_NO_BROWSER'])
+}
+
+/**
  * Opens a URL in the user's default browser.
  *
  * Implemented with `spawn` rather than a dependency like `open` to keep the
@@ -26,6 +38,10 @@ export function escapeForCmd(value: string): string {
  * macOS and Linux the URL reaches the launcher untouched.
  */
 export function openBrowser(url: string): void {
+  if (browserDisabled()) {
+    return
+  }
+
   const platform = process.platform
 
   let command: string
@@ -54,6 +70,10 @@ export function openBrowser(url: string): void {
 
 /** True when there is plausibly a browser to open (i.e. not a headless box). */
 export function canOpenBrowser(): boolean {
+  if (browserDisabled()) {
+    return false
+  }
+
   if (process.platform === 'darwin' || process.platform === 'win32') {
     return true
   }

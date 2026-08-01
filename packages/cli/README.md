@@ -9,8 +9,12 @@ anything.
 npx @ai-oauth-sdk/cli login openai
 
 curl -H "Authorization: Bearer $(npx @ai-oauth-sdk/cli token openai)" \
-     https://api.openai.com/v1/models
+     -H "OpenAI-Beta: responses=experimental" \
+     "https://chatgpt.com/backend-api/codex/models?client_version=0.142.5"
 ```
+
+Not `api.openai.com`: a ChatGPT sign-in grants the subscription surface, not the
+REST API. `createAuthenticatedFetch` sends the right host and headers for you.
 
 Install it properly to drop the `npx`:
 

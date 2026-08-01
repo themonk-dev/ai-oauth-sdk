@@ -4,6 +4,29 @@ import type { PkceMethod } from './pkce.js'
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 
+/**
+ * What a request actually needs, once a stored token has been resolved into it.
+ *
+ * For most providers this is just the access token, and there is nothing to
+ * resolve. For the ones where the API takes a different credential than the one
+ * the OAuth flow handed you, this is what `exchangeCredential` returns.
+ */
+export interface ResolvedCredential {
+  /** The credential to send, which may not be the stored access token. */
+  accessToken: string
+  /** Authorization scheme. Defaults to `Bearer`. */
+  tokenType?: string
+  /** Where to send it, when the provider names a host rather than declaring one. */
+  baseUrl?: string
+  /** Headers this credential needs, merged under any the caller set. */
+  headers?: Record<string, string>
+  /**
+   * Absolute expiry as epoch milliseconds. `createAuthenticatedFetch` re-runs
+   * the exchange shortly before this. Absent means "do not cache".
+   */
+  expiresAt?: number
+}
+
 export interface TokenSet {
   accessToken: string
   refreshToken?: string
@@ -229,6 +252,50 @@ export interface ProviderConfig {
    * `createAuthenticatedFetch`.
    */
   apiHeaders?: (tokens: TokenSet) => Record<string, string>
+  /**
+   * Query parameters every API request needs. Used by
+   * `createAuthenticatedFetch`, which only adds a key the URL does not have.
+   *
+   * OpenAI's Codex surface gates the available model set on `client_version`:
+   * omit it and every model reports as unsupported, so it is not optional in
+   * the way a query parameter usually is.
+   */
+  apiQuery?: (tokens: TokenSet) => Record<string, string>
+  /**
+   * Last chance to rewrite a JSON request body before it is sent.
+   *
+   * Receives the resolved URL and the parsed body, and returns the body to
+   * send. Only called for requests whose body is a JSON object, so bodies that
+   * are streams, form data or anything else pass through untouched.
+   *
+   * This exists for endpoints that accept the shape a standard client sends but
+   * then behave incorrectly. OpenAI's Codex `/responses` runs stateless and
+   * answers a request missing its reasoning configuration with an empty stream
+   * rather than an error.
+   */
+  transformRequestBody?: (
+    url: string,
+    body: Record<string, unknown>,
+    tokens: TokenSet,
+  ) => Record<string, unknown>
+  /**
+   * Trades the stored token for the credential the provider's API actually
+   * accepts, when those are not the same thing.
+   *
+   * GitHub Copilot is the case this exists for. The device flow yields a
+   * `ghu_` GitHub token, which `api.githubcopilot.com` rejects: it wants a
+   * short-lived Copilot token, obtained by exchanging the GitHub one, and it
+   * tells you in the same response which host to send it to. So neither the
+   * credential nor the base URL can be known from the descriptor alone.
+   *
+   * `createAuthenticatedFetch` calls this, caches the result until shortly
+   * before `expiresAt`, and re-runs it on a 401. Leave it undefined and the
+   * stored access token is used directly, which is the normal case.
+   */
+  exchangeCredential?: (
+    tokens: TokenSet,
+    context: { fetch: FetchLike; signal?: AbortSignal },
+  ) => Promise<ResolvedCredential>
   /** Marks providers whose constants are not officially published. */
   experimental?: boolean
   /** Free-form note surfaced in errors and docs. */

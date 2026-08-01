@@ -11,6 +11,7 @@
  */
 import {
   createAuthenticatedFetch,
+  extractCodexModelSlugs,
   isOAuthError,
   publicClientIds,
   publicClientSecrets,
@@ -24,19 +25,25 @@ const countModels = (body) => `${body.data?.length ?? 0} models available`
 
 const whoami = (body) => `signed in as ${body.email ?? body.sub ?? 'unknown'}`
 
+const listCodexModels = (body) => `${extractCodexModelSlugs(body).length} models available`
+
 const REQUESTS = {
   anthropic: { path: '/models', describe: countModels },
   openrouter: { path: '/models', describe: countModels },
   xai: { path: '/models', describe: countModels },
   qwen: { path: '/models', describe: countModels },
 
-  // Not every OAuth token is an API key. OpenAI's authorization server offers
-  // only openid/profile/email/offline_access, so a ChatGPT sign-in cannot list
-  // models — `/v1/models` answers 403 "Missing scopes: api.model.read". Google's
-  // coding endpoint is not a model list either. Identity is what both grant, so
-  // that is what they are asked for. An absolute URL bypasses `apiBaseUrl`,
-  // which `createAuthenticatedFetch` honours.
-  openai: { path: 'https://auth.openai.com/api/accounts/oauth/userinfo', describe: whoami },
+  // A ChatGPT sign-in is not an API key: OpenAI's authorization server offers
+  // only openid/profile/email/offline_access, so `api.openai.com/v1/models`
+  // answers 403 "Missing scopes: api.model.read". It does open the Codex
+  // surface, which is where `apiBaseUrl` points, so the relative path below
+  // resolves to chatgpt.com and the descriptor supplies the rest.
+  openai: { path: '/models', describe: listCodexModels },
+
+  // Google's coding endpoint is not a model list, and reaching it needs a
+  // project handshake first. Identity is what the token plainly grants. An
+  // absolute URL bypasses `apiBaseUrl`, which `createAuthenticatedFetch`
+  // honours.
   google: { path: 'https://openidconnect.googleapis.com/v1/userinfo', describe: whoami },
 }
 

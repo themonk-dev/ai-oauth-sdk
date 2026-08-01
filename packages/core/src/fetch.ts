@@ -1,7 +1,8 @@
 import { OAuthError } from './errors.js'
 import { fetchWithSignal } from './http.js'
+import { DEFAULT_EXPIRY_SKEW_MS } from './token.js'
 import type { AuthClient } from './client.js'
-import type { FetchLike } from './types.js'
+import type { FetchLike, ResolvedCredential, TokenSet } from './types.js'
 
 export interface AuthenticatedFetchOptions {
   /** Underlying fetch. Defaults to the global. */
@@ -19,7 +20,13 @@ export interface AuthenticatedFetchOptions {
   retryOnUnauthorized?: boolean
   /** Prefix for relative URLs. Defaults to the provider's `apiBaseUrl`. */
   baseUrl?: string
-  /** Extra headers merged into every request. */
+  /**
+   * Extra headers merged into every request.
+   *
+   * Beats anything the provider supplies, so this is where you override a
+   * default like Copilot's `Editor-Version`. A header set on the request itself
+   * still wins over both.
+   */
   headers?: Record<string, string>
   /**
    * Let an `Authorization` header on the request survive instead of replacing
@@ -54,6 +61,54 @@ function isReplayable(body: RequestInit['body']): boolean {
     (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) ||
     (typeof FormData !== 'undefined' && body instanceof FormData) ||
     (typeof Blob !== 'undefined' && body instanceof Blob)
+  )
+}
+
+/** Origin a relative URL is parsed against so `URL` will accept it. */
+const PLACEHOLDER_ORIGIN = 'http://relative.invalid'
+
+/**
+ * Applies the provider's `transformRequestBody`, when there is one and the body
+ * is JSON we can read.
+ *
+ * A body that is not a string is left alone: it may be a stream, form data, or
+ * bytes, and none of those can be rewritten without consuming or guessing at
+ * them. An explicit non-JSON content type is honoured, but its absence is not
+ * taken to mean the body is not JSON, because most callers omit it.
+ */
+function transformBody(
+  provider: AuthClient['provider'],
+  url: string,
+  init: RequestInit | undefined,
+  headers: Headers,
+  tokens: TokenSet,
+): RequestInit['body'] {
+  const { body } = init ?? {}
+
+  if (!provider.transformRequestBody || typeof body !== 'string') {
+    return body
+  }
+
+  const contentType = headers.get('content-type')
+
+  if (contentType && !contentType.includes('json')) {
+    return body
+  }
+
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return body
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return body
+  }
+
+  return JSON.stringify(
+    provider.transformRequestBody(url, parsed as Record<string, unknown>, tokens),
   )
 }
 
@@ -94,9 +149,8 @@ export function createAuthenticatedFetch(
   options: AuthenticatedFetchOptions = {},
 ): FetchLike {
   const fetchImpl = options.fetch ?? globalThis.fetch
-  const baseUrl = options.baseUrl ?? client.provider.apiBaseUrl
 
-  const resolveUrl = (input: string): string => {
+  const resolveUrl = (input: string, baseUrl: string | undefined): string => {
     if (!baseUrl || /^[a-z][a-z0-9+.-]*:/i.test(input)) {
       return input
     }
@@ -104,41 +158,133 @@ export function createAuthenticatedFetch(
     return `${baseUrl.replace(/\/$/, '')}/${input.replace(/^\//, '')}`
   }
 
-  const buildHeaders = async (init: RequestInit | undefined, forceRefresh: boolean) => {
+  let cached: { credential: ResolvedCredential; expiresAt: number } | undefined
+
+  /**
+   * Resolves the stored token into the credential the API takes.
+   *
+   * Cached until shortly before it expires, because for GitHub Copilot this is
+   * a network round trip and the result lives about 25 minutes. `discard`
+   * throws the cache away, which is what the 401 retry wants: an exchanged
+   * credential can be revoked before its nominal expiry just like any other.
+   */
+  const resolveCredential = async (
+    tokens: TokenSet | undefined,
+    accessToken: string,
+    discard: boolean,
+  ): Promise<ResolvedCredential> => {
+    const { exchangeCredential } = client.provider
+
+    if (!exchangeCredential || !tokens) {
+      return { accessToken, ...(tokens?.tokenType ? { tokenType: tokens.tokenType } : {}) }
+    }
+
+    if (discard) {
+      cached = undefined
+    }
+
+    if (cached && Date.now() < cached.expiresAt - DEFAULT_EXPIRY_SKEW_MS) {
+      return cached.credential
+    }
+
+    const credential = await exchangeCredential(tokens, { fetch: fetchImpl })
+    cached =
+      credential.expiresAt === undefined ? undefined : { credential, expiresAt: credential.expiresAt }
+
+    return credential
+  }
+
+  /**
+   * Parsed against a placeholder origin so a relative URL survives, then
+   * serialised back in whichever form it arrived as. Anything the URL already
+   * carries wins, so a caller can still override a provider default per request.
+   */
+  const applyQuery = (url: string, query: Record<string, string>): string => {
+    if (Object.keys(query).length === 0) {
+      return url
+    }
+
+    const absolute = /^[a-z][a-z0-9+.-]*:/i.test(url)
+    const parsed = new URL(url, absolute ? undefined : PLACEHOLDER_ORIGIN)
+
+    for (const [key, value] of Object.entries(query)) {
+      if (!parsed.searchParams.has(key)) {
+        parsed.searchParams.set(key, value)
+      }
+    }
+
+    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
+  }
+
+  /**
+   * Builds the URL, headers and body for one attempt. All three can depend on
+   * the credential, so they are resolved together and rebuilt from scratch on
+   * the 401 retry rather than carried over.
+   *
+   * `retry` is the second attempt. What that means depends on the provider: one
+   * that exchanges its credential should re-run the exchange, since its
+   * short-lived API token is the thing that most likely went stale, while one
+   * that sends the stored token directly should refresh that instead. Doing
+   * both would refresh a perfectly good OAuth token to fix an expired exchange,
+   * and for Copilot in particular the stored token has no expiry to renew.
+   */
+  const prepare = async (input: string, init: RequestInit | undefined, retry: boolean) => {
+    const exchanges = client.provider.exchangeCredential !== undefined
+    const forceRefresh = retry && !exchanges
     const accessToken = await client.getAccessToken(forceRefresh ? { forceRefresh: true } : {})
     const tokens = await client.getTokens()
+    const credential = await resolveCredential(tokens, accessToken, retry)
 
     const headers = new Headers(init?.headers)
 
     if (!options.respectCallerAuthorization || !headers.has('Authorization')) {
-      headers.set('Authorization', `${tokens?.tokenType ?? 'Bearer'} ${accessToken}`)
+      headers.set('Authorization', `${credential.tokenType ?? 'Bearer'} ${credential.accessToken}`)
     }
 
-    if (tokens) {
-      for (const [key, value] of Object.entries(client.provider.apiHeaders?.(tokens) ?? {})) {
-        if (!headers.has(key)) {
-          headers.set(key, value)
-        }
+    // Precedence, weakest first: what the provider supplies, then what this
+    // instance was configured with, then what the caller set on the request.
+    // Collected through `Headers` rather than an object spread so the merge is
+    // case-insensitive the way HTTP is, and `Editor-Version` from an option
+    // replaces `editor-version` from a provider instead of sitting beside it.
+    const defaults = new Headers()
+
+    for (const source of [
+      credential.headers,
+      tokens ? client.provider.apiHeaders?.(tokens) : undefined,
+      options.headers,
+    ]) {
+      for (const [key, value] of Object.entries(source ?? {})) {
+        defaults.set(key, value)
       }
     }
 
-    for (const [key, value] of Object.entries(options.headers ?? {})) {
+    defaults.forEach((value, key) => {
       if (!headers.has(key)) {
         headers.set(key, value)
       }
-    }
+    })
 
-    return headers
+    // Same shape for the host: an explicit option wins, then whatever the
+    // exchange named, then the descriptor's constant. Copilot only learns its
+    // host from the exchange, and enterprise accounts get a different one.
+    const baseUrl = options.baseUrl ?? credential.baseUrl ?? client.provider.apiBaseUrl
+    const url = applyQuery(
+      resolveUrl(input, baseUrl),
+      tokens ? (client.provider.apiQuery?.(tokens) ?? {}) : {},
+    )
+    const body = tokens ? transformBody(client.provider, url, init, headers, tokens) : init?.body
+
+    return { url, headers, body }
   }
 
   return async (input: string, init?: RequestInit): Promise<Response> => {
-    const url = resolveUrl(input)
     const { signal, ...rest } = init ?? {}
+    const first = await prepare(input, init, false)
 
     const response = await fetchWithSignal(
       fetchImpl,
-      url,
-      { ...rest, headers: await buildHeaders(init, false) },
+      first.url,
+      { ...rest, headers: first.headers, body: first.body },
       signal ?? undefined,
     )
 
@@ -152,11 +298,15 @@ export function createAuthenticatedFetch(
 
     void response.body?.cancel().catch(() => {})
 
+    const url = first.url
+
     try {
+      const retry = await prepare(input, init, true)
+
       return await fetchWithSignal(
         fetchImpl,
-        url,
-        { ...rest, headers: await buildHeaders(init, true) },
+        retry.url,
+        { ...rest, headers: retry.headers, body: retry.body },
         signal ?? undefined,
       )
     } catch (error) {

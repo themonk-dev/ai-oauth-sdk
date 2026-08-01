@@ -24,7 +24,8 @@ npm install -g @ai-oauth-sdk/cli
 ```bash
 ai-oauth-sdk login openai
 curl -H "Authorization: Bearer $(ai-oauth-sdk token openai)" \
-     https://api.openai.com/v1/models
+     -H "OpenAI-Beta: responses=experimental" \
+     "https://chatgpt.com/backend-api/codex/models?client_version=0.142.5"
 ```
 
 `token` prints the bare token and nothing else, so command substitution stays clean. To keep it out

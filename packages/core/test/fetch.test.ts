@@ -128,6 +128,98 @@ describe('createAuthenticatedFetch', () => {
     expect(server.apiRequests[0]?.['x-custom']).toBe('yes')
   })
 
+  it('adds provider-declared query parameters', async () => {
+    const client = await signedInClient(server, {
+      apiQuery: () => ({ client_version: '0.142.5' }),
+    })
+    const api = createAuthenticatedFetch(client)
+    await api('/echo')
+
+    expect(server.apiUrls[0]).toBe('/api/echo?client_version=0.142.5')
+  })
+
+  it('lets a query parameter on the request win over the provider default', async () => {
+    const client = await signedInClient(server, {
+      apiQuery: () => ({ client_version: '0.142.5' }),
+    })
+    const api = createAuthenticatedFetch(client)
+    await api('/echo?client_version=9.9.9&other=1')
+
+    expect(server.apiUrls[0]).toBe('/api/echo?client_version=9.9.9&other=1')
+  })
+
+  it('adds query parameters to an absolute URL too', async () => {
+    const client = await signedInClient(server, {
+      apiQuery: () => ({ client_version: '0.142.5' }),
+    })
+    const api = createAuthenticatedFetch(client)
+    await api(`${server.url}/api/echo`)
+
+    expect(server.apiUrls[0]).toBe('/api/echo?client_version=0.142.5')
+  })
+
+  it('transforms a JSON request body when the provider asks', async () => {
+    const client = await signedInClient(server, {
+      transformRequestBody: (_url, body) => ({ ...body, store: false }),
+    })
+    const api = createAuthenticatedFetch(client)
+    await api('/echo', { method: 'POST', body: JSON.stringify({ model: 'gpt-5.5' }) })
+
+    expect(JSON.parse(server.apiBodies[0] ?? '{}')).toEqual({ model: 'gpt-5.5', store: false })
+  })
+
+  it('passes the resolved URL to the body transform, so it can target one route', async () => {
+    const seen: string[] = []
+    const client = await signedInClient(server, {
+      transformRequestBody: (url, body) => {
+        seen.push(url)
+
+        return body
+      },
+    })
+    const api = createAuthenticatedFetch(client)
+    await api('/echo', { method: 'POST', body: '{}' })
+
+    expect(seen[0]).toBe(`${server.url}/api/echo`)
+  })
+
+  it('leaves a non-JSON body alone', async () => {
+    const client = await signedInClient(server, {
+      transformRequestBody: () => ({ replaced: true }),
+    })
+    const api = createAuthenticatedFetch(client)
+    await api('/echo', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: 'not json',
+    })
+
+    expect(server.apiBodies[0]).toBe('not json')
+  })
+
+  it('leaves a body that is not a JSON object alone', async () => {
+    const client = await signedInClient(server, {
+      transformRequestBody: () => ({ replaced: true }),
+    })
+    const api = createAuthenticatedFetch(client)
+    await api('/echo', { method: 'POST', body: JSON.stringify(['a', 'b']) })
+
+    expect(server.apiBodies[0]).toBe('["a","b"]')
+  })
+
+  it('sends the transformed body on the 401 retry as well', async () => {
+    const client = await signedInClient(server, {
+      transformRequestBody: (_url, body) => ({ ...body, store: false }),
+    })
+    await client.setTokens({ ...(await client.getTokens())!, accessToken: 'stale-token' })
+
+    const api = createAuthenticatedFetch(client)
+    const response = await api('/echo', { method: 'POST', body: JSON.stringify({ a: 1 }) })
+
+    expect(response.status).toBe(200)
+    expect(JSON.parse(server.apiBodies[1] ?? '{}')).toEqual({ a: 1, store: false })
+  })
+
   it('lets caller headers win over provider defaults', async () => {
     const client = await signedInClient(server, {
       apiHeaders: () => ({ 'x-custom': 'from-provider' }),
@@ -264,11 +356,11 @@ describe('revocation', () => {
 describe('provider API headers', () => {
   it('OpenAI names the billed account', async () => {
     const { openai } = await import('../src/providers/openai.js')
-    expect(openai.apiHeaders!({ accountId: 'acct-1' } as never)).toEqual({
+    expect(openai.apiHeaders!({ accountId: 'acct-1' } as never)).toMatchObject({
       'chatgpt-account-id': 'acct-1',
     })
-    // Nothing to send when the account is unknown.
-    expect(openai.apiHeaders!({} as never)).toEqual({})
+    // Nothing to name when the account is unknown.
+    expect(openai.apiHeaders!({} as never)).not.toHaveProperty('chatgpt-account-id')
   })
 
   it('Anthropic opts into the OAuth beta', async () => {

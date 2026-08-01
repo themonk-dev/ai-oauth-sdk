@@ -39,8 +39,13 @@ Every command takes `--json` for machine-readable output.
 
 ```bash
 curl -H "Authorization: Bearer $(ai-oauth-sdk token openai)" \
-     https://api.openai.com/v1/models
+     -H "OpenAI-Beta: responses=experimental" \
+     "https://chatgpt.com/backend-api/codex/models?client_version=0.142.5"
 ```
+
+Not `api.openai.com`: a ChatGPT sign-in opens the subscription surface, not the REST API. See
+[the provider page](/docs/providers/openai) for why, and for the headers
+`createAuthenticatedFetch` sends so you do not have to.
 
 That does put the token in your shell history and, briefly, in the process table. `exec` avoids
 both by passing it in the child's environment instead:

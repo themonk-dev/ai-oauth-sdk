@@ -1,6 +1,15 @@
 import { webcrypto } from 'node:crypto'
 
 /**
+ * Nothing in the suite may spawn the machine's URL handler.
+ *
+ * The CLI's login path builds a receiver that opens a browser, which is right
+ * in production and wrong here: driving a login end to end then puts a tab on
+ * screen per test, pointing at a loopback port the fixture has already closed.
+ */
+process.env['AI_OAUTH_SDK_NO_BROWSER'] = '1'
+
+/**
  * Ensures `globalThis.crypto` exists before any test runs.
  *
  * Node exposes it in the main context, but not inside a VM context — which is

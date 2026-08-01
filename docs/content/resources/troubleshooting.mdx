@@ -78,15 +78,20 @@ See [database-backed storage](/docs/recipes/storage).
 ## Requests get a 401 even though I just signed in
 
 **The token is not for that API.** An OpenAI ChatGPT sign-in grants `openid`, `profile`, `email` and
-`offline_access`, and nothing else. `GET /v1/models` answers `403 Missing scopes: api.model.read`, and
-no scope available in this flow can fix it. Issue an API key for the REST API.
+`offline_access`, and nothing else, so `api.openai.com/v1/models` answers `403 Missing scopes:
+api.model.read` and no scope in this flow can fix it. That token does open
+`chatgpt.com/backend-api/codex`, which is where `apiBaseUrl` points, so
+`createAuthenticatedFetch` reaches it without configuration. Issue an API key if you want the REST
+API itself, and pass `baseUrl: 'https://api.openai.com/v1'`.
 
 **A missing provider header.** Anthropic OAuth bearers need `anthropic-beta: oauth-2025-04-20`
 alongside `anthropic-version`. `createAuthenticatedFetch` attaches both; a hand-rolled `headers`
 object will not.
 
-**The wrong host.** GitHub Copilot's API host comes out of the token exchange and differs between
-individual and enterprise accounts.
+**The wrong credential.** GitHub Copilot's API does not accept the stored `ghu_` token at all. It
+wants a short-lived token obtained by exchanging it, and that same exchange names the host to send
+it to, which differs between individual and enterprise accounts. `createAuthenticatedFetch` handles
+both; sending `tokens.accessToken` by hand will not work.
 
 ## The SDK sends the wrong credential
 

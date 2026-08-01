@@ -1,6 +1,6 @@
 {
   "name": "@ai-oauth-sdk/node",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Node/Bun/Deno adapter for ai-oauth-sdk: loopback callback server, file-backed token storage, and browser launching.",
   "keywords": [
     "oauth",

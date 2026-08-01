@@ -11,8 +11,15 @@ import { xai } from './xai.js'
 
 export { defineProvider, parseStandardCallback, readCallback } from './define.js'
 export { anthropic, githubCopilot, google, openai, openrouter, qwen, xai }
-export { exchangeForCopilotToken } from './github-copilot.js'
+export { copilotClientHeaders, exchangeForCopilotToken } from './github-copilot.js'
 export type { CopilotApiToken } from './github-copilot.js'
+export {
+  codexBaseUrl,
+  codexClientVersion,
+  extractCodexModelSlugs,
+  fetchCodexModels,
+  normalizeCodexResponsesBody,
+} from './openai.js'
 export { microsoft } from './microsoft.js'
 export { publicClientIds, publicClientSecrets } from './public-client-ids.js'
 export type { PublicClientIdProvider } from './public-client-ids.js'
