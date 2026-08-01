@@ -95,15 +95,37 @@ the root `meta.json` renders as a section separator.
 `pnpm build` produces a static site in `build/client`. Every page is prerendered, and search runs in
 the browser against a static index, so there is no server component.
 
-Point any static host at `build/client`. Two things to configure:
+Point any static host at `build/client`. One thing to configure, and one not to:
 
 - Serve files as they are. Do not add a catch-all rewrite to `__spa-fallback.html`, or every URL
   gets the fallback shell instead of its prerendered HTML, and hydration then fails with
   `No result found for routeId`.
-- Map 404s to `__spa-fallback.html` if you want the styled not-found page instead of the host's.
+- Do not map 404s to `__spa-fallback.html` either. It looks like a way to get the styled not-found
+  page, but the shell hydrates, asks for route data that is not there, and renders "Something went
+  wrong" instead. A plain 404 from the host is the better answer until there is a real 404 page.
 
 On Vercel, set the root directory to `docs` and leave the framework preset to auto-detect. The
 nested lockfile is picked up automatically.
+
+### Cloudflare
+
+`wrangler.jsonc` in this directory is the deploy config: a Worker with nothing but static assets,
+since `ssr: false` means there is no server to run. The asset settings that matter are commented
+there.
+
+Workers Builds keeps the rest in its dashboard, and it has to agree with the layout here:
+
+| Setting | Value |
+| --- | --- |
+| Root directory | `docs` |
+| Build command | `pnpm build` |
+| Deploy command | `npx wrangler deploy` |
+| Wrangler config | `docs/wrangler.jsonc` |
+
+The Node version comes from `.nvmrc` in this directory, so it does not need setting. Nothing in the
+build reads a secret, so the project needs no environment variables; if that ever changes, turn off
+builds for non-production branches first, because a fork's pull request would otherwise run its own
+code with them.
 
 ## Versions
 
