@@ -1,6 +1,6 @@
 {
   "name": "@ai-oauth-sdk/browser",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Browser adapter for ai-oauth-sdk: popup and full-page redirect callback receivers plus web storage.",
   "keywords": [
     "oauth",
