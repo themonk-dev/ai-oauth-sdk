@@ -1,7 +1,7 @@
 import { OAuthError } from './errors.js'
 import { fetchWithSignal } from './http.js'
 import type { AuthClient } from './client.js'
-import type { FetchLike } from './types.js'
+import type { FetchLike, TokenSet } from './types.js'
 
 export interface AuthenticatedFetchOptions {
   /** Underlying fetch. Defaults to the global. */
@@ -57,6 +57,54 @@ function isReplayable(body: RequestInit['body']): boolean {
   )
 }
 
+/** Origin a relative URL is parsed against so `URL` will accept it. */
+const PLACEHOLDER_ORIGIN = 'http://relative.invalid'
+
+/**
+ * Applies the provider's `transformRequestBody`, when there is one and the body
+ * is JSON we can read.
+ *
+ * A body that is not a string is left alone: it may be a stream, form data, or
+ * bytes, and none of those can be rewritten without consuming or guessing at
+ * them. An explicit non-JSON content type is honoured, but its absence is not
+ * taken to mean the body is not JSON, because most callers omit it.
+ */
+function transformBody(
+  provider: AuthClient['provider'],
+  url: string,
+  init: RequestInit | undefined,
+  headers: Headers,
+  tokens: TokenSet,
+): RequestInit['body'] {
+  const { body } = init ?? {}
+
+  if (!provider.transformRequestBody || typeof body !== 'string') {
+    return body
+  }
+
+  const contentType = headers.get('content-type')
+
+  if (contentType && !contentType.includes('json')) {
+    return body
+  }
+
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return body
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return body
+  }
+
+  return JSON.stringify(
+    provider.transformRequestBody(url, parsed as Record<string, unknown>, tokens),
+  )
+}
+
 /**
  * A `fetch` that keeps itself authenticated.
  *
@@ -104,7 +152,34 @@ export function createAuthenticatedFetch(
     return `${baseUrl.replace(/\/$/, '')}/${input.replace(/^\//, '')}`
   }
 
-  const buildHeaders = async (init: RequestInit | undefined, forceRefresh: boolean) => {
+  /**
+   * Parsed against a placeholder origin so a relative URL survives, then
+   * serialised back in whichever form it arrived as. Anything the URL already
+   * carries wins, so a caller can still override a provider default per request.
+   */
+  const applyQuery = (url: string, query: Record<string, string>): string => {
+    if (Object.keys(query).length === 0) {
+      return url
+    }
+
+    const absolute = /^[a-z][a-z0-9+.-]*:/i.test(url)
+    const parsed = new URL(url, absolute ? undefined : PLACEHOLDER_ORIGIN)
+
+    for (const [key, value] of Object.entries(query)) {
+      if (!parsed.searchParams.has(key)) {
+        parsed.searchParams.set(key, value)
+      }
+    }
+
+    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
+  }
+
+  /**
+   * Builds the URL, headers and body for one attempt. All three can depend on
+   * the token set, so they are resolved together and rebuilt from scratch on
+   * the 401 retry rather than carried over.
+   */
+  const prepare = async (input: string, init: RequestInit | undefined, forceRefresh: boolean) => {
     const accessToken = await client.getAccessToken(forceRefresh ? { forceRefresh: true } : {})
     const tokens = await client.getTokens()
 
@@ -128,17 +203,23 @@ export function createAuthenticatedFetch(
       }
     }
 
-    return headers
+    const url = applyQuery(
+      resolveUrl(input),
+      tokens ? (client.provider.apiQuery?.(tokens) ?? {}) : {},
+    )
+    const body = tokens ? transformBody(client.provider, url, init, headers, tokens) : init?.body
+
+    return { url, headers, body }
   }
 
   return async (input: string, init?: RequestInit): Promise<Response> => {
-    const url = resolveUrl(input)
     const { signal, ...rest } = init ?? {}
+    const first = await prepare(input, init, false)
 
     const response = await fetchWithSignal(
       fetchImpl,
-      url,
-      { ...rest, headers: await buildHeaders(init, false) },
+      first.url,
+      { ...rest, headers: first.headers, body: first.body },
       signal ?? undefined,
     )
 
@@ -152,11 +233,15 @@ export function createAuthenticatedFetch(
 
     void response.body?.cancel().catch(() => {})
 
+    const url = first.url
+
     try {
+      const retry = await prepare(input, init, true)
+
       return await fetchWithSignal(
         fetchImpl,
-        url,
-        { ...rest, headers: await buildHeaders(init, true) },
+        retry.url,
+        { ...rest, headers: retry.headers, body: retry.body },
         signal ?? undefined,
       )
     } catch (error) {

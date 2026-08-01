@@ -35,10 +35,13 @@ genuinely reach:
 | Provider | Sample request | Why |
 |---|---|---|
 | `anthropic`, `xai`, `openrouter`, `qwen` | `GET /models` | the token carries an inference scope |
-| `openai`, `google` | identity endpoint | OAuth grants only `openid profile email offline_access` — `/v1/models` answers `403 … Missing scopes: api.model.read` |
+| `openai` | `GET /models` on the Codex host | the subscription surface, not `api.openai.com` |
+| `google` | identity endpoint | Code Assist needs a project handshake before it will answer |
 
 An OAuth token from a ChatGPT sign-in is not an API key, and no scope makes it
-one. Issue an API key if that is what you need.
+one: `api.openai.com` answers it with `403 Missing scopes: api.model.read`. It
+does open `chatgpt.com/backend-api/codex`, which is what the descriptor points
+at. Issue an API key if you need the REST API itself.
 
 ## browser-cdn
 

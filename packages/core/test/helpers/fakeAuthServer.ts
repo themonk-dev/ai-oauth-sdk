@@ -51,6 +51,10 @@ export interface FakeAuthServer {
   issuedCodes: Map<string, { challenge?: string; method?: string }>
   /** Headers seen by `/api/echo`, in order. */
   apiRequests: Array<Record<string, string>>
+  /** Request targets seen by the protected API, in order, path and query. */
+  apiUrls: string[]
+  /** Request bodies seen by the protected API, in order. */
+  apiBodies: string[]
   /** Bodies posted to `/revoke`, in order. */
   revocations: Array<Record<string, string>>
   /** Bodies posted to `/device/code`, in order. */
@@ -82,6 +86,8 @@ export async function startFakeAuthServer(
 ): Promise<FakeAuthServer> {
   const requests: Array<Record<string, string>> = []
   const apiRequests: Array<Record<string, string>> = []
+  const apiUrls: string[] = []
+  const apiBodies: string[] = []
   const revocations: Array<Record<string, string>> = []
   const issuedCodes = new Map<string, { challenge?: string; method?: string }>()
   let tokenCount = 0
@@ -195,9 +201,17 @@ export async function startFakeAuthServer(
     // protected API
     // Rejects anything but the newest access token, so a 401-then-refresh
     // retry can be exercised for real rather than simulated.
-    if (url.pathname === '/api/echo') {
+    if (url.pathname === '/api/echo' || url.pathname === '/api/responses') {
       apiCount++
       apiRequests.push(request.headers as Record<string, string>)
+      apiUrls.push(request.url ?? '')
+      apiBodies.push(
+        await new Promise<string>((resolve) => {
+          let data = ''
+          request.on('data', (chunk) => (data += chunk))
+          request.on('end', () => resolve(data))
+        }),
+      )
       const authorization = request.headers.authorization ?? ''
       const presented = authorization.replace(/^Bearer\s+/i, '')
 
@@ -416,6 +430,8 @@ export async function startFakeAuthServer(
     url: `http://127.0.0.1:${port}`,
     requests,
     apiRequests,
+    apiUrls,
+    apiBodies,
     revocations,
     deviceRequests,
     issuedCodes,

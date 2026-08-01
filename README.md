@@ -89,7 +89,8 @@ npm i -g @ai-oauth-sdk/cli
 
 ai-oauth-sdk login openai
 curl -H "Authorization: Bearer $(ai-oauth-sdk token openai)" \
-     https://api.openai.com/v1/models
+     -H "OpenAI-Beta: responses=experimental" \
+     "https://chatgpt.com/backend-api/codex/models?client_version=0.142.5"
 ```
 
 `token` prints the bare token and nothing else, so `$(...)` is always clean. To keep it
@@ -125,7 +126,7 @@ arrive.
 import { createAuthenticatedFetch } from 'ai-oauth-sdk/core'
 
 const api = createAuthenticatedFetch(client)
-await api('/v1/models')   // relative to the provider's apiBaseUrl
+await api('/models')   // relative to the provider's apiBaseUrl
 ```
 
 Attaches a valid token, adds the provider's required headers, and recovers from a 401 by
