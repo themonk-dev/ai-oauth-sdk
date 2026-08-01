@@ -1,5 +1,15 @@
 # @ai-oauth-sdk/node
 
+## 0.2.1
+
+### Patch Changes
+
+- 076f8c0: Honour `AI_OAUTH_SDK_NO_BROWSER`. When it is set, `openBrowser()` spawns nothing and
+  `canOpenBrowser()` reports false, so a receiver that would have launched the machine's URL handler
+  prints the authorization URL instead. Intended for test suites and CI jobs that drive a login end to
+  end.
+  - @ai-oauth-sdk/core@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes

@@ -1,5 +1,11 @@
 # @ai-oauth-sdk/vue
 
+## 0.2.1
+
+### Patch Changes
+
+- @ai-oauth-sdk/core@0.2.1
+
 ## 0.2.0
 
 ### Patch Changes
