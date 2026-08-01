@@ -1,14 +1,30 @@
 ---
 title: Disclaimer
-description: This is an independent, unofficial project. What that means in practice before you ship it.
+description: This project exists for learning and experimentation. Read this before you point it at a provider.
 icon: RiAlertLine
 ---
 
-<Callout type="error" title="Read this before shipping">
-  `ai-oauth-sdk` is an independent, unofficial project. It is not affiliated with, authorized by,
-  endorsed by, sponsored by, or in any way officially connected to OpenAI, Anthropic, Google,
-  GitHub, Microsoft, xAI, Alibaba, OpenRouter, or any other provider it can talk to.
+<Callout type="error" title="Read this first">
+  This project is built for fun and for educational purposes. It exists to show how the OAuth flows
+  inside AI coding CLIs actually work, and to make them reusable. It is an independent, unofficial
+  project, not affiliated with, authorized by, endorsed by, sponsored by, or in any way officially
+  connected to OpenAI, Anthropic, Google, GitHub, Microsoft, xAI, Alibaba, OpenRouter, or any other
+  provider it can talk to.
 </Callout>
+
+## Using a token may not be permitted
+
+A provider's terms of service govern what you may do with a credential issued to their own client,
+and several of them restrict it. Obtaining a token with this library does not mean you are allowed
+to use it, and nothing here grants you a permission the provider has not.
+
+Read the terms of service, the acceptable use policy and the developer policy for every provider you
+sign into, and decide for yourself whether your use is covered. If it is not, register your own
+OAuth client where the provider offers one, or use an API key instead. See
+[credentials](/resources/credentials) for where self-registration is possible.
+
+**Use this entirely at your own discretion and at your own risk.** The maintainers of this project
+cannot and do not make any representation about whether a given use is permitted.
 
 ## No official support for these flows
 
@@ -58,7 +74,8 @@ nominative fair use. Their appearance here does not imply any endorsement or ass
 
 You are responsible for how you use this software, including compliance with each provider's terms
 of service, acceptable use policy, and applicable law. Whether a particular use is permitted is a
-question for the provider's terms and, if it matters to you, your own legal advice.
+question for the provider's terms and, if it matters to you, your own legal advice. It is not a
+question this project can answer for you.
 
 Authenticate only with accounts you own or are authorized to use.
 

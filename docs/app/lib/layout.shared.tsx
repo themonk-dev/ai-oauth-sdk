@@ -1,6 +1,5 @@
-import { RiNpmjsLine } from '@remixicon/react'
+import { RiFingerprintLine, RiNpmjsLine } from '@remixicon/react'
 
-import { Logo } from '@/components/logo'
 import { appName, githubUrl } from './shared'
 
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared'
@@ -14,7 +13,7 @@ export function baseOptions(): BaseLayoutProps {
       url: '/',
       title: (
         <>
-          <Logo className="h-6 w-6" />
+          <RiFingerprintLine className="size-6" />
           {appName}
         </>
       ),

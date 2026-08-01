@@ -1,7 +1,7 @@
 
 <div align="center">
 
-![AI OAuth SDK](https://shieldcn.dev/header/dots.svg?title=AI+OAuth+SDK&subtitle=Sign+in+with+ChatGPT%2C+Claude%2C+Gemini%2C+Grok%2C+or+Copilot+from+a+single+SDK.&logo=ri%3AFaNodeJs&size=wide&mode=dark&brand=themonk-dev)
+![AI OAuth SDK](https://shieldcn.dev/header/dots.svg?title=AI+OAuth+SDK&subtitle=Sign+in+with+ChatGPT%2C+Claude%2C+Gemini%2C+Grok%2C+or+Copilot+from+a+single+SDK.&logo=ri%3APiFingerprintLight&size=wide&mode=dark&brand=themonk-dev)
 
 <p>
 <a href="https://www.npmjs.com/package/ai-oauth-sdk"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/npm/v/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=dark"><img alt="npm" src="https://www.shieldcn.dev/npm/v/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=light"></picture></a>
@@ -118,11 +118,14 @@ because its endpoints are tenant-scoped.
 > provider's terms before shipping it in a product.
 
 > [!WARNING]
-> **This is an unofficial project, and none of these providers supports third-party OAuth
-> clients.** Everything here was derived from the vendors' own open-source CLIs and the
-> RFCs they implement, so endpoints and client ids can change or stop working at any time.
-> Read the [disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer) before
-> shipping this in a product.
+> **This project is built for fun and for learning, and none of these providers supports
+> third-party OAuth clients.** Everything here was derived from the vendors' own
+> open-source CLIs and the RFCs they implement, so endpoints and client ids can change or
+> stop working at any time. Several providers also restrict what you may do with a
+> credential issued to their own CLI, so getting a token is not the same as being allowed
+> to use it. Read their terms, and read the
+> [disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer). Use it at your own
+> discretion.
 
 Any other OAuth 2.0 provider works through
 [`defineProvider()` or `providerFromDiscovery()`](https://ai-oauth-sdk.pages.dev/providers/custom).
@@ -154,8 +157,8 @@ randomness is mandatory, with no `Math.random()` fallback. Credentials are scrub
 error messages before they reach your logs. The loopback server binds `127.0.0.1`, answers
 `GET` and `HEAD` only, and serves exactly one callback.
 
-The full threat model, the storage tradeoffs and how to report a vulnerability are on the
-[Security page](https://ai-oauth-sdk.pages.dev/resources/security).
+The full threat model, the storage tradeoffs and how to report a vulnerability are in
+[SECURITY.md](SECURITY.md).
 
 ---
 
@@ -199,16 +202,16 @@ node examples/cli-login/index.js login openai
 node examples/server-callback/index.js          # then open http://localhost:3000
 ```
 
-Contributing notes, including what adding a provider takes, are on the
-[Contributing page](https://ai-oauth-sdk.pages.dev/resources/contributing).
+What adding a provider takes, and the rest of the contributor notes, are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 <div align="center">
 <br />
 
 **MIT** ·
-[Contributing](https://ai-oauth-sdk.pages.dev/resources/contributing) ·
+[Contributing](CONTRIBUTING.md) ·
 [Recipes](https://ai-oauth-sdk.pages.dev/recipes) ·
-[Security](https://ai-oauth-sdk.pages.dev/resources/security) ·
+[Security](SECURITY.md) ·
 [Disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer)
 
 <sub>An independent project. Not affiliated with or endorsed by OpenAI, Anthropic, Google,

@@ -11,6 +11,12 @@ This is that logic, extracted once, with the provider quirks already encoded. It
 Redirect the user, receive the callback, hand you the token. There is no API client here, no proxy,
 and no model wrappers.
 
+<Callout type="warn" title="Built for fun and for learning">
+  This is an independent, unofficial project. Some providers restrict what you may do with a
+  credential issued to their own CLI, so obtaining a token here does not mean you are allowed to use
+  it. Read their terms and decide for yourself. See the [disclaimer](/resources/disclaimer).
+</Callout>
+
 ```bash
 npx @ai-oauth-sdk/cli login openai
 ```

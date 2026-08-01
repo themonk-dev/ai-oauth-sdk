@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Most providers are a single descriptor — see
-        [the contributing guide](https://ai-oauth-sdk.pages.dev/resources/contributing#adding-a-provider). PRs welcome.
+        [CONTRIBUTING.md](../../CONTRIBUTING.md#adding-a-provider). PRs welcome.
 
         **Do not include a client secret**, here or in a PR.
 

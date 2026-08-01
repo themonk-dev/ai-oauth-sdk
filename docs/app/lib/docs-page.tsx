@@ -1,5 +1,5 @@
 import { useFumadocsLoader } from 'fumadocs-core/source/client'
-import { DocsLayout, type DocsLayoutProps } from 'fumadocs-ui/layouts/docs'
+import { DocsLayout } from 'fumadocs-ui/layouts/docs'
 import {
   DocsBody,
   DocsDescription,
@@ -9,7 +9,6 @@ import {
   ViewOptionsPopover,
 } from 'fumadocs-ui/layouts/docs/page'
 import { use } from 'react'
-import { Link } from 'react-router'
 
 import { useMDXComponents } from '@/components/mdx'
 import { icons } from './icons'
@@ -49,21 +48,6 @@ export function docsPageMeta(data: DocsPageData | undefined) {
     { title: `${data.title} | AI OAuth SDK` },
     { name: 'description', content: data.description },
   ]
-}
-
-const sidebar: DocsLayoutProps['sidebar'] = {
-  footer: (
-    <Link
-      to="/resources/disclaimer"
-      className="flex items-center justify-center gap-2 py-2 text-xs text-fd-muted-foreground transition-colors hover:text-fd-foreground"
-    >
-      <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
-      </span>
-      Unofficial project
-    </Link>
-  ),
 }
 
 function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
@@ -111,7 +95,7 @@ export function DocsPageView({ loaderData }: { loaderData: DocsPageData }) {
   const { pageTree, path, markdownUrl } = useFumadocsLoader(loaderData)
 
   return (
-    <DocsLayout {...baseOptions()} tree={pageTree} sidebar={sidebar}>
+    <DocsLayout {...baseOptions()} tree={pageTree}>
       <Content path={path} markdownUrl={markdownUrl} />
     </DocsLayout>
   )
