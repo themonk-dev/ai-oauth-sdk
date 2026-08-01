@@ -4,7 +4,9 @@ description: A loopback callback server, file-backed token storage, and a browse
 icon: RiNodejsLine
 ---
 
-<Install packages="@ai-oauth-sdk/node" />
+```npm
+npm install @ai-oauth-sdk/node
+```
 
 ## One call
 
@@ -153,6 +155,10 @@ if (canOpenBrowser()) {
   openBrowser('https://example.com')
 }
 ```
+
+Set `AI_OAUTH_SDK_NO_BROWSER` and neither does anything: `openBrowser()` returns without spawning
+and `canOpenBrowser()` reports false, so a receiver prints the URL instead. That is what you want in
+a test suite or a CI job that drives a login end to end.
 
 `canOpenBrowser()` is what `defaultReceiver` consults. On Linux it looks for a display; it returns
 false in a container with no `DISPLAY` and no `WAYLAND_DISPLAY`.

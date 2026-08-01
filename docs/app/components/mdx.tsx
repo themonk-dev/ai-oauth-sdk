@@ -4,7 +4,6 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs'
 import defaultMdxComponents from 'fumadocs-ui/mdx'
 
 import { FeatureCards } from './feature-cards'
-import { Execute, Install, InstallGlobal } from './install'
 import { Mermaid } from './mermaid'
 import { RuntimeCards } from './runtime-cards'
 
@@ -15,10 +14,7 @@ export function getMDXComponents(components?: MDXComponents) {
     ...defaultMdxComponents,
     Accordion,
     Accordions,
-    Execute,
     FeatureCards,
-    Install,
-    InstallGlobal,
     Mermaid,
     RuntimeCards,
     Step,

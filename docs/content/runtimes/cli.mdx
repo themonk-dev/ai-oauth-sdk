@@ -4,11 +4,15 @@ description: Sign in from a shell, print a token into a subshell, or run a comma
 icon: RiTerminalBoxLine
 ---
 
-<InstallGlobal packages="@ai-oauth-sdk/cli" />
+```npm
+npm install -g @ai-oauth-sdk/cli
+```
 
 Or run it without installing anything:
 
-<Execute command="@ai-oauth-sdk/cli login openai" />
+```npm
+npx @ai-oauth-sdk/cli login openai
+```
 
 The CLI is the one place where the library makes the client id decision for you. It is an
 application in its own right, so it opts into the published id for each provider rather than asking
@@ -117,3 +121,4 @@ Tokens go to `~/.ai-oauth-sdk/auth.json`, written with mode `0600`. Move that wi
 | --- | --- |
 | `AI_OAUTH_SDK_HOME` | Credential directory, same as `--auth-dir` |
 | `AI_OAUTH_SDK_CLIENT_SECRET` | Client secret, kept out of `ps` and shell history |
+| `AI_OAUTH_SDK_NO_BROWSER` | Never launch a browser. The URL is printed instead, which is what a test suite or a CI job wants |
