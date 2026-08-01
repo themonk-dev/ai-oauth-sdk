@@ -81,8 +81,8 @@ await client.login({
 A loopback redirect requires the browser and the process to be on the same host. Over SSH, in a
 container without host networking, or in CI, the redirect goes to the browser machine's own
 `localhost` and lands nowhere. `defaultReceiver()` detects that case and picks a different receiver;
-if you are choosing manually, use [manual paste](/flows/manual-paste) or
-[the device flow](/flows/device-code) instead.
+if you are choosing manually, use [manual paste](/docs/flows/manual-paste) or
+[the device flow](/docs/flows/device-code) instead.
 
-The [hybrid receiver](/runtimes/node#receivers) covers the case where you are not sure: it binds the
+The [hybrid receiver](/docs/runtimes/node#receivers) covers the case where you are not sure: it binds the
 port and prints the paste prompt at the same time, and takes whichever answers first.

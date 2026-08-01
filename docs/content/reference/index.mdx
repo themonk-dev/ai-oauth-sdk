@@ -14,12 +14,12 @@ you, or a seam you implement so it can work in your runtime.
 
 | Name | Kind | What it is | Page |
 | --- | --- | --- | --- |
-| `AuthClient` | class | The orchestrator. Every method that runs a flow or touches a token is on it. | [AuthClient](/reference/auth-client) |
-| `TokenSet` | interface | The data a completed flow gives back. You read it, you do not implement it. | [TokenSet](/reference/tokens) |
-| `AuthStorage` | interface | Where tokens and pending flows are written. **You can implement this.** | [Storage](/reference/storage) |
-| `CallbackReceiver` | interface | How the authorization code gets back into your process. **You can implement this.** | [Receivers](/reference/receivers) |
-| `ProviderConfig` | interface | The description of a provider. **You can implement this.** | [Custom providers](/providers/custom) |
-| `OAuthError` | class | Every failure this library raises, with a `code` to branch on. | [Errors](/reference/errors) |
+| `AuthClient` | class | The orchestrator. Every method that runs a flow or touches a token is on it. | [AuthClient](/docs/reference/auth-client) |
+| `TokenSet` | interface | The data a completed flow gives back. You read it, you do not implement it. | [TokenSet](/docs/reference/tokens) |
+| `AuthStorage` | interface | Where tokens and pending flows are written. **You can implement this.** | [Storage](/docs/reference/storage) |
+| `CallbackReceiver` | interface | How the authorization code gets back into your process. **You can implement this.** | [Receivers](/docs/reference/receivers) |
+| `ProviderConfig` | interface | The description of a provider. **You can implement this.** | [Custom providers](/docs/providers/custom) |
+| `OAuthError` | class | Every failure this library raises, with a `code` to branch on. | [Errors](/docs/reference/errors) |
 
 The two marked interfaces you are most likely to write yourself are `AuthStorage` and
 `CallbackReceiver`. `ProviderConfig` you normally build with `defineProvider()` rather than by hand.
@@ -29,11 +29,11 @@ The two marked interfaces you are most likely to write yourself are `AuthStorage
 This is the distinction worth being clear about, because it is the one that reads as duplication if
 you skim.
 
-**Methods live on [AuthClient](/reference/auth-client).** `getAccessToken()`, `refresh()`,
+**Methods live on [AuthClient](/docs/reference/auth-client).** `getAccessToken()`, `refresh()`,
 `revoke()` and `logout()` are documented there, once, including how refresh deduplicates across
 concurrent callers.
 
-**Shapes live on their own page.** [TokenSet](/reference/tokens) describes the fields a token set
+**Shapes live on their own page.** [TokenSet](/docs/reference/tokens) describes the fields a token set
 carries and how expiry is represented. It does not restate the methods.
 
 So if you are asking "what can I call", start at AuthClient. If you are asking "what did I get
@@ -46,8 +46,8 @@ Not everything hangs off the class. These are imported directly from `@ai-oauth-
 | Function | What it does |
 | --- | --- |
 | `createAuthClient(options)` | Builds an `AuthClient`. The adapters ship preconfigured variants. |
-| `createAuthenticatedFetch(client)` | A `fetch` that attaches a valid token and retries once on 401. See [using the token](/recipes/ai-sdk). |
-| `createAuthStore({ client })` | The observable wrapper every UI binding is built on. See [frameworks](/frameworks). |
+| `createAuthenticatedFetch(client)` | A `fetch` that attaches a valid token and retries once on 401. See [using the token](/docs/recipes/ai-sdk). |
+| `createAuthStore({ client })` | The observable wrapper every UI binding is built on. See [frameworks](/docs/frameworks). |
 | `defineProvider(input)` | Fills in the defaults for a provider descriptor. |
 | `providerFromDiscovery(issuer, input)` | Builds a descriptor from an OIDC discovery document. |
 | `fetchUserInfo(client)` | Calls the provider's userinfo endpoint, where it declares one. |
@@ -59,10 +59,10 @@ Not everything hangs off the class. These are imported directly from `@ai-oauth-
 ## Where to go next
 
 <Cards>
-  <Card title="AuthClient" href="/reference/auth-client" description="Options, and every method." />
-  <Card title="TokenSet" href="/reference/tokens" description="What a completed flow gives back." />
-  <Card title="Receivers" href="/reference/receivers" description="The seam, and every built-in." />
-  <Card title="Storage" href="/reference/storage" description="Three methods and an optional fourth." />
-  <Card title="Errors" href="/reference/errors" description="Every code, and what to do about it." />
-  <Card title="Packages" href="/reference/packages" description="What is published, and from where." />
+  <Card title="AuthClient" href="/docs/reference/auth-client" description="Options, and every method." />
+  <Card title="TokenSet" href="/docs/reference/tokens" description="What a completed flow gives back." />
+  <Card title="Receivers" href="/docs/reference/receivers" description="The seam, and every built-in." />
+  <Card title="Storage" href="/docs/reference/storage" description="Three methods and an optional fourth." />
+  <Card title="Errors" href="/docs/reference/errors" description="Every code, and what to do about it." />
+  <Card title="Packages" href="/docs/reference/packages" description="What is published, and from where." />
 </Cards>

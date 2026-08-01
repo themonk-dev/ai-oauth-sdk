@@ -10,7 +10,7 @@ export function baseOptions(): BaseLayoutProps {
       mode: 'light-dark-system',
     },
     nav: {
-      url: '/',
+      url: '/docs',
       title: (
         <>
           <RiFingerprintLine className="size-6" />

@@ -6,7 +6,7 @@ icon: RiRouteLine
 
 The flow starts on one request and finishes on another, so nothing can be held in a closure. `state`
 is the only thing tying them together, which is exactly what the registry is for. See
-[the state handoff](/flows/state-handoff) for how that works.
+[the state handoff](/docs/flows/state-handoff) for how that works.
 
 The framework barely matters. All of these do the same three things.
 
@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
   Serverless functions do not share process memory, so the pending record written by `/auth/login`
   has to be readable by `/auth/callback`, which may be an entirely different instance.
   `memoryStorage()` will look fine in development and break in production. See
-  [database-backed storage](/recipes/storage).
+  [database-backed storage](/docs/recipes/storage).
 </Callout>
 
 ## Errors worth handling
@@ -188,4 +188,4 @@ against your own routes rather than trusting it, or you have built an open redir
 
 Everything above assumes a single account, which is right for a self-hosted tool or a desktop app
 with a local server. The moment several people sign in through the same deployment, you need one
-client per user and namespaced storage. That is [the next recipe](/recipes/multi-user).
+client per user and namespaced storage. That is [the next recipe](/docs/recipes/multi-user).

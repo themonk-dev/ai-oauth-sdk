@@ -17,7 +17,7 @@ export default function NotFound() {
         </p>
         <Link
           className="rounded-full bg-fd-primary px-4 py-2.5 text-sm font-medium text-fd-primary-foreground"
-          to="/"
+          to="/docs"
         >
           Back to the docs
         </Link>

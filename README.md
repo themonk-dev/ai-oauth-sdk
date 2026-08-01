@@ -13,13 +13,13 @@
 <a href="LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/license/themonk-dev/ai-oauth-sdk.svg?variant=ghost&amp;size=xs&amp;mode=dark"><img alt="License" src="https://www.shieldcn.dev/github/license/themonk-dev/ai-oauth-sdk.svg?variant=ghost&amp;size=xs&amp;mode=light"></picture></a>
 </p>
 
-**[Documentation](https://ai-oauth-sdk.pages.dev)** ·
-[Quickstart](https://ai-oauth-sdk.pages.dev/quick-start) ·
-[Providers](https://ai-oauth-sdk.pages.dev/providers) ·
-[Recipes](https://ai-oauth-sdk.pages.dev/recipes) ·
-[Reference](https://ai-oauth-sdk.pages.dev/reference/auth-client) ·
+**[Documentation](https://ai-oauth-sdk.pages.dev/docs)** ·
+[Quickstart](https://ai-oauth-sdk.pages.dev/docs/quick-start) ·
+[Providers](https://ai-oauth-sdk.pages.dev/docs/providers) ·
+[Recipes](https://ai-oauth-sdk.pages.dev/docs/recipes) ·
+[Reference](https://ai-oauth-sdk.pages.dev/docs/reference/auth-client) ·
 [Security](SECURITY.md) ·
-[Disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer)
+[Disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer)
 
 </div>
 
@@ -55,25 +55,25 @@ npx @ai-oauth-sdk/cli login openai
 > these providers supports third-party OAuth clients. Several of them also restrict what you
 > may do with a credential issued to their own CLI, so getting a token is not the same as
 > being allowed to use it. Read their terms, read the
-> [disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer), and use it at your own
+> [disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer), and use it at your own
 > discretion.
 
 ## Documentation
 
-Everything is at **[ai-oauth-sdk.pages.dev](https://ai-oauth-sdk.pages.dev)**.
+Everything is at **[ai-oauth-sdk.pages.dev](https://ai-oauth-sdk.pages.dev/docs)**.
 
 | | |
 |---|---|
-| [Quickstart](https://ai-oauth-sdk.pages.dev/quick-start) | The shortest path to a token in each runtime |
-| [Overview](https://ai-oauth-sdk.pages.dev/overview) | What it does, and where the provider differences live |
-| [Runtimes](https://ai-oauth-sdk.pages.dev/runtimes) | CLI, Node, browser, React Native, script tag |
-| [Frameworks](https://ai-oauth-sdk.pages.dev/frameworks) | React, Vue, Svelte, Solid |
-| [Flows](https://ai-oauth-sdk.pages.dev/flows) | Loopback, popup, redirect, device code, paste |
-| [Providers](https://ai-oauth-sdk.pages.dev/providers) | The eight built-ins, and how to describe your own |
-| [Recipes](https://ai-oauth-sdk.pages.dev/recipes) | Server callbacks, multi-user, storage, using the token |
-| [Reference](https://ai-oauth-sdk.pages.dev/reference/auth-client) | Every method, option and error code |
-| [Credentials](https://ai-oauth-sdk.pages.dev/resources/credentials) | The published client ids, and registering your own |
-| [Troubleshooting](https://ai-oauth-sdk.pages.dev/resources/troubleshooting) | The failures people actually hit |
+| [Quickstart](https://ai-oauth-sdk.pages.dev/docs/quick-start) | The shortest path to a token in each runtime |
+| [Overview](https://ai-oauth-sdk.pages.dev/docs/overview) | What it does, and where the provider differences live |
+| [Runtimes](https://ai-oauth-sdk.pages.dev/docs/runtimes) | CLI, Node, browser, React Native, script tag |
+| [Frameworks](https://ai-oauth-sdk.pages.dev/docs/frameworks) | React, Vue, Svelte, Solid |
+| [Flows](https://ai-oauth-sdk.pages.dev/docs/flows) | Loopback, popup, redirect, device code, paste |
+| [Providers](https://ai-oauth-sdk.pages.dev/docs/providers) | The eight built-ins, and how to describe your own |
+| [Recipes](https://ai-oauth-sdk.pages.dev/docs/recipes) | Server callbacks, multi-user, storage, using the token |
+| [Reference](https://ai-oauth-sdk.pages.dev/docs/reference/auth-client) | Every method, option and error code |
+| [Credentials](https://ai-oauth-sdk.pages.dev/docs/resources/credentials) | The published client ids, and registering your own |
+| [Troubleshooting](https://ai-oauth-sdk.pages.dev/docs/resources/troubleshooting) | The failures people actually hit |
 
 ## Packages
 
@@ -125,7 +125,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for what adding a provider takes.
 **MIT** ·
 [Contributing](CONTRIBUTING.md) ·
 [Security](SECURITY.md) ·
-[Disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer)
+[Disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer)
 
 <sub>An independent project. Not affiliated with or endorsed by OpenAI, Anthropic, Google,
 GitHub, Microsoft, xAI, Alibaba or OpenRouter. All trademarks belong to their owners.</sub>

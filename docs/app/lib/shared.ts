@@ -2,7 +2,7 @@ export const appName = 'AI OAuth SDK'
 
 export const siteUrl = 'https://ai-oauth-sdk.pages.dev'
 
-export const docsRoute = '/'
+export const docsRoute = '/docs'
 export const docsContentRoute = '/llms.mdx'
 
 export const gitConfig = {

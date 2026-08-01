@@ -2,7 +2,7 @@
 
 React Native / Expo adapter for [`ai-oauth-sdk`](https://github.com/themonk-dev/ai-oauth-sdk).
 
-**[Documentation](https://ai-oauth-sdk.pages.dev/runtimes/react-native)**
+**[Documentation](https://ai-oauth-sdk.pages.dev/docs/runtimes/react-native)**
 
 ```bash
 npm i @ai-oauth-sdk/react-native
@@ -83,4 +83,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. These OAuth flows are not officially supported by any provider and may
 change without notice — see the
-[disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer).</sub>
+[disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer).</sub>

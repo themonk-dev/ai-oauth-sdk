@@ -73,7 +73,7 @@ Serverless functions do not share process memory, and neither do two instances b
 balancer. The pending record written when the flow starts has to be readable when the callback
 arrives. In development that is the same process, which is exactly why the bug survives testing.
 
-See [database-backed storage](/recipes/storage).
+See [database-backed storage](/docs/recipes/storage).
 
 ## Requests get a 401 even though I just signed in
 
@@ -108,7 +108,7 @@ send CORS headers your origin can use. Providers built for desktop CLIs do not a
 no client library can add them.
 
 Move that half to your own server. See
-[callback routes](/recipes/server-callback).
+[callback routes](/docs/recipes/server-callback).
 
 ## Two processes keep invalidating each other's tokens
 

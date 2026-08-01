@@ -31,81 +31,81 @@ const features: Feature[] = [
     title: 'Zero dependencies',
     description:
       'The core ships no runtime dependencies at all, and runs on any JavaScript runtime with fetch.',
-    href: '/overview',
+    href: '/docs/overview',
     icon: <RiNpmjsLine className="size-5" />,
   },
   {
     title: 'PKCE and state, enforced',
     description:
       'S256 everywhere it applies, constant-time state comparison, and no Math.random fallback.',
-    href: '/resources/security',
+    href: '/docs/resources/security',
     icon: <RiShieldKeyholeLine className="size-5" />,
   },
   {
     title: 'Loopback callback',
     description:
       'A one-shot HTTP server on 127.0.0.1 catches the redirect, the way RFC 8252 intends.',
-    href: '/flows/loopback',
+    href: '/docs/flows/loopback',
     icon: <RiServerLine className="size-5" />,
   },
   {
     title: 'Popup and redirect',
     description:
       'Two browser receivers, so a single-page app can sign in without leaving the tab or by leaving it.',
-    href: '/flows/popup-and-redirect',
+    href: '/docs/flows/popup-and-redirect',
     icon: <RiGlobeLine className="size-5" />,
   },
   {
     title: 'Device code',
     description: 'RFC 8628 for machines with no reachable browser, plus the providers that bend it.',
-    href: '/flows/device-code',
+    href: '/docs/flows/device-code',
     icon: <RiBroadcastLine className="size-5" />,
   },
   {
     title: 'Start here, finish there',
     description:
       'Begin a flow in one request and collect the token in another, correlated by state.',
-    href: '/flows/state-handoff',
+    href: '/docs/flows/state-handoff',
     icon: <RiExchange2Line className="size-5" />,
   },
   {
     title: 'Refresh that behaves',
     description:
       'Concurrent callers share one refresh, and a token rotated by another process is picked up.',
-    href: '/reference/tokens',
+    href: '/docs/reference/tokens',
     icon: <RiRefreshLine className="size-5" />,
   },
   {
     title: 'Storage you control',
     description:
       'Three methods and an optional fourth. File, localStorage, SecureStore, Redis, or your own table.',
-    href: '/reference/storage',
+    href: '/docs/reference/storage',
     icon: <RiDatabase2Line className="size-5" />,
   },
   {
     title: 'One store, four bindings',
     description: 'React, Vue, Svelte and Solid are thin adapters over the same state machine.',
-    href: '/frameworks',
+    href: '/docs/frameworks',
     icon: <RiPuzzle2Line className="size-5" />,
   },
   {
     title: 'Any OAuth 2.0 provider',
     description:
       'Describe one with defineProvider, or build it from an OIDC discovery document at runtime.',
-    href: '/providers/custom',
+    href: '/docs/providers/custom',
     icon: <RiKey2Line className="size-5" />,
   },
   {
     title: 'A CLI that scripts',
     description: 'Print a token for a subshell, or run a command with the token in its environment.',
-    href: '/runtimes/cli',
+    href: '/docs/runtimes/cli',
     icon: <RiTerminalBoxLine className="size-5" />,
   },
   {
     title: 'Paste the code',
     description:
       'For SSH sessions and headless boxes where a loopback redirect could never arrive.',
-    href: '/flows/manual-paste',
+    href: '/docs/flows/manual-paste',
     icon: <RiClipboardLine className="size-5" />,
   },
 ]

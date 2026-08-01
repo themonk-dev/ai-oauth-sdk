@@ -16,7 +16,7 @@ The library does three things:
 3. Exchanges the code for a token, stores it, and refreshes it before it expires.
 
 It is not an API client. There is no chat wrapper, no proxy, no model catalogue. What you get back
-is a `TokenSet`, and what you do with it is your business. The [Using the token](/recipes/ai-sdk)
+is a `TokenSet`, and what you do with it is your business. The [Using the token](/docs/recipes/ai-sdk)
 page covers the part where you hand it to an SDK.
 
 ## Where providers disagree
@@ -73,7 +73,7 @@ const tokens = await client.login({ receiver: loopbackReceiver() })
 
 Level 3 is what a CLI wants. Level 1 is what a web server wants, because the request that starts the
 flow is not the request that finishes it. Level 2 is the bridge between them, and it is covered in
-[the state handoff](/flows/state-handoff).
+[the state handoff](/docs/flows/state-handoff).
 
 ## Zero dependencies, on purpose
 

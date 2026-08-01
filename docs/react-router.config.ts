@@ -3,7 +3,7 @@ import { createGetUrl, getSlugs } from 'fumadocs-core/source'
 
 import type { Config } from '@react-router/dev/config'
 
-const getUrl = createGetUrl('/')
+const getUrl = createGetUrl('/docs')
 
 /**
  * No SSR: every page is rendered at build time and the result is a directory of

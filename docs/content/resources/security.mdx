@@ -87,7 +87,7 @@ endpoint and are read only for convenience fields. Do not pass a third-party tok
   Providers that do not return `state` set `echoesState: false`, and the library resolves the
   callback against the most recently started flow instead. That is fine for a CLI or a single-flow
   app. In a multi-user server it means one user's callback can complete another user's login. See
-  [OpenRouter](/providers/openrouter).
+  [OpenRouter](/docs/providers/openrouter).
 </Callout>
 
 ## Client credentials
@@ -97,7 +97,7 @@ PKCE-protected values published by those vendors' own CLIs. They are not secrets
 
 One client secret is embedded, Google's, because its token endpoint refuses an installed-app
 exchange without one and Google documents those secrets as non-confidential. Everything is
-overridable. See [credentials](/resources/credentials).
+overridable. See [credentials](/docs/resources/credentials).
 
 The CLI never persists a client secret. It reads one from `--client-secret` or
 `AI_OAUTH_SDK_CLIENT_SECRET` per invocation, so a value that was transiently visible in `ps` does

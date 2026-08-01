@@ -60,10 +60,14 @@ app/
 content/          the MDX, with meta.json driving the sidebar
 ```
 
-Docs are served from the root rather than under `/docs`, so `content/index.mdx` is the home page.
-Two routes render a page: an index route for `/`, and a splat for everything below it. React Router
-matches an empty remainder against the root layout rather than against a splat, so one route cannot
-serve both.
+Docs are served from `/docs`, so `content/index.mdx` is at `/docs` and everything else hangs off it.
+Two routes render a page: one for `/docs` itself, and a splat for everything below it, because React
+Router matches an empty remainder against the layout rather than against a splat. `/` redirects to
+`/docs`, so a deployment at a domain root does not answer with a 404.
+
+The base path lives in one place, `docsRoute` in `app/lib/shared.ts`. Changing it moves the loader,
+the prerender list and the nav together, but absolute links written in MDX are not derived from it
+and would need updating too.
 
 ## Writing
 

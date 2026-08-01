@@ -2,7 +2,7 @@
 
 Zero-dependency, framework-agnostic OAuth 2.0 + PKCE engine for AI provider sign-in.
 
-**[Documentation](https://ai-oauth-sdk.pages.dev/reference/auth-client)**
+**[Documentation](https://ai-oauth-sdk.pages.dev/docs/reference/auth-client)**
 
 This is the part that runs everywhere — no Node APIs, no DOM APIs, no dependencies.
 Pair it with a runtime adapter ([`@ai-oauth-sdk/node`](../node),
@@ -51,4 +51,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. These OAuth flows are not officially supported by any provider and may
 change without notice — see the
-[disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer).</sub>
+[disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer).</sub>

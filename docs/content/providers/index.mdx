@@ -26,26 +26,26 @@ are missing.
   binaries, and PKCE is what actually protects the flow. But using one means your application
   presents itself to the provider as that CLI, which is why it is an explicit argument rather than a
   default. Check the provider's terms before shipping it in a product, and read the
-  [disclaimer](/resources/disclaimer).
+  [disclaimer](/docs/resources/disclaimer).
 </Callout>
 
 ## The built-ins
 
 | Provider | Flow | Client id | Status |
 | --- | --- | --- | --- |
-| [`openai`](/providers/openai) | loopback `:1455`, device | `publicClientIds.openai` | stable |
-| [`anthropic`](/providers/anthropic) | loopback any port, hosted paste | `publicClientIds.anthropic` | stable |
-| [`google`](/providers/google) | loopback any port | id and secret | stable |
-| [`github-copilot`](/providers/github-copilot) | device only | `publicClientIds['github-copilot']` | stable |
-| [`openrouter`](/providers/openrouter) | loopback any port | none, identified by callback URL | stable |
-| [`xai`](/providers/xai) | loopback `:56121`, device | `publicClientIds.xai` | experimental |
-| [`qwen`](/providers/qwen) | device only | `publicClientIds.qwen` | experimental |
-| [`microsoft`](/providers/microsoft) | loopback any port | yours | stable |
+| [`openai`](/docs/providers/openai) | loopback `:1455`, device | `publicClientIds.openai` | stable |
+| [`anthropic`](/docs/providers/anthropic) | loopback any port, hosted paste | `publicClientIds.anthropic` | stable |
+| [`google`](/docs/providers/google) | loopback any port | id and secret | stable |
+| [`github-copilot`](/docs/providers/github-copilot) | device only | `publicClientIds['github-copilot']` | stable |
+| [`openrouter`](/docs/providers/openrouter) | loopback any port | none, identified by callback URL | stable |
+| [`xai`](/docs/providers/xai) | loopback `:56121`, device | `publicClientIds.xai` | experimental |
+| [`qwen`](/docs/providers/qwen) | device only | `publicClientIds.qwen` | experimental |
+| [`microsoft`](/docs/providers/microsoft) | loopback any port | yours | stable |
 
 `microsoft` is a factory rather than a constant, because its endpoints are tenant-scoped and every
 Entra app registration is its own client.
 
-Raw credential values are on the [credentials](/resources/credentials) page.
+Raw credential values are on the [credentials](/docs/resources/credentials) page.
 
 ## Capabilities
 
@@ -60,7 +60,7 @@ Raw credential values are on the [credentials](/resources/credentials) page.
 | `qwen` | yes | yes | no | no | not applicable |
 
 GitHub's device flow does not use PKCE, which is why that row says no. OpenRouter's `no` in the
-last column has real consequences: see [OpenRouter](/providers/openrouter).
+last column has real consequences: see [OpenRouter](/docs/providers/openrouter).
 
 ## Anything else
 
@@ -70,7 +70,7 @@ import { defineProvider, providerFromDiscovery } from '@ai-oauth-sdk/core'
 
 `defineProvider` describes a provider by hand. `providerFromDiscovery` builds one from an OIDC
 discovery document at runtime, so an endpoint move needs no release on your side. Both are covered
-in [custom providers](/providers/custom).
+in [custom providers](/docs/providers/custom).
 
 The CLI takes the same escape hatch:
 

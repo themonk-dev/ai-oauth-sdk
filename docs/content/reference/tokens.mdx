@@ -6,7 +6,7 @@ icon: RiRefreshLine
 
 `TokenSet` is data, not behaviour. It is what `login()`, `deviceLogin()` and
 `completeAuthorization()` resolve with, and what `getTokens()` reads back out of storage. The
-methods that produce and renew it live on [AuthClient](/reference/auth-client).
+methods that produce and renew it live on [AuthClient](/docs/reference/auth-client).
 
 ```ts
 interface TokenSet {
@@ -69,7 +69,7 @@ await client.getAccessToken() // refreshes if inside the window
 await client.refresh() // refreshes regardless
 ```
 
-Both are documented on [AuthClient](/reference/auth-client#tokens), including how concurrent
+Both are documented on [AuthClient](/docs/reference/auth-client#tokens), including how concurrent
 callers share a single refresh and how a token rotated by another process is picked up. Nothing
 about that behaviour is on the token set itself.
 
@@ -106,7 +106,7 @@ on the token set when they are populated.
 
 Only `google`, `xai` and `microsoft` declare an RFC 7009 revocation endpoint among the built-ins.
 For every other provider, clearing the local copy is all anyone can do from here.
-[`revoke()` and `logout()`](/reference/auth-client#session) are the methods.
+[`revoke()` and `logout()`](/docs/reference/auth-client#session) are the methods.
 
 ## Inspecting a JWT
 

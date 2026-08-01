@@ -3,7 +3,7 @@
 Node / Bun / Deno adapter for [`ai-oauth-sdk`](https://github.com/themonk-dev/ai-oauth-sdk) —
 the loopback callback server that CLI sign-in needs.
 
-**[Documentation](https://ai-oauth-sdk.pages.dev/runtimes/node)**
+**[Documentation](https://ai-oauth-sdk.pages.dev/docs/runtimes/node)**
 
 ```bash
 npm i @ai-oauth-sdk/node
@@ -46,4 +46,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. These OAuth flows are not officially supported by any provider and may
 change without notice — see the
-[disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer).</sub>
+[disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer).</sub>

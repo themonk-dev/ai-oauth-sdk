@@ -7,8 +7,10 @@ export default [
   route('llms-full.txt', 'llms/full.ts'),
   route('llms.mdx/*', 'llms/mdx.ts'),
 
-  // The splat matches everything below `/`; React Router matches an empty
-  // remainder against the root layout, so `/` needs its own route.
-  index('routes/index.tsx'),
-  route('*', 'routes/docs.tsx'),
+  index('routes/home.tsx'),
+
+  // React Router matches an empty remainder against the layout rather than a
+  // splat, so `/docs` needs its own route alongside everything below it.
+  route('docs', 'routes/index.tsx'),
+  route('docs/*', 'routes/docs.tsx'),
 ] satisfies RouteConfig

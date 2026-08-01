@@ -32,13 +32,13 @@ the callback lands. `AuthClient.login()` drives those four methods and nothing e
 
 | Situation | Receiver | Page |
 | --- | --- | --- |
-| CLI on a desktop | `loopbackReceiver()` | [Loopback](/flows/loopback) |
-| Single-page app | `popupReceiver()` | [Popup and redirect](/flows/popup-and-redirect) |
-| Embedded webview, popup blocked | redirect helpers | [Popup and redirect](/flows/popup-and-redirect) |
-| No browser on this machine | `deviceLogin()` | [Device code](/flows/device-code) |
-| SSH session, container, CI | `promptReceiver()` | [Manual paste](/flows/manual-paste) |
-| Mobile app | `deepLinkReceiver()` or `authSessionReceiver()` | [React Native](/runtimes/react-native) |
-| Your own web server | none, use the registry | [State handoff](/flows/state-handoff) |
+| CLI on a desktop | `loopbackReceiver()` | [Loopback](/docs/flows/loopback) |
+| Single-page app | `popupReceiver()` | [Popup and redirect](/docs/flows/popup-and-redirect) |
+| Embedded webview, popup blocked | redirect helpers | [Popup and redirect](/docs/flows/popup-and-redirect) |
+| No browser on this machine | `deviceLogin()` | [Device code](/docs/flows/device-code) |
+| SSH session, container, CI | `promptReceiver()` | [Manual paste](/docs/flows/manual-paste) |
+| Mobile app | `deepLinkReceiver()` or `authSessionReceiver()` | [React Native](/docs/runtimes/react-native) |
+| Your own web server | none, use the registry | [State handoff](/docs/flows/state-handoff) |
 
 Node picks one for you with `defaultReceiver(provider)` if you would rather not think about it. The
 CLI does that by default.
@@ -69,7 +69,7 @@ loopback server bound to port `0` does not know its own port until it has bound.
   Anyone can reach a loopback port or post a message to an opener, so a missing `state` parameter
   must not become a way to skip the check. Only providers that documented they never echo it are
   exempt, and those correlate against the most recently started flow instead, with the caveats on
-  [OpenRouter](/providers/openrouter).
+  [OpenRouter](/docs/providers/openrouter).
 </Callout>
 
 ## Writing your own

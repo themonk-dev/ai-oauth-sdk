@@ -116,7 +116,7 @@ function SignIn() {
 }
 ```
 
-Vue, Svelte and Solid have the same shape. See [Frameworks](/frameworks).
+Vue, Svelte and Solid have the same shape. See [Frameworks](/docs/frameworks).
 
 </Tab>
 
@@ -200,7 +200,7 @@ createAuthClient({ provider: 'openai', clientId: 'my-registered-client' })
   The values in `publicClientIds` are not secrets. They are public PKCE-only clients the vendors
   ship inside their own binaries. Using one means your application identifies itself as that CLI to
   the provider, which is a decision only you can make. Check the provider's terms first, and read
-  the [disclaimer](/resources/disclaimer).
+  the [disclaimer](/docs/resources/disclaimer).
 </Callout>
 
 Google is the only built-in that also needs a secret, because its installed-app clients do:
@@ -213,7 +213,7 @@ createAuthClient({
 })
 ```
 
-Full list on the [credentials](/resources/credentials) page.
+Full list on the [credentials](/docs/resources/credentials) page.
 
 ## Use the token
 
@@ -235,13 +235,13 @@ const models = await api('/models').then((response) => response.json())
 ```
 
 Relative paths resolve against the provider's `apiBaseUrl`, the provider's required headers are
-attached, and a 401 triggers one refresh and a replay. See [Using the token](/recipes/ai-sdk).
+attached, and a 401 triggers one refresh and a replay. See [Using the token](/docs/recipes/ai-sdk).
 
 ## Next steps
 
 <Cards>
-  <Card title="Runtimes" href="/runtimes" description="What each adapter gives you." />
-  <Card title="Flows" href="/flows" description="Loopback, popup, redirect, device code, paste." />
-  <Card title="Providers" href="/providers" description="The eight built-ins, and your own." />
-  <Card title="Reference" href="/reference/auth-client" description="Every method on AuthClient." />
+  <Card title="Runtimes" href="/docs/runtimes" description="What each adapter gives you." />
+  <Card title="Flows" href="/docs/flows" description="Loopback, popup, redirect, device code, paste." />
+  <Card title="Providers" href="/docs/providers" description="The eight built-ins, and your own." />
+  <Card title="Reference" href="/docs/reference/auth-client" description="Every method on AuthClient." />
 </Cards>

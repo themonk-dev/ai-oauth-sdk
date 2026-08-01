@@ -75,7 +75,7 @@ Give it a TTL that matches `stateTtlMs`, or abandoned logins accumulate.
 <Callout type="warn" title="Do not use echoesState: false providers here">
   OpenRouter never returns `state`, so its flows resolve against "the most recently started one".
   In a multi-user server that means one user can complete another user's login. That mode is for
-  CLIs and single-flow apps only. See [OpenRouter](/providers/openrouter).
+  CLIs and single-flow apps only. See [OpenRouter](/docs/providers/openrouter).
 </Callout>
 
 ## Session, not token
@@ -126,4 +126,4 @@ tokens.
 
 A table of OAuth tokens is a table of credentials. If your database is not already encrypted at
 rest, wrap the storage adapter. That is covered in
-[database-backed storage](/recipes/storage#encrypt-at-rest).
+[database-backed storage](/docs/recipes/storage#encrypt-at-rest).
