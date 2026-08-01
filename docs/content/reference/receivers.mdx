@@ -1,6 +1,6 @@
 ---
 title: Receivers
-description: Every built-in receiver, its options, and the interface for writing your own.
+description: The interface that gets the authorization code back into your process, every built-in implementation and its options, and how to write one of your own.
 icon: RiRssLine
 ---
 
@@ -23,6 +23,9 @@ authorization request. `close()` has to be safe to call whether or not `wait()` 
 
 ## From @ai-oauth-sdk/core
 
+The core ships one receiver, because it is the only kind that needs nothing from the platform. A
+prompt is whatever function you give it.
+
 ### manualReceiver(options)
 
 Prints or displays the URL through a callback you supply, then reads back whatever the user gives
@@ -40,22 +43,23 @@ Anthropic's `code#state` all work.
 
 ## From @ai-oauth-sdk/node
 
+Three receivers, covering the desktop case, the headless case, and the case where you cannot tell
+which you are in. `defaultReceiver()` picks between them for you.
+
 ### loopbackReceiver(options)
 
 A one-shot HTTP server on `127.0.0.1`.
 
-<TypeTable
-  type={{
-    port: { type: 'number', description: '0 picks a free one.', default: "the provider's port" },
-    path: { type: 'string', default: "the provider's path" },
-    host: { type: 'string', default: '127.0.0.1' },
-    redirectHost: { type: 'string', description: 'Host used in the redirect URI, if it differs.' },
-    openBrowser: { type: 'boolean', default: 'true' },
-    onAuthorizationUrl: { type: '(url: string) => void' },
-    successHtml: { type: 'string' },
-    failureHtml: { type: '(error: string) => string' },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `port` | `number` | 0 picks a free one. Defaults to `the provider's port`. |
+| `path` | `string` | Defaults to `the provider's path`. |
+| `host` | `string` | Defaults to `127.0.0.1`. |
+| `redirectHost` | `string` | Host used in the redirect URI, if it differs. |
+| `openBrowser` | `boolean` | Defaults to `true`. |
+| `onAuthorizationUrl` | `(url: string) => void` |  |
+| `successHtml` | `string` |  |
+| `failureHtml` | `(error: string) => string` |  |
 
 Answers `GET` and `HEAD` only, on the configured path only, exactly once.
 
@@ -63,14 +67,12 @@ Answers `GET` and `HEAD` only, on the configured path only, exactly once.
 
 Prints the URL and reads the pasted result from stdin.
 
-<TypeTable
-  type={{
-    redirectUri: { type: 'string', default: "the provider's hosted callback" },
-    openBrowser: { type: 'boolean', default: 'true' },
-    message: { type: '(url: string) => string' },
-    signal: { type: 'AbortSignal', description: 'Abandons the pending read.' },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `redirectUri` | `string` | Defaults to `the provider's hosted callback`. |
+| `openBrowser` | `boolean` | Defaults to `true`. |
+| `message` | `(url: string) => string` |  |
+| `signal` | `AbortSignal` | Abandons the pending read. |
 
 ### hybridReceiver(options)
 
@@ -84,21 +86,19 @@ no receiver.
 
 ## From @ai-oauth-sdk/browser
 
+A page cannot bind a port, so both of these route the callback back through the browser. They trade
+off against each other rather than one being better; see
+[popup and redirect](/flows/popup-and-redirect).
+
 ### popupReceiver(options)
 
-<TypeTable
-  type={{
-    redirectUri: {
-      type: 'string',
-      description: 'A page on your origin that calls postCallbackToOpener().',
-      default: 'the current URL without its fragment',
-    },
-    width: { type: 'number' },
-    height: { type: 'number' },
-    windowName: { type: 'string' },
-    pollIntervalMs: { type: 'number', default: '400' },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `redirectUri` | `string` | A page on your origin that calls postCallbackToOpener(). Defaults to `the current URL without its fragment`. |
+| `width` | `number` |  |
+| `height` | `number` |  |
+| `windowName` | `string` |  |
+| `pollIntervalMs` | `number` | Defaults to `400`. |
 
 ### postCallbackToOpener(payload?)
 
@@ -117,26 +117,25 @@ The pair that actually implements a full-page redirect. See
 
 ## From @ai-oauth-sdk/react-native
 
+Both take the native module as an argument rather than importing it, so the package installs in a
+bare app that has none of Expo.
+
 ### deepLinkReceiver(options)
 
-<TypeTable
-  type={{
-    linking: { type: 'LinkingLike', description: 'Linking from react-native.', required: true },
-    redirectUri: { type: 'string', description: "Your app's callback URL.", required: true },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `linking` | `LinkingLike` | **Required.** Linking from react-native. |
+| `redirectUri` | `string` | **Required.** Your app's callback URL. |
 
 Also checks `getInitialURL()`, so a cold start after the OS killed your app still completes.
 
 ### authSessionReceiver(options)
 
-<TypeTable
-  type={{
-    webBrowser: { type: 'WebBrowserLike', description: 'The expo-web-browser module.', required: true },
-    redirectUri: { type: 'string', description: 'From AuthSession.makeRedirectUri().', required: true },
-    browserOptions: { type: 'Record<string, unknown>', description: 'Forwarded to openAuthSessionAsync.' },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `webBrowser` | `WebBrowserLike` | **Required.** The expo-web-browser module. |
+| `redirectUri` | `string` | **Required.** From AuthSession.makeRedirectUri(). |
+| `browserOptions` | `Record<string, unknown>` | Forwarded to openAuthSessionAsync. |
 
 ## Writing one
 

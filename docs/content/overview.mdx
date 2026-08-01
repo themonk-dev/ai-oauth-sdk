@@ -21,7 +21,7 @@ page covers the part where you hand it to an SDK.
 
 ## Where providers disagree
 
-|                    | ChatGPT           | Claude                      | Gemini             | Copilot          | OpenRouter |
+| Where they differ  | ChatGPT           | Claude                      | Gemini             | Copilot          | OpenRouter |
 | ------------------ | ----------------- | --------------------------- | ------------------ | ---------------- | ---------- |
 | Callback           | loopback `:1455`  | hosted, paste `code#state`  | loopback, any port | none, device code | loopback   |
 | Token request body | form              | form (JSON times out)       | form plus secret   | form             | JSON       |
@@ -34,17 +34,18 @@ authorization query, and `parseTokenResponse` normalises a non-standard token bo
 
 ## The shape
 
-```
-                  ┌──────────────┐
-   provider  ───▶ │  AuthClient  │ ◀───  storage
-   descriptor     └──────┬───────┘
-                         │
-                    receiver
-                         │
-              ┌──────────┴──────────┐
-        loopback server        popup / redirect
-        device code            deep link / paste
-```
+<Mermaid
+  chart={`
+flowchart TD
+  P[Provider descriptor] --> C[AuthClient]
+  S[(AuthStorage)] --> C
+  C --> R{CallbackReceiver}
+  R --> L[Loopback server]
+  R --> B[Popup or redirect]
+  R --> D[Device code]
+  R --> M[Deep link or paste]
+`}
+/>
 
 `AuthClient` owns the state machine: it mints `state` and a PKCE pair, persists both, exchanges the
 code, and manages the token afterwards. A `CallbackReceiver` is the seam that lets one core serve a

@@ -12,11 +12,9 @@
     "frameworks",
     "flows",
     "recipes",
-    "---Providers---",
-    "providers",
     "---Reference---",
+    "providers",
     "reference",
-    "---Resources---",
     "resources"
   ]
 }

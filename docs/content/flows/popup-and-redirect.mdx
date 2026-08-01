@@ -69,7 +69,7 @@ bar afterwards, which keeps them out of the history entry and out of any analyti
 
 ## Choosing
 
-| | Popup | Redirect |
+| Behaviour | Popup | Redirect |
 | --- | --- | --- |
 | Host page state | preserved | lost |
 | Needs a user gesture | yes | no |
@@ -107,5 +107,5 @@ from your page, which means the provider has to send CORS headers your origin ca
 built for desktop CLIs do not always do that, and no client library can add them.
 
 If the exchange fails with a CORS error, the fix is to move that half to your own server. See
-[a callback route on your own server](/recipes/server-callback), where the browser only ever
+[callback routes](/recipes/server-callback), where the browser only ever
 carries the code and your backend does the exchange.

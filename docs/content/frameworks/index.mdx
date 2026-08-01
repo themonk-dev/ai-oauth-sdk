@@ -1,7 +1,7 @@
 ---
 title: Overview
-description: All four bindings wrap the same store, so the state machine exists once rather than four times.
-icon: RiLayoutGridLine
+description: React, Vue, Svelte and Solid are thin adapters over one observable store, which is why their APIs look alike. Here is the shared shape and how to choose a receiver.
+icon: RiDashboardLine
 ---
 
 React, Vue, Svelte and Solid each get a package, and each package is thin. The loading flags, the
@@ -28,26 +28,12 @@ so nothing needed a bespoke shape.
 
 Every binding exposes the same four values.
 
-<TypeTable
-  type={{
-    tokens: {
-      type: 'TokenSet | undefined',
-      description: 'The current session, or undefined when signed out.',
-    },
-    isAuthenticated: {
-      type: 'boolean',
-      description: 'Whether tokens is set. Not a check against expiry.',
-    },
-    isLoading: {
-      type: 'boolean',
-      description: 'True while a login, refresh or restore is in flight.',
-    },
-    error: {
-      type: 'Error | undefined',
-      description: 'The last failure. An aborted login is not treated as one.',
-    },
-  }}
-/>
+| Value | Type | Description |
+| --- | --- | --- |
+| `tokens` | `TokenSet | undefined` | The current session, or undefined when signed out. |
+| `isAuthenticated` | `boolean` | Whether tokens is set. Not a check against expiry. |
+| `isLoading` | `boolean` | True while a login, refresh or restore is in flight. |
+| `error` | `Error | undefined` | The last failure. An aborted login is not treated as one. |
 
 And the same five actions: `login`, `logout`, `refresh`, `getAccessToken`, `cancel`.
 

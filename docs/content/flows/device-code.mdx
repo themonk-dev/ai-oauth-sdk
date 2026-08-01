@@ -51,30 +51,22 @@ None of that is expressible as configuration, so OpenAI supplies the two steps i
 `deviceFlow` hook on its descriptor. From the outside, `deviceLogin()` looks identical.
 
 <Callout type="warn" title="OpenAI device login has a prerequisite">
-  Turn on "Enable device code authorization for Codex" in ChatGPT under Settings, Security, before
-  trying. Without it the verification page refuses the code, and the command sits there polling for
+  Turn on "Enable device code authorization for Codex" in
+  [**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security) before trying. Without it the verification page refuses the code, and the command sits there polling for
   an approval that can never arrive. The provider descriptor carries that sentence in
   `devicePrerequisite`, and the CLI prints it next to the code.
 </Callout>
 
 ## What onCode receives
 
-<TypeTable
-  type={{
-    userCode: { type: 'string', description: 'The short code the user types.' },
-    verificationUri: { type: 'string', description: 'Where they type it.' },
-    verificationUriComplete: {
-      type: 'string | undefined',
-      description: 'Pre-filled variant, when the provider supplies one. Good for a QR code.',
-    },
-    expiresAt: { type: 'number', description: 'Epoch milliseconds. Usually 10 to 15 minutes out.' },
-    intervalMs: { type: 'number', description: 'How often the library polls. Set by the provider.' },
-    codeVerifier: {
-      type: 'string | undefined',
-      description: 'Half a credential when present. Treat it like the device code.',
-    },
-  }}
-/>
+| Field | Type | Description |
+| --- | --- | --- |
+| `userCode` | `string` | The short code the user types. |
+| `verificationUri` | `string` | Where they type it. |
+| `verificationUriComplete` | `string | undefined` | Pre-filled variant, when the provider supplies one. Good for a QR code. |
+| `expiresAt` | `number` | Epoch milliseconds. Usually 10 to 15 minutes out. |
+| `intervalMs` | `number` | How often the library polls. Set by the provider. |
+| `codeVerifier` | `string | undefined` | Half a credential when present. Treat it like the device code. |
 
 `onCode` is awaited, so you can render a QR code or write to a log before polling starts.
 

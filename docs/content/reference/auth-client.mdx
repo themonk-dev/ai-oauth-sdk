@@ -1,8 +1,12 @@
 ---
 title: AuthClient
-description: The orchestrator. Every method, and what it does to storage.
+description: The one class that does anything. Its constructor options, every method it exposes, and what each one writes to storage.
 icon: RiSettings3Line
 ---
+
+`AuthClient` holds the state machine: it mints `state`, derives the PKCE pair, persists both,
+exchanges the code, and manages the resulting token. Everything else in the library is either data
+it hands you or a seam it calls into.
 
 ```ts
 import { createAuthClient } from '@ai-oauth-sdk/core'
@@ -16,52 +20,32 @@ adds `sessionStorage`.
 
 ## Options
 
-<TypeTable
-  type={{
-    provider: {
-      type: 'ProviderLike',
-      description: 'A built-in id, any string with a matching descriptor, or a ProviderConfig.',
-      required: true,
-    },
-    clientId: {
-      type: 'string',
-      description: 'Required unless the descriptor sets requiresClientId: false.',
-    },
-    clientSecret: { type: 'string', description: 'For providers that insist, such as Google.' },
-    scopes: { type: 'string[]', description: "Replaces the provider's default scopes." },
-    redirectUri: {
-      type: 'string',
-      description: 'Fixed redirect URI. A receiver that owns its URI takes precedence.',
-    },
-    storage: {
-      type: 'AuthStorage',
-      description: 'Where tokens and pending flows live.',
-      default: 'memoryStorage()',
-    },
-    crypto: { type: 'CryptoAdapter', description: 'Random bytes and SHA-256.' },
-    fetch: { type: 'FetchLike', description: 'For a proxy or an instrumented client.' },
-    accountKey: {
-      type: 'string',
-      description: 'Distinguishes token records when one app holds several accounts.',
-    },
-    stateTtlMs: {
-      type: 'number',
-      description: 'How long a started authorization stays valid.',
-      default: '600000',
-    },
-    expirySkewMs: {
-      type: 'number',
-      description: 'Renew this far ahead of expiry.',
-      default: '60000',
-    },
-    extraAuthParams: {
-      type: 'Record<string, string>',
-      description: 'Extra authorize-URL params for every flow from this client.',
-    },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `provider` | `ProviderLike` | **Required.** A built-in id, any string with a matching descriptor, or a ProviderConfig. |
+| `clientId` | `string` | Required unless the descriptor sets requiresClientId: false. |
+| `clientSecret` | `string` | For providers that insist, such as Google. |
+| `scopes` | `string[]` | Replaces the provider's default scopes. |
+| `redirectUri` | `string` | Fixed redirect URI. A receiver that owns its URI takes precedence. |
+| `storage` | `AuthStorage` | Where tokens and pending flows live. Defaults to `memoryStorage()`. |
+| `crypto` | `CryptoAdapter` | Random bytes and SHA-256. |
+| `fetch` | `FetchLike` | For a proxy or an instrumented client. |
+| `accountKey` | `string` | Distinguishes token records when one app holds several accounts. |
+| `stateTtlMs` | `number` | How long a started authorization stays valid. Defaults to `600000`. |
+| `expirySkewMs` | `number` | Renew this far ahead of expiry. Defaults to `60000`. |
+| `extraAuthParams` | `Record<string, string>` | Extra authorize-URL params for every flow from this client. |
 
 ## Running a flow
+
+Three methods start a login, and which you want depends on how much of the browser and callback
+plumbing you are willing to own.
+
+`login()` runs the whole thing through a receiver and is what a CLI or a single-page app wants.
+`createAuthorization()` and `completeAuthorization()` split it in half, for a web server where the
+request that starts the flow is not the request that finishes it. `deviceLogin()` is the separate
+grant for machines with no reachable browser.
+
+All three end the same way: tokens written to storage, and returned.
 
 ### login(options)
 
@@ -138,7 +122,14 @@ Reads a pending record without consuming it. This is how you get `metadata` back
 
 Deletes the pending record and rejects any waiters with an `aborted` error.
 
-## Tokens
+## Tokens [#tokens]
+
+These are the methods you call for the rest of the session, once a flow has completed. They read
+from storage rather than from memory alone, so a token another process refreshed is picked up
+rather than overwritten.
+
+`getAccessToken()` is the one to reach for by default. The others exist for the cases where you
+need to force something.
 
 ### getAccessToken(options)
 
@@ -182,6 +173,12 @@ True when a token exists and has not passed the renewal window. It does not touc
 `"Bearer <token>"`, refreshing first if needed. The token is fetched before the type is read,
 because a refresh replaces the whole token set.
 
+## Ending a session [#session]
+
+Revoking tells the provider; logging out clears what is stored here. They are separate because only
+some providers support the first, and a failed revocation must not leave the user apparently still
+signed in.
+
 ### revoke(options)
 
 RFC 7009, where the provider supports it. Revoking the refresh token is what ends the session.
@@ -202,6 +199,8 @@ Local state is cleared either way. A failed revocation must not leave the user a
 signed in.
 
 ## Properties
+
+### provider
 
 `client.provider` is the resolved `ProviderConfig`, after your overrides have been merged. That is
 where `apiBaseUrl`, the redirect spec and the scopes actually in use can be read.

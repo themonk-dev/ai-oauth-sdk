@@ -41,43 +41,16 @@ loopbackReceiver({ port: 3000, path: '/oauth/done' })
 
 ## Options
 
-<TypeTable
-  type={{
-    port: {
-      type: 'number',
-      description: 'Port to bind. 0 picks a free one.',
-      default: "the provider's declared port",
-    },
-    path: {
-      type: 'string',
-      description: 'Path to listen on.',
-      default: "the provider's declared path",
-    },
-    host: {
-      type: 'string',
-      description: 'Interface to bind.',
-      default: '127.0.0.1',
-    },
-    redirectHost: {
-      type: 'string',
-      description: 'Host used when building the redirect URI, if it differs from the bind host.',
-    },
-    openBrowser: {
-      type: 'boolean',
-      description: 'Launch the browser automatically.',
-      default: 'true',
-    },
-    onAuthorizationUrl: {
-      type: '(url: string) => void',
-      description: 'Called with the URL, for printing it as a fallback.',
-    },
-    successHtml: { type: 'string', description: 'Page shown after a successful callback.' },
-    failureHtml: {
-      type: '(error: string) => string',
-      description: 'Builds the page shown after a failure.',
-    },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `port` | `number` | Port to bind. 0 picks a free one. Defaults to `the provider's declared port`. |
+| `path` | `string` | Path to listen on. Defaults to `the provider's declared path`. |
+| `host` | `string` | Interface to bind. Defaults to `127.0.0.1`. |
+| `redirectHost` | `string` | Host used when building the redirect URI, if it differs from the bind host. |
+| `openBrowser` | `boolean` | Launch the browser automatically. Defaults to `true`. |
+| `onAuthorizationUrl` | `(url: string) => void` | Called with the URL, for printing it as a fallback. |
+| `successHtml` | `string` | Page shown after a successful callback. |
+| `failureHtml` | `(error: string) => string` | Builds the page shown after a failure. |
 
 ## What the server will and will not do
 

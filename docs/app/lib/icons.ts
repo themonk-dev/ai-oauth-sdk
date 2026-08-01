@@ -52,6 +52,8 @@ import {
   RiWindow2Line,
 } from '@remixicon/react'
 
+import { OpenRouterIcon } from '@/components/brand-icons'
+
 import type { RemixiconComponentType } from '@remixicon/react'
 
 /**
@@ -89,6 +91,7 @@ export const icons: Record<string, RemixiconComponentType> = {
   RiNodeTree,
   RiNodejsLine,
   RiNpmjsLine,
+  OpenRouterIcon,
   RiOpenaiFill,
   RiPlugLine,
   RiPuzzle2Line,

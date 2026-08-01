@@ -7,9 +7,7 @@ icon: RiRocketLine
 Install the umbrella package and import from a subpath, or install only the scoped packages you
 need. Both are the same code.
 
-```bash
-npm i ai-oauth-sdk
-```
+<Install packages="ai-oauth-sdk" />
 
 ## Pick your runtime
 
@@ -17,9 +15,9 @@ npm i ai-oauth-sdk
 
 <Tab value="Terminal">
 
-```bash
-npm i -g @ai-oauth-sdk/cli
+<InstallGlobal packages="@ai-oauth-sdk/cli" />
 
+```bash
 ai-oauth-sdk login openai
 curl -H "Authorization: Bearer $(ai-oauth-sdk token openai)" \
      https://api.openai.com/v1/models

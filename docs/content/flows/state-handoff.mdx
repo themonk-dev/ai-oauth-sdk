@@ -99,21 +99,25 @@ to a "cancel" button, because otherwise an abandoned flow sits in storage until 
 
 ## The full picture
 
-```
-  your app                provider              callback route
-     │                       │                        │
-     ├─ createAuthorization()│                        │
-     │  mints state + PKCE   │                        │
-     │  writes pending ──────┼──▶ storage             │
-     │                       │                        │
-     ├─ send user to url ───▶│                        │
-     │                       ├─ redirect w/ code ────▶│
-     │                       │                        ├─ completeAuthorization()
-     │                       │            storage ◀───┤  reads pending, exchanges
-     │                       │                        │
-     ◀── waitForAuthorization(state) resolves ────────┘
-```
+<Mermaid
+  chart={`
+sequenceDiagram
+  participant A as Your app
+  participant S as Storage
+  participant P as Provider
+  participant C as Callback route
+  A->>A: createAuthorization()
+  Note over A: mints state and a PKCE pair
+  A->>S: write pending record
+  A->>P: send the user to the authorization URL
+  P->>C: redirect with code and state
+  C->>S: read pending record
+  C->>P: exchange the code
+  P-->>C: tokens
+  C-->>A: waitForAuthorization(state) resolves
+`}
+/>
 
 A worked example with Hono, Express, Fastify and Next.js is on
-[the callback route page](/recipes/server-callback). For many users at once, see
+[the callback routes page](/recipes/server-callback). For many users at once, see
 [a multi-user server](/recipes/multi-user).

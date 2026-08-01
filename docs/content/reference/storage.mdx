@@ -1,6 +1,6 @@
 ---
 title: Storage
-description: The AuthStorage interface, the built-in adapters, and what gets written under which key.
+description: The three-method interface behind every token and pending flow, the adapters each package ships, and which one to pick for your runtime.
 icon: RiDatabase2Line
 ---
 
@@ -32,28 +32,20 @@ Both are JSON. Nothing assumes ordering, transactions or locking.
 
 ## Built-in adapters
 
+Each adapter package ships the storage that makes sense for its runtime, and the core ships the
+three that need no platform at all. None of them is required; the interface above is the contract.
+
 ### Core
 
 ```ts
 import { fromSyncStorage, memoryStorage, prefixedStorage } from '@ai-oauth-sdk/core'
 ```
 
-<TypeTable
-  type={{
-    'memoryStorage()': {
-      type: 'AuthStorage',
-      description: 'A Map. The default, and correct only within one process.',
-    },
-    'prefixedStorage(inner, prefix)': {
-      type: 'AuthStorage',
-      description: 'Namespaces every key. Used for per-user isolation on a server.',
-    },
-    'fromSyncStorage(storage)': {
-      type: 'AuthStorage',
-      description: 'Adapts a synchronous getItem/setItem/removeItem object.',
-    },
-  }}
-/>
+| Helper | Type | Description |
+| --- | --- | --- |
+| `memoryStorage()` | `AuthStorage` | A Map. The default, and correct only within one process. |
+| `prefixedStorage(inner, prefix)` | `AuthStorage` | Namespaces every key. Used for per-user isolation on a server. |
+| `fromSyncStorage(storage)` | `AuthStorage` | Adapts a synchronous getItem/setItem/removeItem object. |
 
 ### Node
 

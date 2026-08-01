@@ -4,9 +4,7 @@ description: A loopback callback server, file-backed token storage, and a browse
 icon: RiNodejsLine
 ---
 
-```bash
-npm i @ai-oauth-sdk/node
-```
+<Install packages="@ai-oauth-sdk/node" />
 
 ## One call
 
@@ -69,24 +67,11 @@ const accessToken = await client.getAccessToken()
 `createNodeAuthClient` differs from `createAuthClient` in two ways: it defaults storage to a file,
 and it uses `node:crypto` directly rather than depending on `globalThis.crypto` being exposed.
 
-<TypeTable
-  type={{
-    persist: {
-      type: 'boolean',
-      description: 'Write tokens to disk. Set false to keep them in memory only.',
-      default: 'true',
-    },
-    authDir: {
-      type: 'string',
-      description: 'Directory for the credential file.',
-      default: '~/.ai-oauth-sdk',
-    },
-    storage: {
-      type: 'AuthStorage',
-      description: 'Replaces the file backend entirely.',
-    },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `persist` | `boolean` | Write tokens to disk. Set false to keep them in memory only. Defaults to `true`. |
+| `authDir` | `string` | Directory for the credential file. Defaults to `~/.ai-oauth-sdk`. |
+| `storage` | `AuthStorage` | Replaces the file backend entirely. |
 
 ## Storage on disk
 

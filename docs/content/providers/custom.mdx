@@ -54,25 +54,11 @@ on your side. Anything you pass explicitly still wins over the document.
 Three fields exist for providers that leave the spec. Between them they are enough to keep even
 OpenRouter working without a special case in the flow code.
 
-<TypeTable
-  type={{
-    buildAuthParams: {
-      type: '(params: Record<string, string>) => Record<string, string>',
-      description:
-        'Last chance to rewrite the authorization query. Receives the conventional params and returns the final set.',
-    },
-    parseTokenResponse: {
-      type: '(raw: Record<string, unknown>) => Record<string, unknown>',
-      description:
-        'Normalises a non-standard token body into the conventional shape: access_token, refresh_token, expires_in.',
-    },
-    parseCallback: {
-      type: '(input: string) => CallbackParseResult',
-      description:
-        'Parses whatever the user pastes or whatever lands on the redirect. Defaults to URL and query parsing.',
-    },
-  }}
-/>
+| Hook | Type | Description |
+| --- | --- | --- |
+| `buildAuthParams` | `(params: Record<string, string>) => Record<string, string>` | Last chance to rewrite the authorization query. Receives the conventional params and returns the final set. |
+| `parseTokenResponse` | `(raw: Record<string, unknown>) => Record<string, unknown>` | Normalises a non-standard token body into the conventional shape: access_token, refresh_token, expires_in. |
+| `parseCallback` | `(input: string) => CallbackParseResult` | Parses whatever the user pastes or whatever lands on the redirect. Defaults to URL and query parsing. |
 
 A provider that names its redirect parameter something else and returns its token under a different
 key:
@@ -118,32 +104,30 @@ beta flag and OpenAI's account header get sent without you doing anything.
 
 ## Every field
 
-<TypeTable
-  type={{
-    id: { type: 'string', description: 'Stable identifier, used as the storage key.', required: true },
-    label: { type: 'string', description: 'Human label for prompts and UI.', required: true },
-    authorizationUrl: { type: 'string', required: true },
-    tokenUrl: { type: 'string', required: true },
-    scopes: { type: 'string[]', required: true },
-    redirect: { type: 'RedirectSpec', description: 'mode is loopback, hosted or custom.', required: true },
-    clientId: { type: 'string', description: 'Usually supplied by the consumer instead.' },
-    clientSecret: { type: 'string', description: 'For providers that insist, such as Google.' },
-    requiresClientId: { type: 'boolean', description: 'Set false when none is transmitted.', default: 'true' },
-    usePkce: { type: 'boolean', default: 'true' },
-    pkceMethod: { type: "'S256' | 'plain'", default: 'S256' },
-    tokenRequest: { type: 'TokenRequestSpec', description: 'style form or json, plus header and body options.' },
-    extraAuthParams: { type: 'Record<string, string>', description: 'Appended to the authorization URL.' },
-    deviceAuthorizationUrl: { type: 'string', description: 'RFC 8628 endpoint, when supported.' },
-    deviceFlow: { type: 'DeviceFlow', description: 'Replaces the RFC 8628 implementation entirely.' },
-    devicePrerequisite: { type: 'string', description: 'Shown to the user alongside the code.' },
-    revocationUrl: { type: 'string', description: 'RFC 7009 endpoint.' },
-    userInfoUrl: { type: 'string', description: 'OIDC userinfo endpoint.' },
-    apiBaseUrl: { type: 'string', description: 'Prefix for relative URLs in createAuthenticatedFetch.' },
-    echoesState: { type: 'boolean', description: 'Whether state comes back on the callback.', default: 'true' },
-    experimental: { type: 'boolean', description: 'Marks a descriptor whose constants are unofficial.' },
-    note: { type: 'string', description: 'Free-form note surfaced in errors.' },
-  }}
-/>
+| Method | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | **Required.** Stable identifier, used as the storage key. |
+| `label` | `string` | **Required.** Human label for prompts and UI. |
+| `authorizationUrl` | `string` | **Required.** |
+| `tokenUrl` | `string` | **Required.** |
+| `scopes` | `string[]` | **Required.** |
+| `redirect` | `RedirectSpec` | **Required.** mode is loopback, hosted or custom. |
+| `clientId` | `string` | Usually supplied by the consumer instead. |
+| `clientSecret` | `string` | For providers that insist, such as Google. |
+| `requiresClientId` | `boolean` | Set false when none is transmitted. Defaults to `true`. |
+| `usePkce` | `boolean` | Defaults to `true`. |
+| `pkceMethod` | `'S256' | 'plain'` | Defaults to `S256`. |
+| `tokenRequest` | `TokenRequestSpec` | style form or json, plus header and body options. |
+| `extraAuthParams` | `Record<string, string>` | Appended to the authorization URL. |
+| `deviceAuthorizationUrl` | `string` | RFC 8628 endpoint, when supported. |
+| `deviceFlow` | `DeviceFlow` | Replaces the RFC 8628 implementation entirely. |
+| `devicePrerequisite` | `string` | Shown to the user alongside the code. |
+| `revocationUrl` | `string` | RFC 7009 endpoint. |
+| `userInfoUrl` | `string` | OIDC userinfo endpoint. |
+| `apiBaseUrl` | `string` | Prefix for relative URLs in createAuthenticatedFetch. |
+| `echoesState` | `boolean` | Whether state comes back on the callback. Defaults to `true`. |
+| `experimental` | `boolean` | Marks a descriptor whose constants are unofficial. |
+| `note` | `string` | Free-form note surfaced in errors. |
 
 ## From the CLI
 

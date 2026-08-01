@@ -13,12 +13,12 @@ const client = createNodeAuthClient({
 })
 ```
 
-| | |
+| Setting | Value |
 | --- | --- |
 | Authorization | `https://auth.openai.com/oauth/authorize` |
 | Token | `https://auth.openai.com/oauth/token` |
 | Redirect | loopback, port `1455` fixed, path `/auth/callback` |
-| Scopes | `openid profile email offline_access` |
+| Scopes | `openid`, `profile`, `email`, `offline_access` |
 | Userinfo | `https://auth.openai.com/api/accounts/oauth/userinfo` |
 | Device flow | yes, provider-specific |
 
@@ -55,7 +55,8 @@ const tokens = await client.deviceLogin({
 ```
 
 <Callout type="warn" title="It has to be switched on first">
-  Turn on "Enable device code authorization for Codex" in ChatGPT under Settings, Security. Without
+  Turn on "Enable device code authorization for Codex" in
+  [**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security). Without
   it the verification page refuses the code, and the command keeps polling for an approval that
   cannot arrive. OpenAI rejects it on the page rather than at the endpoint, so there is nothing this
   library can detect. The descriptor carries that sentence in `devicePrerequisite`, and the CLI

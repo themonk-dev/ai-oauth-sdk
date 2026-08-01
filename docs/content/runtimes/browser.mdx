@@ -4,14 +4,12 @@ description: Popup and full-page redirect receivers, with session or local stora
 icon: RiGlobeLine
 ---
 
-```bash
-npm i @ai-oauth-sdk/browser
-```
+<Install packages="@ai-oauth-sdk/browser" />
 
 A browser cannot bind a port, so the callback has to come back through the page itself. There are
 two ways to arrange that, and they trade off against each other.
 
-|  | Popup | Full-page redirect |
+| Behaviour | Popup | Full-page redirect |
 | --- | --- | --- |
 | Host page state | kept | lost, page reloads |
 | Popup blockers | can block it | not affected |
@@ -41,23 +39,13 @@ Your `redirectUri` points at a page on your own origin whose only job is one lin
 By the time that page runs, the popup is same-origin with the opener, so it can hand the code back
 over `postMessage`. Messages from any other origin are ignored.
 
-<TypeTable
-  type={{
-    redirectUri: {
-      type: 'string',
-      description: 'A page on your origin that calls postCallbackToOpener().',
-      default: 'the current URL without its fragment',
-    },
-    width: { type: 'number', description: 'Popup width.' },
-    height: { type: 'number', description: 'Popup height.' },
-    windowName: { type: 'string', description: 'Popup window name.' },
-    pollIntervalMs: {
-      type: 'number',
-      description: 'How often to check whether the user closed the popup.',
-      default: '400',
-    },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `redirectUri` | `string` | A page on your origin that calls postCallbackToOpener(). Defaults to `the current URL without its fragment`. |
+| `width` | `number` | Popup width. |
+| `height` | `number` | Popup height. |
+| `windowName` | `string` | Popup window name. |
+| `pollIntervalMs` | `number` | How often to check whether the user closed the popup. Defaults to `400`. |
 
 The popup is polled because a closed window is the only signal the browser gives that the user gave
 up on the flow.

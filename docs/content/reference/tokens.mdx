@@ -1,8 +1,12 @@
 ---
-title: Tokens
-description: What a TokenSet holds, when it refreshes, and the field you should not log.
+title: TokenSet
+description: The shape a completed flow gives back. What each field means, how expiry is represented, and the one field you should never log.
 icon: RiRefreshLine
 ---
+
+`TokenSet` is data, not behaviour. It is what `login()`, `deviceLogin()` and
+`completeAuthorization()` resolve with, and what `getTokens()` reads back out of storage. The
+methods that produce and renew it live on [AuthClient](/reference/auth-client).
 
 ```ts
 interface TokenSet {
@@ -19,26 +23,18 @@ interface TokenSet {
 }
 ```
 
-<TypeTable
-  type={{
-    accessToken: { type: 'string', description: 'The bearer credential.' },
-    refreshToken: {
-      type: 'string',
-      description: 'Absent when the provider does not issue one, as with OpenRouter.',
-    },
-    expiresAt: {
-      type: 'number',
-      description: 'Absolute expiry in epoch milliseconds. Absent when the provider omits one.',
-    },
-    tokenType: { type: 'string', description: 'Usually Bearer.' },
-    scope: { type: 'string', description: 'What was actually granted, which may be less than asked.' },
-    idToken: { type: 'string', description: 'OIDC id token, where one was returned.' },
-    accountId: { type: 'string', description: 'Provider account identifier, when derivable.' },
-    email: { type: 'string', description: 'Account email, when the provider returns or encodes one.' },
-    provider: { type: 'string', description: 'The provider id this token belongs to.' },
-    raw: { type: 'Record<string, unknown>', description: 'The untouched token-endpoint response.' },
-  }}
-/>
+| Field | Type | Description |
+| --- | --- | --- |
+| `accessToken` | `string` | The bearer credential. |
+| `refreshToken` | `string` | Absent when the provider does not issue one, as with OpenRouter. |
+| `expiresAt` | `number` | Absolute expiry in epoch milliseconds. Absent when the provider omits one. |
+| `tokenType` | `string` | Usually Bearer. |
+| `scope` | `string` | What was actually granted, which may be less than asked. |
+| `idToken` | `string` | OIDC id token, where one was returned. |
+| `accountId` | `string` | Provider account identifier, when derivable. |
+| `email` | `string` | Account email, when the provider returns or encodes one. |
+| `provider` | `string` | The provider id this token belongs to. |
+| `raw` | `Record<string, unknown>` | The untouched token-endpoint response. |
 
 <Callout type="error" title="raw holds a second copy of every credential">
   It is the response verbatim, so it contains `access_token`, `refresh_token` and `id_token` again.
@@ -66,22 +62,16 @@ isExpired(tokens, 0) // strict
 A token with no `expiresAt` is never considered expired, which is correct for OpenRouter's durable
 key and wrong for nothing else currently.
 
-## Refresh
+## Getting a fresh one
 
 ```ts
 await client.getAccessToken() // refreshes if inside the window
 await client.refresh() // refreshes regardless
 ```
 
-Two things make this safe under concurrency.
-
-**In-process.** A refresh in flight is shared. Ten callers waking to an expired token get one
-network request between them, which matters because providers that rotate refresh tokens would have
-had nine of those requests invalidate each other.
-
-**Cross-process.** Before refreshing, storage is re-read. If another process already refreshed and
-the stored token is usable, it is taken instead. Two CLI windows open at once is an ordinary
-situation, and no promise can coordinate across processes.
+Both are documented on [AuthClient](/reference/auth-client#tokens), including how concurrent
+callers share a single refresh and how a token rotated by another process is picked up. Nothing
+about that behaviour is on the token set itself.
 
 ## Several accounts
 
@@ -112,16 +102,11 @@ user.name
 It throws `configuration_error` when the provider declares no userinfo endpoint. Prefer the fields
 on the token set when they are populated.
 
-## Revocation
+## Ending a session
 
-```ts
-await client.revoke() // refresh token by default
-await client.revoke({ tokenType: 'access_token' })
-await client.logout({ revoke: true }) // revoke, then clear locally
-```
-
-Only `google`, `xai` and `microsoft` declare a revocation endpoint among the built-ins. For the
-others, `logout()` clears the local copy and that is all anyone can do from here.
+Only `google`, `xai` and `microsoft` declare an RFC 7009 revocation endpoint among the built-ins.
+For every other provider, clearing the local copy is all anyone can do from here.
+[`revoke()` and `logout()`](/reference/auth-client#session) are the methods.
 
 ## Inspecting a JWT
 

@@ -117,22 +117,11 @@ property, and the library checks for presence rather than for callability.
 import { fromSyncStorage, memoryStorage, prefixedStorage } from '@ai-oauth-sdk/core'
 ```
 
-<TypeTable
-  type={{
-    'memoryStorage()': {
-      type: 'AuthStorage',
-      description: 'A Map. The default, and correct only within one process.',
-    },
-    'prefixedStorage(inner, prefix)': {
-      type: 'AuthStorage',
-      description: 'Namespaces every key. Used for per-user isolation.',
-    },
-    'fromSyncStorage(storage)': {
-      type: 'AuthStorage',
-      description: 'Adapts a synchronous get/set/removeItem object, such as a Web Storage area.',
-    },
-  }}
-/>
+| Helper | Type | Description |
+| --- | --- | --- |
+| `memoryStorage()` | `AuthStorage` | A Map. The default, and correct only within one process. |
+| `prefixedStorage(inner, prefix)` | `AuthStorage` | Namespaces every key. Used for per-user isolation. |
+| `fromSyncStorage(storage)` | `AuthStorage` | Adapts a synchronous get/set/removeItem object, such as a Web Storage area. |
 
 ## What gets stored
 

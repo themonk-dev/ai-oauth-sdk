@@ -14,7 +14,7 @@ const client = createNodeAuthClient({
 })
 ```
 
-| | |
+| Setting | Value |
 | --- | --- |
 | Authorization | `https://accounts.google.com/o/oauth2/v2/auth` |
 | Token | `https://oauth2.googleapis.com/token` |
@@ -81,6 +81,6 @@ client able to mint a new one.
 
 ## Bringing your own
 
-Google Cloud console, Credentials, OAuth client, then choose **Desktop app**. That client type is
-what accepts loopback redirects on arbitrary ports. Pass the id and secret it gives you, and the
+**Google Cloud console > Credentials > Create credentials > OAuth client ID > Desktop app**. That
+client type is what accepts loopback redirects on arbitrary ports. Pass the id and secret it gives you, and the
 descriptor is otherwise unchanged.

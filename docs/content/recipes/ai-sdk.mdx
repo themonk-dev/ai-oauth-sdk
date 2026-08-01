@@ -52,27 +52,13 @@ after twenty minutes is not something you want captured in a closure.
 
 ## What the fetch does
 
-<TypeTable
-  type={{
-    fetch: { type: 'FetchLike', description: 'Underlying fetch.', default: 'globalThis.fetch' },
-    retryOnUnauthorized: {
-      type: 'boolean',
-      description: 'Force a refresh and retry once when the API answers 401.',
-      default: 'true',
-    },
-    baseUrl: {
-      type: 'string',
-      description: 'Prefix for relative URLs.',
-      default: "the provider's apiBaseUrl",
-    },
-    headers: { type: 'Record<string, string>', description: 'Merged into every request.' },
-    respectCallerAuthorization: {
-      type: 'boolean',
-      description: 'Let a caller-set Authorization header survive.',
-      default: 'false',
-    },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `fetch` | `FetchLike` | Underlying fetch. Defaults to `globalThis.fetch`. |
+| `retryOnUnauthorized` | `boolean` | Force a refresh and retry once when the API answers 401. Defaults to `true`. |
+| `baseUrl` | `string` | Prefix for relative URLs. Defaults to `the provider's apiBaseUrl`. |
+| `headers` | `Record<string, string>` | Merged into every request. |
+| `respectCallerAuthorization` | `boolean` | Let a caller-set Authorization header survive. Defaults to `false`. |
 
 The 401 retry matters more than it looks. A token can be revoked, or rotated by another process,
 well before its nominal expiry, in which case the local clock says "still valid" and only the 401

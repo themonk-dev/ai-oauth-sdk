@@ -1,6 +1,6 @@
 ---
 title: Overview
-description: Eight built-in descriptors, what each one supports, and the rule about client ids.
+description: A provider is a descriptor rather than a code path. Here is what the eight built-ins support, the rule about client ids, and how to override any of it.
 icon: RiDashboardLine
 ---
 
@@ -49,7 +49,7 @@ Raw credential values are on the [credentials](/resources/credentials) page.
 
 ## Capabilities
 
-| | PKCE | Device flow | Revocation | Userinfo | Echoes `state` |
+| Provider | PKCE | Device flow | Revocation | Userinfo | Echoes `state` |
 | --- | --- | --- | --- | --- | --- |
 | `openai` | yes | yes, not RFC 8628 | no | yes | yes |
 | `anthropic` | yes | no | no | no | yes |

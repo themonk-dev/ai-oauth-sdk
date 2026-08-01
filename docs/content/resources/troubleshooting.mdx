@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: The failures people actually hit, and what each one means.
+description: The failures people actually hit, what each one means, and the fix. Roughly ordered by how often they come up.
 icon: RiToolsLine
 ---
 
@@ -13,8 +13,8 @@ which is not yours. Use `--paste`, or `promptReceiver()`, or the device flow. Th
 `defaultReceiver()` detects `SSH_TTY` and `SSH_CONNECTION` and switches automatically, so this
 usually means a receiver was chosen explicitly.
 
-**Device flow on OpenAI.** Turn on "Enable device code authorization for Codex" in ChatGPT under
-Settings, Security first. Without it the verification page refuses the code and the poll runs until
+**Device flow on OpenAI.** Turn on "Enable device code authorization for Codex" in
+[**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security) first. Without it the verification page refuses the code and the poll runs until
 the code expires.
 
 **Device flow on Entra ID.** Conditional access policies can block the device grant at the tenant
@@ -26,7 +26,7 @@ Set `timeoutMs` so it fails rather than hanging:
 await client.login({ receiver, timeoutMs: 120_000 })
 ```
 
-## configuration_error: provider needs a clientId
+## `configuration_error`: provider needs a clientId
 
 You did not pass one, and no provider defaults to one. Pass your own, or opt into the published one:
 
@@ -34,7 +34,7 @@ You did not pass one, and no provider defaults to one. Pass your own, or opt int
 createAuthClient({ provider: 'openai', clientId: publicClientIds.openai })
 ```
 
-## invalid_client from the provider
+## `invalid_client` from the provider
 
 The client id is not recognised or not allowlisted.
 
@@ -45,7 +45,7 @@ The client id is not recognised or not allowlisted.
 - **A custom provider** where the id is right but the client type is wrong. Google's device endpoint
   refuses Desktop app clients with `Invalid client type`, for instance.
 
-## state_mismatch
+## `state_mismatch`
 
 The callback carried a `state` this client never issued. That is what a CSRF attempt looks like, so
 the library refuses it rather than continuing.
@@ -54,7 +54,7 @@ Legitimate causes worth ruling out: two logins started from the same client wher
 overwrote the first in a shared storage namespace, or a custom receiver that is not returning the
 `state` it received.
 
-## state_expired or unknown_state
+## `state_expired` or `unknown_state`
 
 `state_expired` means the pending record passed its TTL, ten minutes by default. A user who left the
 tab open over lunch hits this. Raise `stateTtlMs` if that is common for your flow, or just send them
@@ -77,8 +77,8 @@ See [database-backed storage](/recipes/storage).
 
 ## Requests get a 401 even though I just signed in
 
-**The token is not for that API.** An OpenAI ChatGPT sign-in grants `openid profile email
-offline_access` and nothing else. `GET /v1/models` answers `403 Missing scopes: api.model.read`, and
+**The token is not for that API.** An OpenAI ChatGPT sign-in grants `openid`, `profile`, `email` and
+`offline_access`, and nothing else. `GET /v1/models` answers `403 Missing scopes: api.model.read`, and
 no scope available in this flow can fix it. Issue an API key for the REST API.
 
 **A missing provider header.** Anthropic OAuth bearers need `anthropic-beta: oauth-2025-04-20`
@@ -108,7 +108,7 @@ send CORS headers your origin can use. Providers built for desktop CLIs do not a
 no client library can add them.
 
 Move that half to your own server. See
-[a callback route on your own server](/recipes/server-callback).
+[callback routes](/recipes/server-callback).
 
 ## Two processes keep invalidating each other's tokens
 
@@ -119,7 +119,7 @@ The library handles this: before refreshing it re-reads storage and takes the st
 another process already rotated it. If you are still seeing it, check that both processes share a
 storage backend rather than each holding their own.
 
-## EADDRINUSE on the loopback port
+## `EADDRINUSE` on the loopback port
 
 Something already holds the port. For providers registered on a fixed port, `1455` for OpenAI and
 `56121` for xAI, there is no alternative but to free it. For the others, `loopbackPort: 0` picks

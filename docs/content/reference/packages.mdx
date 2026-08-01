@@ -1,6 +1,6 @@
 ---
 title: Packages
-description: What is published, what each one exports, and which subpath to import from.
+description: The ten published packages, what each one exports, which subpath to import from, and how releases are built and signed.
 icon: RiNpmjsLine
 ---
 
@@ -9,15 +9,15 @@ Ten packages, all released together at the same version.
 | Package | Purpose |
 | --- | --- |
 | [`ai-oauth-sdk`](https://www.npmjs.com/package/ai-oauth-sdk) | Umbrella and CDN build. Start here. |
-| `@ai-oauth-sdk/core` | Zero-dependency engine: PKCE, registry, exchange, refresh, providers |
-| `@ai-oauth-sdk/cli` | `ai-oauth-sdk login ...` for the terminal |
-| `@ai-oauth-sdk/node` | Loopback server, file storage, browser launcher |
-| `@ai-oauth-sdk/browser` | Popup and redirect receivers, web storage |
-| `@ai-oauth-sdk/react` | `useAuth` and `AuthProvider` |
-| `@ai-oauth-sdk/vue` | `useAuth` composable |
-| `@ai-oauth-sdk/svelte` | `createAuth` store |
-| `@ai-oauth-sdk/solid` | `createAuth` primitive |
-| `@ai-oauth-sdk/react-native` | Deep link and auth session receivers, SecureStore |
+| [`@ai-oauth-sdk/core`](https://www.npmjs.com/package/@ai-oauth-sdk/core) | Zero-dependency engine: PKCE, registry, exchange, refresh, providers |
+| [`@ai-oauth-sdk/cli`](https://www.npmjs.com/package/@ai-oauth-sdk/cli) | `ai-oauth-sdk login ...` for the terminal |
+| [`@ai-oauth-sdk/node`](https://www.npmjs.com/package/@ai-oauth-sdk/node) | Loopback server, file storage, browser launcher |
+| [`@ai-oauth-sdk/browser`](https://www.npmjs.com/package/@ai-oauth-sdk/browser) | Popup and redirect receivers, web storage |
+| [`@ai-oauth-sdk/react`](https://www.npmjs.com/package/@ai-oauth-sdk/react) | `useAuth` and `AuthProvider` |
+| [`@ai-oauth-sdk/vue`](https://www.npmjs.com/package/@ai-oauth-sdk/vue) | `useAuth` composable |
+| [`@ai-oauth-sdk/svelte`](https://www.npmjs.com/package/@ai-oauth-sdk/svelte) | `createAuth` store |
+| [`@ai-oauth-sdk/solid`](https://www.npmjs.com/package/@ai-oauth-sdk/solid) | `createAuth` primitive |
+| [`@ai-oauth-sdk/react-native`](https://www.npmjs.com/package/@ai-oauth-sdk/react-native) | Deep link and auth session receivers, SecureStore |
 
 ## The umbrella
 
@@ -50,6 +50,9 @@ That works, and so does the equivalent from `browser`, `react`, `vue`, `svelte`,
 that only touches one adapter only names one package.
 
 ## Formats
+
+Every consumer gets both module systems and types, and the published output is verified separately
+from the tests.
 
 Every package ships ESM and CJS with types, through an `exports` map. The build is verified
 separately from the tests: unit tests import source, so a broken `exports` map would not fail them.

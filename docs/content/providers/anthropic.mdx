@@ -13,13 +13,13 @@ const client = createNodeAuthClient({
 })
 ```
 
-| | |
+| Setting | Value |
 | --- | --- |
 | Authorization | `https://claude.ai/oauth/authorize` |
 | Token | `https://platform.claude.com/v1/oauth/token` |
 | Redirect | loopback, any port, path `/callback` |
 | Hosted callback | `https://platform.claude.com/oauth/code/callback` |
-| Scopes | `user:inference user:profile user:sessions:claude_code` |
+| Scopes | `user:inference`, `user:profile`, `user:sessions:claude_code` |
 | API base | `https://api.anthropic.com/v1` |
 
 ## Two redirect modes

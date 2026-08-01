@@ -4,11 +4,11 @@ description: Sign in from a shell, print a token into a subshell, or run a comma
 icon: RiTerminalBoxLine
 ---
 
-```bash
-npm i -g @ai-oauth-sdk/cli
-# or without installing
-npx @ai-oauth-sdk/cli login openai
-```
+<InstallGlobal packages="@ai-oauth-sdk/cli" />
+
+Or run it without installing anything:
+
+<Execute command="@ai-oauth-sdk/cli login openai" />
 
 The CLI is the one place where the library makes the client id decision for you. It is an
 application in its own right, so it opts into the published id for each provider rather than asking

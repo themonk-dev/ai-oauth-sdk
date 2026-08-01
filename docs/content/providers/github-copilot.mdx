@@ -18,12 +18,12 @@ const tokens = await client.deviceLogin({
 })
 ```
 
-| | |
+| Setting | Value |
 | --- | --- |
 | Authorization | `https://github.com/login/oauth/authorize` |
 | Token | `https://github.com/login/oauth/access_token` |
 | Device | `https://github.com/login/device/code` |
-| Scopes | `read:user copilot` |
+| Scopes | `read:user`, `copilot` |
 | PKCE | no |
 | API base | `https://api.githubcopilot.com` |
 
@@ -80,6 +80,6 @@ to.
 
 ## Registering your own
 
-GitHub, Developer settings, OAuth Apps. Enable the device flow on the app, and request the `copilot`
-scope. Whether a self-registered app can reach the Copilot API depends on the account's entitlement
+**GitHub > Settings > Developer settings > OAuth Apps**. Enable the device flow on the app, and
+request the `copilot` scope. Whether a self-registered app can reach the Copilot API depends on the account's entitlement
 rather than on the OAuth app, so test it before shipping.

@@ -71,9 +71,9 @@ All ten packages are held at the same version, so a patch to the core bumps ever
 
 ## Working on these docs
 
-The site is a React Router app under `docs/`, deliberately outside the pnpm workspace so its
-dependencies stay out of the root lockfile and out of the audit gate that covers the published
-packages.
+The site is built with [Fumadocs](https://fumadocs.dev) on React Router, and lives under `docs/`,
+deliberately outside the pnpm workspace so its dependencies stay out of the root lockfile and out of
+the audit gate that covers the published packages.
 
 ```bash
 pnpm docs:install
@@ -87,8 +87,8 @@ the same thing. The install is separate because a `pnpm install` at the root doe
 directory outside the workspace.
 
 Content is MDX under `docs/content`, and the sidebar is driven by the `meta.json` files next to it.
-`Tabs`, `Steps`, `Accordions`, `TypeTable`, `Callout` and `Cards` are registered globally, so pages
-do not need to import them.
+`Tabs`, `Steps`, `Accordions`, `Callout`, `Cards`, `Mermaid` and the `Install` command tabs are
+registered globally in `app/components/mdx.tsx`, so pages do not import them.
 
 ## Reporting security issues
 

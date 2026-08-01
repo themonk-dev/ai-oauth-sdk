@@ -19,7 +19,7 @@ const client = createNodeAuthClient({
 })
 ```
 
-| | |
+| Setting | Value |
 | --- | --- |
 | Authorization | `https://auth.x.ai/oauth2/authorize` |
 | Token | `https://auth.x.ai/oauth2/token` |
@@ -27,7 +27,7 @@ const client = createNodeAuthClient({
 | Revocation | `https://auth.x.ai/oauth2/revoke` |
 | Userinfo | `https://auth.x.ai/oauth2/userinfo` |
 | Redirect | loopback, port `56121` fixed, host `127.0.0.1` |
-| Scopes | `openid profile email offline_access api:access` |
+| Scopes | `openid`, `profile`, `email`, `offline_access`, `api:access` |
 | API base | `https://api.x.ai/v1` |
 
 ## The client id is not really optional

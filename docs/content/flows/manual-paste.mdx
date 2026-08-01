@@ -40,28 +40,12 @@ started it is indistinguishable from a forged one.
 
 ## Options
 
-<TypeTable
-  type={{
-    redirectUri: {
-      type: 'string',
-      description: 'Where the provider should send the user.',
-      default: "the provider's hosted callback page",
-    },
-    openBrowser: {
-      type: 'boolean',
-      description: 'Also try to open a browser locally, in case there is one.',
-      default: 'true',
-    },
-    message: {
-      type: '(url: string) => string',
-      description: 'Replaces the printed instructions.',
-    },
-    signal: {
-      type: 'AbortSignal',
-      description: 'Abandons the pending read. Used when racing this against another receiver.',
-    },
-  }}
-/>
+| Option | Type | Description |
+| --- | --- | --- |
+| `redirectUri` | `string` | Where the provider should send the user. Defaults to `the provider's hosted callback page`. |
+| `openBrowser` | `boolean` | Also try to open a browser locally, in case there is one. Defaults to `true`. |
+| `message` | `(url: string) => string` | Replaces the printed instructions. |
+| `signal` | `AbortSignal` | Abandons the pending read. Used when racing this against another receiver. |
 
 ## Do not make users choose
 

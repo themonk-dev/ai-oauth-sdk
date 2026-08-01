@@ -1,6 +1,6 @@
 ---
 title: Errors
-description: Every failure is an OAuthError with a code, so you can branch on it instead of matching strings.
+description: Every failure is an OAuthError carrying a code, so you branch on the code rather than matching message strings. Here is what each one means and what to do about it.
 icon: RiAlertLine
 ---
 
@@ -39,20 +39,18 @@ of the package on disk, which happens more often than you would like in a monore
 
 ## Fields
 
-<TypeTable
-  type={{
-    code: { type: 'OAuthErrorCode', description: 'One of the above.' },
-    message: { type: 'string', description: 'Human-readable, with credentials already scrubbed.' },
-    providerError: { type: 'string', description: 'Raw error field from the provider, when supplied.' },
-    providerErrorDescription: {
-      type: 'string',
-      description: 'Raw error_description from the provider, when supplied.',
-    },
-    status: { type: 'number', description: 'HTTP status, for failures from a network response.' },
-    state: { type: 'string', description: 'The state the failure relates to, when applicable.' },
-    cause: { type: 'unknown', description: 'The underlying error, standard Error option.' },
-  }}
-/>
+Every `OAuthError` carries these, though most are only populated when they apply. `code` is the one
+to branch on; the rest are for diagnosis and for logging.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `code` | `OAuthErrorCode` | One of the above. |
+| `message` | `string` | Human-readable, with credentials already scrubbed. |
+| `providerError` | `string` | Raw error field from the provider, when supplied. |
+| `providerErrorDescription` | `string` | Raw error_description from the provider, when supplied. |
+| `status` | `number` | HTTP status, for failures from a network response. |
+| `state` | `string` | The state the failure relates to, when applicable. |
+| `cause` | `unknown` | The underlying error, standard Error option. |
 
 ## Branching on a server
 
