@@ -7,19 +7,17 @@
 <a href="https://www.npmjs.com/package/ai-oauth-sdk"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/npm/v/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=dark"><img alt="npm" src="https://www.shieldcn.dev/npm/v/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=light"></picture></a>
 <a href="https://www.npmjs.com/package/ai-oauth-sdk"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/npm/dm/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=dark"><img alt="npm downloads" src="https://www.shieldcn.dev/npm/dm/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=light"></picture></a>
 <a href="https://github.com/themonk-dev/ai-oauth-sdk/actions/workflows/ci.yml"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/ci/themonk-dev/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=dark"><img alt="CI" src="https://www.shieldcn.dev/github/ci/themonk-dev/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=light"></picture></a>
-<a href="https://github.com/themonk-dev/ai-oauth-sdk/stargazers"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/stars/themonk-dev/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=dark"><img alt="GitHub Stars" src="https://www.shieldcn.dev/github/stars/themonk-dev/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=light"></picture></a>
-<a href="https://github.com/themonk-dev/ai-oauth-sdk/graphs/contributors"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/contributors/themonk-dev/ai-oauth-sdk.svg?theme=emerald&amp;size=xs&amp;mode=dark"><img alt="Contributors" src="https://www.shieldcn.dev/github/contributors/themonk-dev/ai-oauth-sdk.svg?theme=emerald&amp;size=xs&amp;mode=light"></picture></a>
 <a href="https://github.com/themonk-dev/ai-oauth-sdk/commits/main"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/last-commit/themonk-dev/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=dark"><img alt="Last commit" src="https://www.shieldcn.dev/github/last-commit/themonk-dev/ai-oauth-sdk.svg?variant=secondary&amp;size=xs&amp;mode=light"></picture></a>
 <a href="LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/license/themonk-dev/ai-oauth-sdk.svg?variant=ghost&amp;size=xs&amp;mode=dark"><img alt="License" src="https://www.shieldcn.dev/github/license/themonk-dev/ai-oauth-sdk.svg?variant=ghost&amp;size=xs&amp;mode=light"></picture></a>
 </p>
 
-**[Documentation](https://ai-oauth-sdk.pages.dev/docs)** ·
-[Quickstart](https://ai-oauth-sdk.pages.dev/docs/quick-start) ·
-[Providers](https://ai-oauth-sdk.pages.dev/docs/providers) ·
-[Recipes](https://ai-oauth-sdk.pages.dev/docs/recipes) ·
-[Reference](https://ai-oauth-sdk.pages.dev/docs/reference/auth-client) ·
+**[Documentation](https://ai-oauth-sdk.themonk.dev/docs)** ·
+[Quickstart](https://ai-oauth-sdk.themonk.dev/docs/quick-start) ·
+[Providers](https://ai-oauth-sdk.themonk.dev/docs/providers) ·
+[Recipes](https://ai-oauth-sdk.themonk.dev/docs/recipes) ·
+[Reference](https://ai-oauth-sdk.themonk.dev/docs/reference/auth-client) ·
 [Security](SECURITY.md) ·
-[Disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer)
+[Disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer)
 
 </div>
 
@@ -55,25 +53,25 @@ npx @ai-oauth-sdk/cli login openai
 > these providers supports third-party OAuth clients. Several of them also restrict what you
 > may do with a credential issued to their own CLI, so getting a token is not the same as
 > being allowed to use it. Read their terms, read the
-> [disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer), and use it at your own
+> [disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer), and use it at your own
 > discretion.
 
 ## Documentation
 
-Everything is at **[ai-oauth-sdk.pages.dev](https://ai-oauth-sdk.pages.dev/docs)**.
+Everything is at **[ai-oauth-sdk.themonk.dev](https://ai-oauth-sdk.themonk.dev/docs)**.
 
 | | |
 |---|---|
-| [Quickstart](https://ai-oauth-sdk.pages.dev/docs/quick-start) | The shortest path to a token in each runtime |
-| [Overview](https://ai-oauth-sdk.pages.dev/docs/overview) | What it does, and where the provider differences live |
-| [Runtimes](https://ai-oauth-sdk.pages.dev/docs/runtimes) | CLI, Node, browser, React Native, script tag |
-| [Frameworks](https://ai-oauth-sdk.pages.dev/docs/frameworks) | React, Vue, Svelte, Solid |
-| [Flows](https://ai-oauth-sdk.pages.dev/docs/flows) | Loopback, popup, redirect, device code, paste |
-| [Providers](https://ai-oauth-sdk.pages.dev/docs/providers) | The eight built-ins, and how to describe your own |
-| [Recipes](https://ai-oauth-sdk.pages.dev/docs/recipes) | Server callbacks, multi-user, storage, using the token |
-| [Reference](https://ai-oauth-sdk.pages.dev/docs/reference/auth-client) | Every method, option and error code |
-| [Credentials](https://ai-oauth-sdk.pages.dev/docs/resources/credentials) | The published client ids, and registering your own |
-| [Troubleshooting](https://ai-oauth-sdk.pages.dev/docs/resources/troubleshooting) | The failures people actually hit |
+| [Quickstart](https://ai-oauth-sdk.themonk.dev/docs/quick-start) | The shortest path to a token in each runtime |
+| [Overview](https://ai-oauth-sdk.themonk.dev/docs/overview) | What it does, and where the provider differences live |
+| [Runtimes](https://ai-oauth-sdk.themonk.dev/docs/runtimes) | CLI, Node, browser, React Native, script tag |
+| [Frameworks](https://ai-oauth-sdk.themonk.dev/docs/frameworks) | React, Vue, Svelte, Solid |
+| [Flows](https://ai-oauth-sdk.themonk.dev/docs/flows) | Loopback, popup, redirect, device code, paste |
+| [Providers](https://ai-oauth-sdk.themonk.dev/docs/providers) | The eight built-ins, and how to describe your own |
+| [Recipes](https://ai-oauth-sdk.themonk.dev/docs/recipes) | Server callbacks, multi-user, storage, using the token |
+| [Reference](https://ai-oauth-sdk.themonk.dev/docs/reference/auth-client) | Every method, option and error code |
+| [Credentials](https://ai-oauth-sdk.themonk.dev/docs/resources/credentials) | The published client ids, and registering your own |
+| [Troubleshooting](https://ai-oauth-sdk.themonk.dev/docs/resources/troubleshooting) | The failures people actually hit |
 
 ## Packages
 
@@ -125,7 +123,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for what adding a provider takes.
 **MIT** ·
 [Contributing](CONTRIBUTING.md) ·
 [Security](SECURITY.md) ·
-[Disclaimer](https://ai-oauth-sdk.pages.dev/docs/resources/disclaimer)
+[Disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer)
 
 <sub>An independent project. Not affiliated with or endorsed by OpenAI, Anthropic, Google,
 GitHub, Microsoft, xAI, Alibaba or OpenRouter. All trademarks belong to their owners.</sub>
