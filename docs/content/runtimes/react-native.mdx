@@ -1,0 +1,96 @@
+---
+title: React Native and Expo
+description: Deep link or in-app auth session, secure token storage, and no polyfills.
+icon: Smartphone
+---
+
+```bash
+npm i @ai-oauth-sdk/react-native
+```
+
+<Callout title="No polyfills needed">
+  Hermes has no `crypto.subtle`, so PKCE falls back to a bundled pure-JavaScript SHA-256. The OAuth
+  path also never touches `URL.searchParams` or the `URLSearchParams` constructor, both of which
+  are unusable on bare React Native. Randomness is the one thing that never degrades: with no
+  CSPRNG available the library throws rather than quietly using `Math.random()` for your `state`.
+</Callout>
+
+## Expo
+
+`authSessionReceiver` is the one you want on Expo. It uses `SFAuthenticationSession` on iOS and
+Custom Tabs on Android, so the user keeps their provider cookies and the OS closes the sheet on
+redirect.
+
+```ts
+import * as AuthSession from 'expo-auth-session'
+import * as SecureStore from 'expo-secure-store'
+import * as WebBrowser from 'expo-web-browser'
+import { createAuthClient } from '@ai-oauth-sdk/core'
+import { authSessionReceiver, secureStoreAdapter } from '@ai-oauth-sdk/react-native'
+
+const redirectUri = AuthSession.makeRedirectUri({ scheme: 'myapp', path: 'auth/callback' })
+
+const client = createAuthClient({
+  provider: 'openai',
+  clientId,
+  redirectUri,
+  storage: secureStoreAdapter(SecureStore),
+})
+
+const tokens = await client.login({
+  receiver: authSessionReceiver({ webBrowser: WebBrowser, redirectUri }),
+})
+```
+
+`openAuthSessionAsync` both presents the URL and returns the result, so the receiver starts it in
+`present()` and awaits it in `wait()`. Cancelling the sheet rejects with an `aborted` error rather
+than hanging.
+
+## Bare React Native
+
+```ts
+import { Linking } from 'react-native'
+import { createAuthClient } from '@ai-oauth-sdk/core'
+import { deepLinkReceiver } from '@ai-oauth-sdk/react-native'
+
+const tokens = await client.login({
+  receiver: deepLinkReceiver({ linking: Linking, redirectUri: 'myapp://auth/callback' }),
+})
+```
+
+The receiver subscribes to the `url` event and also checks `getInitialURL()`. That second check is
+not redundant: if the OS killed your app while the user was on the consent screen, the redirect
+arrives as the initial URL of a cold start and the event never fires.
+
+Register the scheme in `Info.plist` and `AndroidManifest.xml` as you would for any deep link.
+
+## Storage
+
+```ts
+import { asyncStorageAdapter, secureStoreAdapter } from '@ai-oauth-sdk/react-native'
+```
+
+`secureStoreAdapter` is backed by the iOS Keychain and Android EncryptedSharedPreferences. It is
+the right default for tokens.
+
+One caveat worth knowing: SecureStore cannot enumerate its keys, so the adapter has no `keys()`
+method. Everything degrades gracefully around that. `listStoredSessions()` and the automatic
+pruning of abandoned pending flows simply do nothing, and the flow itself is unaffected.
+
+```ts
+secureStoreAdapter(SecureStore, {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+})
+```
+
+`asyncStorageAdapter` exists for the pending-flow record when you would rather not put it in the
+Keychain, and for platforms where SecureStore is unavailable. Do not put tokens in it.
+
+## Dependency injection
+
+Every native module is passed in rather than imported. `Linking`, `WebBrowser`, `SecureStore` and
+`AsyncStorage` are arguments, and the package declares none of them as dependencies.
+
+That keeps the package installable in a bare app that has none of Expo, and it makes the receivers
+testable without a simulator. The shapes it expects are exported as types: `LinkingLike`,
+`WebBrowserLike`, `SecureStoreLike`, `AsyncStorageLike`.

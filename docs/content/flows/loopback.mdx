@@ -1,0 +1,115 @@
+---
+title: Loopback
+description: A one-shot HTTP server on 127.0.0.1 catches the redirect, the way RFC 8252 intends for native apps.
+icon: Server
+---
+
+This is the flow every AI coding CLI uses. The app binds a port on the loopback interface, sends
+the user to the provider with `http://localhost:PORT/callback` as the redirect URI, and the browser
+delivers the code straight back to the process that asked for it.
+
+```ts
+import { createNodeAuthClient, loopbackReceiver, publicClientIds } from '@ai-oauth-sdk/node'
+
+const client = createNodeAuthClient({ provider: 'openai', clientId: publicClientIds.openai })
+const tokens = await client.login({ receiver: loopbackReceiver() })
+```
+
+Nothing is pasted, nothing is copied, and the token never passes through a third party.
+
+## Ports
+
+RFC 8252 says an authorization server should ignore the port component when matching a registered
+loopback redirect URI, precisely so native apps can use an ephemeral port. Not everyone does.
+
+| Provider | Port | Path |
+| --- | --- | --- |
+| `openai` | `1455`, fixed | `/auth/callback` |
+| `xai` | `56121`, fixed | `/callback` |
+| `anthropic` | any | `/callback` |
+| `google` | any | `/oauth2callback` |
+| `openrouter` | any | `/callback` |
+
+Providers registered on a specific port have to use it. For the others, `loopbackPort: 0` means
+"bind whatever is free", which avoids collisions when two tools are open at once.
+
+Override per login:
+
+```ts
+loopbackReceiver({ port: 3000, path: '/oauth/done' })
+```
+
+## Options
+
+<TypeTable
+  type={{
+    port: {
+      type: 'number',
+      description: 'Port to bind. 0 picks a free one.',
+      default: "the provider's declared port",
+    },
+    path: {
+      type: 'string',
+      description: 'Path to listen on.',
+      default: "the provider's declared path",
+    },
+    host: {
+      type: 'string',
+      description: 'Interface to bind.',
+      default: '127.0.0.1',
+    },
+    redirectHost: {
+      type: 'string',
+      description: 'Host used when building the redirect URI, if it differs from the bind host.',
+    },
+    openBrowser: {
+      type: 'boolean',
+      description: 'Launch the browser automatically.',
+      default: 'true',
+    },
+    onAuthorizationUrl: {
+      type: '(url: string) => void',
+      description: 'Called with the URL, for printing it as a fallback.',
+    },
+    successHtml: { type: 'string', description: 'Page shown after a successful callback.' },
+    failureHtml: {
+      type: '(error: string) => string',
+      description: 'Builds the page shown after a failure.',
+    },
+  }}
+/>
+
+## What the server will and will not do
+
+- It binds `127.0.0.1`, never `0.0.0.0`. A callback server on a routable interface is a code
+  disclosure waiting to happen.
+- It answers `GET` and `HEAD` only. Everything else gets a `405`.
+- It serves exactly one callback and then shuts down.
+- It answers on the configured path only.
+
+The page the user lands on is a small self-contained HTML document with no external requests, so
+the browser does not phone anywhere on the way to telling them it worked. Replace it with
+`successHtml` if you want your own branding.
+
+## Not opening the browser yourself
+
+Some hosts want to control that. Electron in particular should open the user's real browser rather
+than a `BrowserWindow`, so the user keeps their provider session and password manager:
+
+```ts
+await client.login({
+  receiver: loopbackReceiver({ openBrowser: false }),
+  openUrl: (url) => shell.openExternal(url),
+})
+```
+
+## When it will not work
+
+A loopback redirect requires the browser and the process to be on the same host. Over SSH, in a
+container without host networking, or in CI, the redirect goes to the browser machine's own
+`localhost` and lands nowhere. `defaultReceiver()` detects that case and picks a different receiver;
+if you are choosing manually, use [manual paste](/flows/manual-paste) or
+[the device flow](/flows/device-code) instead.
+
+The [hybrid receiver](/runtimes/node#receivers) covers the case where you are not sure: it binds the
+port and prints the paste prompt at the same time, and takes whichever answers first.

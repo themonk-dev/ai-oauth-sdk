@@ -32,7 +32,13 @@ packages/
   react/ vue/ svelte/ solid/   UI bindings (all thin wrappers over core's store)
   react-native/  deep link + auth session, SecureStore
   ai-oauth-sdk/      umbrella package and the CDN bundle
+docs/            the documentation site (Fumadocs on React Router)
+notes/           design notes and provider research, not published
 ```
+
+`docs/` is deliberately outside the pnpm workspace, with its own lockfile, so its
+toolchain stays out of the root lockfile and out of `pnpm audit`. See
+[docs/README.md](docs/README.md).
 
 **Core must stay dependency-free and platform-free.** No `node:` imports, no DOM
 globals at module scope, no npm dependencies. Anything platform-specific belongs in an

@@ -8,7 +8,12 @@ import tseslint from 'typescript-eslint'
  * code lives in JSDoc where it is published rather than trailing a line.
  */
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/.turbo/**', 'examples/**/dist/**'] },
+  // `docs/` is the documentation site. It is a separate project with its own
+  // toolchain and its own lockfile, outside the pnpm workspace on purpose, so
+  // the workspace gate does not reach into it.
+  {
+    ignores: ['**/dist/**', '**/node_modules/**', '**/.turbo/**', 'examples/**/dist/**', 'docs/**'],
+  },
   {
     files: ['**/*.{ts,tsx,js,mjs}'],
     languageOptions: { parser: tseslint.parser },

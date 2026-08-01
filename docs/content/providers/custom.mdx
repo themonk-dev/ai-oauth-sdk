@@ -1,0 +1,157 @@
+---
+title: Custom providers
+description: Describe any OAuth 2.0 provider with defineProvider, or build one from an OIDC discovery document.
+icon: Puzzle
+---
+
+The built-ins are a convenience. The flow code has no idea which provider it is running, so
+anything that speaks OAuth 2.0 works.
+
+## defineProvider
+
+```ts
+import { createAuthClient, defineProvider } from '@ai-oauth-sdk/core'
+
+const acme = defineProvider({
+  id: 'acme',
+  label: 'Acme AI',
+  clientId: 'my-client-id',
+  authorizationUrl: 'https://auth.acme.dev/authorize',
+  tokenUrl: 'https://auth.acme.dev/token',
+  scopes: ['openid', 'inference'],
+  redirect: { mode: 'loopback', loopbackPort: 0 },
+})
+
+const client = createAuthClient({ provider: acme })
+```
+
+`defineProvider` fills in what almost every provider shares: PKCE on, `S256`, a form-encoded token
+request with the client id in the body, `/callback` as the loopback path, and `localhost` as the
+loopback host. State only what makes yours different.
+
+## From an OIDC discovery document
+
+```ts
+import { providerFromDiscovery } from '@ai-oauth-sdk/core'
+
+const acme = await providerFromDiscovery('https://auth.acme.dev', {
+  id: 'acme',
+  label: 'Acme AI',
+  clientId: 'my-client-id',
+  redirect: { mode: 'loopback', loopbackPort: 0 },
+})
+```
+
+Pass the issuer URL, not the `.well-known` path. It fetches
+`/.well-known/openid-configuration` and takes `authorization_endpoint`, `token_endpoint`,
+`device_authorization_endpoint` and `scopes_supported` from it.
+
+This is the more durable option for anything long-lived, because an endpoint move needs no release
+on your side. Anything you pass explicitly still wins over the document.
+
+## The escape hatches
+
+Three fields exist for providers that leave the spec. Between them they are enough to keep even
+OpenRouter working without a special case in the flow code.
+
+<TypeTable
+  type={{
+    buildAuthParams: {
+      type: '(params: Record<string, string>) => Record<string, string>',
+      description:
+        'Last chance to rewrite the authorization query. Receives the conventional params and returns the final set.',
+    },
+    parseTokenResponse: {
+      type: '(raw: Record<string, unknown>) => Record<string, unknown>',
+      description:
+        'Normalises a non-standard token body into the conventional shape: access_token, refresh_token, expires_in.',
+    },
+    parseCallback: {
+      type: '(input: string) => CallbackParseResult',
+      description:
+        'Parses whatever the user pastes or whatever lands on the redirect. Defaults to URL and query parsing.',
+    },
+  }}
+/>
+
+A provider that names its redirect parameter something else and returns its token under a different
+key:
+
+```ts
+const odd = defineProvider({
+  id: 'odd',
+  label: 'Odd',
+  authorizationUrl: 'https://odd.example/auth',
+  tokenUrl: 'https://odd.example/keys',
+  scopes: [],
+  redirect: { mode: 'loopback', loopbackPort: 0 },
+  requiresClientId: false,
+  echoesState: false,
+  tokenRequest: { style: 'json', includeClientIdInBody: false },
+  buildAuthParams: (params) => ({ callback_url: params.redirect_uri ?? '' }),
+  parseTokenResponse: (raw) =>
+    typeof raw.key === 'string' ? { ...raw, access_token: raw.key, token_type: 'Bearer' } : raw,
+})
+```
+
+That is, more or less, the OpenRouter descriptor.
+
+## Enrichment and API headers
+
+Two more hooks, both optional and both about what happens after the token arrives.
+
+```ts
+defineProvider({
+  // ...
+  enrichTokens(raw, tokens) {
+    const payload = decodeJwtPayload(tokens.idToken)
+
+    return { accountId: getStringClaim(payload, 'sub'), email: getStringClaim(payload, 'email') }
+  },
+  apiHeaders: (tokens) => ({ 'x-account-id': tokens.accountId ?? '' }),
+})
+```
+
+`enrichTokens` derives `accountId` and `email` so `whoami` has something to print.
+`apiHeaders` is what `createAuthenticatedFetch` attaches to every request, which is how Anthropic's
+beta flag and OpenAI's account header get sent without you doing anything.
+
+## Every field
+
+<TypeTable
+  type={{
+    id: { type: 'string', description: 'Stable identifier, used as the storage key.', required: true },
+    label: { type: 'string', description: 'Human label for prompts and UI.', required: true },
+    authorizationUrl: { type: 'string', required: true },
+    tokenUrl: { type: 'string', required: true },
+    scopes: { type: 'string[]', required: true },
+    redirect: { type: 'RedirectSpec', description: 'mode is loopback, hosted or custom.', required: true },
+    clientId: { type: 'string', description: 'Usually supplied by the consumer instead.' },
+    clientSecret: { type: 'string', description: 'For providers that insist, such as Google.' },
+    requiresClientId: { type: 'boolean', description: 'Set false when none is transmitted.', default: 'true' },
+    usePkce: { type: 'boolean', default: 'true' },
+    pkceMethod: { type: "'S256' | 'plain'", default: 'S256' },
+    tokenRequest: { type: 'TokenRequestSpec', description: 'style form or json, plus header and body options.' },
+    extraAuthParams: { type: 'Record<string, string>', description: 'Appended to the authorization URL.' },
+    deviceAuthorizationUrl: { type: 'string', description: 'RFC 8628 endpoint, when supported.' },
+    deviceFlow: { type: 'DeviceFlow', description: 'Replaces the RFC 8628 implementation entirely.' },
+    devicePrerequisite: { type: 'string', description: 'Shown to the user alongside the code.' },
+    revocationUrl: { type: 'string', description: 'RFC 7009 endpoint.' },
+    userInfoUrl: { type: 'string', description: 'OIDC userinfo endpoint.' },
+    apiBaseUrl: { type: 'string', description: 'Prefix for relative URLs in createAuthenticatedFetch.' },
+    echoesState: { type: 'boolean', description: 'Whether state comes back on the callback.', default: 'true' },
+    experimental: { type: 'boolean', description: 'Marks a descriptor whose constants are unofficial.' },
+    note: { type: 'string', description: 'Free-form note surfaced in errors.' },
+  }}
+/>
+
+## From the CLI
+
+```bash
+ai-oauth-sdk login acme --client-id my-client \
+  --authorize-url https://auth.acme.dev/authorize \
+  --token-url https://auth.acme.dev/token \
+  --device-url https://auth.acme.dev/device
+```
+
+Same descriptor, built from flags. Useful for trying a provider before writing any code.

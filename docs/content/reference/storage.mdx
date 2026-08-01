@@ -1,0 +1,130 @@
+---
+title: Storage
+description: The AuthStorage interface, the built-in adapters, and what gets written under which key.
+icon: Database
+---
+
+```ts
+interface AuthStorage {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string): Promise<void>
+  delete(key: string): Promise<void>
+  keys?(): Promise<string[]>
+}
+```
+
+Async throughout, so it fits `AsyncStorage`, SecureStore, the filesystem and a keychain equally
+well. Values are strings; the library serialises before handing anything over.
+
+`keys()` is optional because some backends genuinely cannot enumerate. Callers degrade gracefully
+when it is absent: `listStoredSessions()` returns nothing and abandoned pending records are not
+pruned. Nothing else changes.
+
+## Keys
+
+| Key | Contents | Lifetime |
+| --- | --- | --- |
+| `pending:<state>` | redirect URI, PKCE verifier, expiry, metadata | until completed or `stateTtlMs` passes |
+| `tokens:<provider>` | the `TokenSet` | until logout |
+| `tokens:<provider>:<accountKey>` | the `TokenSet` for a named account | until logout |
+
+Both are JSON. Nothing assumes ordering, transactions or locking.
+
+## Built-in adapters
+
+### Core
+
+```ts
+import { fromSyncStorage, memoryStorage, prefixedStorage } from '@ai-oauth-sdk/core'
+```
+
+<TypeTable
+  type={{
+    'memoryStorage()': {
+      type: 'AuthStorage',
+      description: 'A Map. The default, and correct only within one process.',
+    },
+    'prefixedStorage(inner, prefix)': {
+      type: 'AuthStorage',
+      description: 'Namespaces every key. Used for per-user isolation on a server.',
+    },
+    'fromSyncStorage(storage)': {
+      type: 'AuthStorage',
+      description: 'Adapts a synchronous getItem/setItem/removeItem object.',
+    },
+  }}
+/>
+
+### Node
+
+```ts
+import { defaultAuthDir, fileStorage, listStoredSessions } from '@ai-oauth-sdk/node'
+```
+
+`fileStorage({ dir })` writes a single JSON document at mode `0600`. `defaultAuthDir()` is
+`~/.ai-oauth-sdk`, or `AI_OAUTH_SDK_HOME` when set.
+
+```ts
+const sessions = await listStoredSessions()
+// [{ provider: 'anthropic', account: 'work', email: '...', expiresAt: ... }]
+```
+
+### Browser
+
+```ts
+import { localStorageAdapter, sessionStorageAdapter } from '@ai-oauth-sdk/browser'
+```
+
+`sessionStorage` is the default in `createBrowserAuthClient`. It survives the redirect round-trip
+but not the tab, which is the safer choice for a bearer token in a page.
+
+### React Native
+
+```ts
+import { asyncStorageAdapter, secureStoreAdapter } from '@ai-oauth-sdk/react-native'
+```
+
+`secureStoreAdapter(SecureStore, options)` is backed by the iOS Keychain and Android
+EncryptedSharedPreferences. It has no `keys()`, because SecureStore cannot enumerate.
+
+## Writing one
+
+Three methods. See [database-backed storage](/recipes/storage) for Redis and SQL versions, and for
+wrapping one in encryption.
+
+```ts
+export function myStorage(): AuthStorage {
+  return {
+    async get(key) {
+      return (await backend.read(key)) ?? null
+    },
+    async set(key, value) {
+      await backend.write(key, value)
+    },
+    async delete(key) {
+      await backend.remove(key)
+    },
+  }
+}
+```
+
+`get` must return `null` rather than `undefined` for a missing key. That is the contract the
+registry checks against.
+
+## Choosing one
+
+| Situation | Adapter |
+| --- | --- |
+| CLI or desktop app | `fileStorage()` |
+| Single-page app | `sessionStorageAdapter()` |
+| Mobile app | `secureStoreAdapter()` |
+| One server process | anything shared, or a file |
+| Serverless, or several instances | Redis, SQL, or another shared store |
+| Tests | `memoryStorage()` |
+
+<Callout type="warn" title="memoryStorage across a request boundary will fail in production">
+  Serverless functions do not share process memory, and neither do two instances behind a load
+  balancer. The pending record written when the flow starts has to be readable when the callback
+  arrives, and in development that is the same process, which is exactly why the bug survives
+  testing.
+</Callout>

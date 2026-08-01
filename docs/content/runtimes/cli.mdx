@@ -1,0 +1,119 @@
+---
+title: Terminal
+description: Sign in from a shell, print a token into a subshell, or run a command with the token in its environment.
+icon: Terminal
+---
+
+```bash
+npm i -g @ai-oauth-sdk/cli
+# or without installing
+npx @ai-oauth-sdk/cli login openai
+```
+
+The CLI is the one place where the library makes the client id decision for you. It is an
+application in its own right, so it opts into the published id for each provider rather than asking
+you to pass one every time.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `login <provider>` | Sign in and store the token |
+| `token <provider>` | Print a valid access token, refreshing first if needed |
+| `whoami <provider>` | Show the signed-in account |
+| `list` | List all stored sessions |
+| `refresh <provider>` | Force a token refresh |
+| `logout <provider>` | Forget the stored token |
+| `providers` | List supported providers |
+| `exec <provider> -- ...` | Run a command with the token in its environment |
+
+Every command takes `--json` for machine-readable output.
+
+## Getting a token into a script
+
+`token` writes the bare token to stdout with nothing around it, so command substitution is safe:
+
+```bash
+curl -H "Authorization: Bearer $(ai-oauth-sdk token openai)" \
+     https://api.openai.com/v1/models
+```
+
+That does put the token in your shell history and, briefly, in the process table. `exec` avoids
+both by passing it in the child's environment instead:
+
+```bash
+ai-oauth-sdk exec openai -- ./deploy.sh
+```
+
+Inside `deploy.sh` the token is `$AI_OAUTH_SDK_TOKEN`. Rename it with `--env-var`:
+
+```bash
+ai-oauth-sdk exec anthropic --env-var ANTHROPIC_TOKEN -- npm test
+```
+
+## Login options
+
+```bash
+ai-oauth-sdk login openai                      # loopback server, opens a browser
+ai-oauth-sdk login github-copilot --device     # device code, no local browser
+ai-oauth-sdk login anthropic --paste           # print the URL, paste the result
+ai-oauth-sdk login openai --port 1455          # bind a specific loopback port
+ai-oauth-sdk login openai --timeout 120        # give up after two minutes
+```
+
+`--paste` is not purely a fallback. When the loopback port is known ahead of time the CLI listens
+on it anyway and races the two, so a user who reaches for `--paste` on their own laptop still gets
+the callback caught locally and never has to copy anything. Whichever finishes first wins.
+
+## Several accounts
+
+```bash
+ai-oauth-sdk login anthropic --account work
+ai-oauth-sdk login anthropic --account personal
+
+ai-oauth-sdk token anthropic --account work
+ai-oauth-sdk list
+```
+
+`--account` namespaces the stored credential. Without it there is one slot per provider.
+
+## Credentials
+
+```bash
+ai-oauth-sdk login google --client-id '<id>.apps.googleusercontent.com' \
+                          --client-secret '<secret>'
+```
+
+Prefer the environment variable for the secret. A flag is visible in `ps` and lands in your shell
+history:
+
+```bash
+AI_OAUTH_SDK_CLIENT_SECRET='<secret>' ai-oauth-sdk login google
+```
+
+The CLI never writes a client secret to the credential file. It is read fresh on each invocation,
+so a value that was briefly visible in `ps` does not become a durable copy on disk.
+
+## Any OAuth 2.0 provider
+
+The built-ins are a convenience, not a limit:
+
+```bash
+ai-oauth-sdk login acme --client-id my-client \
+  --authorize-url https://auth.acme.dev/authorize \
+  --token-url https://auth.acme.dev/token
+```
+
+Add `--device-url` if the provider has a device authorization endpoint.
+
+## Where things live
+
+Tokens go to `~/.ai-oauth-sdk/auth.json`, written with mode `0600`. Move that with `--auth-dir` or
+`AI_OAUTH_SDK_HOME`.
+
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `AI_OAUTH_SDK_HOME` | Credential directory, same as `--auth-dir` |
+| `AI_OAUTH_SDK_CLIENT_SECRET` | Client secret, kept out of `ps` and shell history |

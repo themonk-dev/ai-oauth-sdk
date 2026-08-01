@@ -1,0 +1,86 @@
+---
+title: Google
+description: The flow the Gemini CLI uses. The only built-in that needs a client secret as well as an id.
+icon: Gem
+---
+
+```ts
+import { createNodeAuthClient, publicClientIds, publicClientSecrets } from '@ai-oauth-sdk/node'
+
+const client = createNodeAuthClient({
+  provider: 'google',
+  clientId: publicClientIds.google,
+  clientSecret: publicClientSecrets.google,
+})
+```
+
+| | |
+| --- | --- |
+| Authorization | `https://accounts.google.com/o/oauth2/v2/auth` |
+| Token | `https://oauth2.googleapis.com/token` |
+| Revocation | `https://oauth2.googleapis.com/revoke` |
+| Userinfo | `https://openidconnect.googleapis.com/v1/userinfo` |
+| Redirect | loopback, any port, path `/oauth2callback` |
+| API base | `https://cloudcode-pa.googleapis.com` |
+
+## Why there is a secret
+
+Google's "installed application" clients need both a client id and a client secret. That secret is
+not confidential in the usual sense, and Google's own documentation says installed-app secrets
+cannot be treated as such. PKCE is what actually secures the flow. But their token endpoint rejects
+the exchange without one, so both values are published.
+
+Register a "Desktop app" OAuth client in the Google Cloud console to present as yourself instead.
+
+<Callout title="It matches a secret-scanning pattern">
+  `publicClientSecrets.google` starts with `GOCSPX-`, which is the pattern GitHub scans for. This
+  repository excludes the two files that carry it from its own alerts, but for a public repository a
+  matched pattern can still be forwarded to the issuer, who may rotate it. Nothing breaks
+  structurally if that happens: pass your own with `--client-id` and `--client-secret`, the
+  environment variable, or the SDK options. An `invalid_client` error is the signal.
+</Callout>
+
+## Scopes
+
+```
+https://www.googleapis.com/auth/cloud-platform
+https://www.googleapis.com/auth/userinfo.email
+https://www.googleapis.com/auth/userinfo.profile
+```
+
+`cloud-platform` is broad. It is what the Gemini CLI requests, because the Code Assist API sits
+behind it. Narrow it if your use case allows.
+
+## Two required authorization parameters
+
+The descriptor sends `access_type=offline` and `prompt=consent`. The first is required for Google
+to return a refresh token at all; without it you get an access token that expires in an hour and
+nothing to renew it with. The second forces the consent screen even on a repeat sign-in, which is
+what makes the refresh token come back reliably rather than only on the very first grant.
+
+## No device flow, deliberately
+
+Google's device endpoint exists, but it accepts only clients registered as "TVs and Limited Input
+devices". The published gemini-cli client is a Desktop app and is refused with `Invalid client
+type`. Declaring the endpoint would advertise a flow that cannot work here, so the descriptor does
+not.
+
+On a headless machine, use manual paste with a redirect URI you control, or register your own
+limited-input client and describe it with `defineProvider`.
+
+## Revocation
+
+Google is one of the two built-ins with an RFC 7009 endpoint:
+
+```ts
+await client.logout({ revoke: true })
+```
+
+Revoking the refresh token is what ends the session. Revoking only the access token leaves the
+client able to mint a new one.
+
+## Bringing your own
+
+Google Cloud console, Credentials, OAuth client, then choose **Desktop app**. That client type is
+what accepts loopback redirects on arbitrary ports. Pass the id and secret it gives you, and the
+descriptor is otherwise unchanged.

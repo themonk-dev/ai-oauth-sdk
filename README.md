@@ -12,7 +12,7 @@
 <a href="LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/license/themonk-dev/ai-oauth-sdk.svg?variant=ghost&amp;size=xs&amp;mode=dark"><img alt="License" src="https://www.shieldcn.dev/github/license/themonk-dev/ai-oauth-sdk.svg?variant=ghost&amp;size=xs&amp;mode=light"></picture></a>
 </p>
 
-[Quickstart](#quickstart) · [Providers](#providers) · [Credentials](docs/credentials.md) · [Recipes](docs/recipes.md) · [Security](SECURITY.md) · [Disclaimer](DISCLAIMER.md)
+[Documentation](https://ai-oauth-sdk.pages.dev) · [Quickstart](#quickstart) · [Providers](#providers) · [Credentials](https://ai-oauth-sdk.pages.dev/resources/credentials) · [Recipes](https://ai-oauth-sdk.pages.dev/recipes) · [Security](SECURITY.md) · [Disclaimer](DISCLAIMER.md)
 
 </div>
 
@@ -270,7 +270,7 @@ No race: a result that arrives before anyone waits is buffered, and multiple wai
 one `state` all get served. Pending records persist through your storage adapter, so the
 verifier survives a page navigation or a process restart.
 
-→ [**docs/recipes.md**](docs/recipes.md) has complete callback routes for Hono, Express,
+→ [**Recipes**](https://ai-oauth-sdk.pages.dev/recipes) has complete callback routes for Hono, Express,
 Fastify and Next.js, plus multi-user servers, database-backed storage and Electron.
 
 ---
@@ -324,7 +324,7 @@ because its endpoints are tenant-scoped.
 > the RFCs they implement, so endpoints and client ids can change or stop working at any
 > time. Read the [**disclaimer**](DISCLAIMER.md) before shipping this in a product.
 
-→ [**docs/credentials.md**](docs/credentials.md) for the raw values, how to pass them
+→ [**Credentials**](https://ai-oauth-sdk.pages.dev/resources/credentials) for the raw values, how to pass them
 from the SDK or the CLI, and how to register your own instead.
 
 Any other OAuth 2.0 provider works via `defineProvider()`, or
@@ -378,7 +378,7 @@ them against a real provider.
 <div align="center">
 <br />
 
-**MIT** · [Contributing](CONTRIBUTING.md) · [Recipes](docs/recipes.md) · [Security](SECURITY.md) · [Disclaimer](DISCLAIMER.md)
+**MIT** · [Contributing](CONTRIBUTING.md) · [Recipes](https://ai-oauth-sdk.pages.dev/recipes) · [Security](SECURITY.md) · [Disclaimer](DISCLAIMER.md)
 
 <sub>An independent project. Not affiliated with or endorsed by OpenAI, Anthropic, Google,
 GitHub, Microsoft, xAI, Alibaba or OpenRouter. All trademarks belong to their owners.</sub>

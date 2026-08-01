@@ -1,0 +1,84 @@
+---
+title: OpenAI
+description: The flow the Codex CLI uses. Loopback on port 1455, plus a device flow that is not RFC 8628.
+icon: Sparkles
+---
+
+```ts
+import { createNodeAuthClient, publicClientIds } from '@ai-oauth-sdk/node'
+
+const client = createNodeAuthClient({
+  provider: 'openai',
+  clientId: publicClientIds.openai,
+})
+```
+
+| | |
+| --- | --- |
+| Authorization | `https://auth.openai.com/oauth/authorize` |
+| Token | `https://auth.openai.com/oauth/token` |
+| Redirect | loopback, port `1455` fixed, path `/auth/callback` |
+| Scopes | `openid profile email offline_access` |
+| Userinfo | `https://auth.openai.com/api/accounts/oauth/userinfo` |
+| Device flow | yes, provider-specific |
+
+## The port is fixed
+
+OpenAI registered `http://localhost:1455/auth/callback` and matches it exactly, so an ephemeral
+port will not work. If something else on the machine holds 1455, the login fails at bind time
+rather than silently.
+
+## Three extra authorization parameters
+
+The descriptor sends `id_token_add_organizations=true` and `codex_cli_simplified_flow=true`. The
+first asks for organization claims in the `id_token`, which is where the account id comes from. The
+second selects the shorter CLI consent screen.
+
+## The account id
+
+It lives in the `id_token`, in one of three shapes depending on whether the user is on a personal
+plan or in an organization. `enrichTokens` tries all three and puts the result on
+`tokens.accountId`, alongside `tokens.email`.
+
+## The device flow
+
+OpenAI has one, and it shares nothing with RFC 8628 except the idea. JSON request bodies rather
+than form encoding, HTTP 403 and 404 as the "still pending" signal rather than
+`authorization_pending`, a server-generated PKCE verifier, and a second hop through the ordinary
+token endpoint. None of that is expressible as configuration, so it arrives as a `deviceFlow`
+implementation rather than a `deviceAuthorizationUrl`.
+
+```ts
+const tokens = await client.deviceLogin({
+  onCode: ({ verificationUri, userCode }) => console.log(`${verificationUri} -> ${userCode}`),
+})
+```
+
+<Callout type="warn" title="It has to be switched on first">
+  Turn on "Enable device code authorization for Codex" in ChatGPT under Settings, Security. Without
+  it the verification page refuses the code, and the command keeps polling for an approval that
+  cannot arrive. OpenAI rejects it on the page rather than at the endpoint, so there is nothing this
+  library can detect. The descriptor carries that sentence in `devicePrerequisite`, and the CLI
+  prints it next to the code.
+</Callout>
+
+## What the token is not
+
+<Callout type="warn" title="This is not an API key">
+  OpenAI's authorization server advertises exactly four scopes: `openid`, `profile`, `email` and
+  `offline_access`. A ChatGPT sign-in therefore grants identity and the ChatGPT-subscription
+  surface, not the REST API. `GET /v1/models` answers `403 Missing scopes: api.model.read`, and no
+  scope available here can fix that. Issue an API key for the REST API.
+</Callout>
+
+For the Codex surface, the base URL is `https://chatgpt.com/backend-api/codex` with a
+`chatgpt-account-id` header, and the account id comes from the JWT's `https://api.openai.com/auth`
+claim. The absence of that claim is how you tell an API account from a subscription one, which
+means the correct base URL depends on the credential rather than on the provider.
+
+## Discovery disagrees
+
+OpenAI publishes a discovery document whose endpoints differ from the ones every shipped client
+actually uses. The descriptor carries the working values. If you build one with
+`providerFromDiscovery('https://auth.openai.com', ...)` you will get the documented ones, which is
+worth knowing before you debug why it behaves differently.

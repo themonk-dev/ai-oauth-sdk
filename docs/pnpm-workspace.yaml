@@ -1,0 +1,9 @@
+# Intentionally empty.
+#
+# This file exists so pnpm stops looking upward and treats `docs/` as its own
+# workspace root. Without it, `pnpm install` here would attach to the SDK
+# workspace at the repository root and write Vite, React Router and the whole
+# MDX toolchain into the root `pnpm-lock.yaml` — which is what `pnpm audit`
+# reads. The published packages have zero runtime dependencies, and the CI
+# audit gate is meant to say something about them, not about a docs site.
+packages: []

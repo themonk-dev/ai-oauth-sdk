@@ -1,0 +1,6 @@
+{
+  "title": "Frameworks",
+  "description": "One observable store, four idiomatic bindings",
+  "icon": "Blocks",
+  "pages": ["index", "react", "vue", "svelte", "solid"]
+}

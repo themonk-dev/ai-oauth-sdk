@@ -1,0 +1,99 @@
+---
+title: Overview
+description: Eight built-in descriptors, what each one supports, and the rule about client ids.
+icon: KeyRound
+---
+
+A provider is a descriptor: endpoints, scopes, how the redirect works, how the token request is
+shaped, and a handful of hooks for the ones that leave the spec. Nothing about it is special-cased
+in the flow code.
+
+## You name the client id
+
+No built-in provider ships with one. You pass it at initialization, the way you pass a strategy to
+Passport.
+
+```ts
+createAuthClient({ provider: 'openai', clientId: publicClientIds.openai }) // that vendor's CLI
+createAuthClient({ provider: 'openai', clientId: 'my-registered-client' }) // or your own
+```
+
+Constructing a client without one throws `configuration_error` with a message naming the option you
+are missing.
+
+<Callout type="warn" title="publicClientIds are public, and using one is a choice">
+  These values are not secrets. They are public PKCE-only clients the vendors ship inside their own
+  binaries, and PKCE is what actually protects the flow. But using one means your application
+  presents itself to the provider as that CLI, which is why it is an explicit argument rather than a
+  default. Check the provider's terms before shipping it in a product, and read the
+  [disclaimer](/resources/disclaimer).
+</Callout>
+
+## The built-ins
+
+| Provider | Flow | Client id | Status |
+| --- | --- | --- | --- |
+| [`openai`](/providers/openai) | loopback `:1455`, device | `publicClientIds.openai` | stable |
+| [`anthropic`](/providers/anthropic) | loopback any port, hosted paste | `publicClientIds.anthropic` | stable |
+| [`google`](/providers/google) | loopback any port | id and secret | stable |
+| [`github-copilot`](/providers/github-copilot) | device only | `publicClientIds['github-copilot']` | stable |
+| [`openrouter`](/providers/openrouter) | loopback any port | none, identified by callback URL | stable |
+| [`xai`](/providers/xai) | loopback `:56121`, device | `publicClientIds.xai` | experimental |
+| [`qwen`](/providers/qwen) | device only | `publicClientIds.qwen` | experimental |
+| [`microsoft`](/providers/microsoft) | loopback any port | yours | stable |
+
+`microsoft` is a factory rather than a constant, because its endpoints are tenant-scoped and every
+Entra app registration is its own client.
+
+Raw credential values are on the [credentials](/resources/credentials) page.
+
+## Capabilities
+
+| | PKCE | Device flow | Revocation | Userinfo | Echoes `state` |
+| --- | --- | --- | --- | --- | --- |
+| `openai` | yes | yes, not RFC 8628 | no | yes | yes |
+| `anthropic` | yes | no | no | no | yes |
+| `google` | yes | no | yes | yes | yes |
+| `github-copilot` | no | yes | no | no | not applicable |
+| `openrouter` | yes | no | no | no | **no** |
+| `xai` | yes | yes | yes | yes | yes |
+| `qwen` | yes | yes | no | no | not applicable |
+
+GitHub's device flow does not use PKCE, which is why that row says no. OpenRouter's `no` in the
+last column has real consequences: see [OpenRouter](/providers/openrouter).
+
+## Anything else
+
+```ts
+import { defineProvider, providerFromDiscovery } from '@ai-oauth-sdk/core'
+```
+
+`defineProvider` describes a provider by hand. `providerFromDiscovery` builds one from an OIDC
+discovery document at runtime, so an endpoint move needs no release on your side. Both are covered
+in [custom providers](/providers/custom).
+
+The CLI takes the same escape hatch:
+
+```bash
+ai-oauth-sdk login acme --client-id my-client \
+  --authorize-url https://auth.acme.dev/authorize \
+  --token-url https://auth.acme.dev/token
+```
+
+## Overriding a built-in
+
+Anything on the descriptor can be replaced per client, which is the fix when a vendor moves an
+endpoint before this package catches up:
+
+```ts
+import { openai, resolveProvider } from '@ai-oauth-sdk/core'
+
+createAuthClient({
+  provider: resolveProvider(openai, {
+    tokenUrl: 'https://auth.openai.com/oauth/token/v2',
+  }),
+  clientId,
+})
+```
+
+`scopes`, `redirect` and `extraAuthParams` merge; everything else replaces.

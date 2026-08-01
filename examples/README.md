@@ -67,5 +67,5 @@ at any time:
 node examples/cli-login/index.js login google --client-id=YOUR_ID --client-secret=YOUR_SECRET
 ```
 
-→ [**docs/credentials.md**](../docs/credentials.md) for every value and how to
+→ [**Credentials**](https://ai-oauth-sdk.pages.dev/resources/credentials) for every value and how to
 pass it.

@@ -1,0 +1,93 @@
+---
+title: Overview
+description: What the library does, where the provider differences live, and what it deliberately leaves alone.
+icon: Compass
+---
+
+Nominally this is standard OAuth 2.0 with PKCE. In practice every provider bends it somewhere, and
+encoding those bends is most of the work.
+
+## The scope
+
+The library does three things:
+
+1. Builds an authorization URL and sends the user to it.
+2. Receives the callback, however the runtime can receive one.
+3. Exchanges the code for a token, stores it, and refreshes it before it expires.
+
+It is not an API client. There is no chat wrapper, no proxy, no model catalogue. What you get back
+is a `TokenSet`, and what you do with it is your business. The [Using the token](/recipes/ai-sdk)
+page covers the part where you hand it to an SDK.
+
+## Where providers disagree
+
+|                    | ChatGPT           | Claude                      | Gemini             | Copilot          | OpenRouter |
+| ------------------ | ----------------- | --------------------------- | ------------------ | ---------------- | ---------- |
+| Callback           | loopback `:1455`  | hosted, paste `code#state`  | loopback, any port | none, device code | loopback   |
+| Token request body | form              | form (JSON times out)       | form plus secret   | form             | JSON       |
+| Returns            | `access_token`    | `access_token`              | `access_token`     | `access_token`   | `key`      |
+| Echoes `state`     | yes               | yes                         | yes                | not applicable   | no         |
+
+Each of those is a field on a provider descriptor rather than a branch in the flow code. The two
+providers that leave the spec entirely get an escape hatch instead: `buildAuthParams` rewrites the
+authorization query, and `parseTokenResponse` normalises a non-standard token body.
+
+## The shape
+
+```
+                  ┌──────────────┐
+   provider  ───▶ │  AuthClient  │ ◀───  storage
+   descriptor     └──────┬───────┘
+                         │
+                    receiver
+                         │
+              ┌──────────┴──────────┐
+        loopback server        popup / redirect
+        device code            deep link / paste
+```
+
+`AuthClient` owns the state machine: it mints `state` and a PKCE pair, persists both, exchanges the
+code, and manages the token afterwards. A `CallbackReceiver` is the seam that lets one core serve a
+CLI, a single-page app, a mobile app and a headless box without any of them knowing about the
+others. `AuthStorage` is where both the pending flow and the resulting token live.
+
+Everything else in the package list is an adapter that supplies a receiver, a storage backend, or a
+binding for a UI framework.
+
+## Three levels of control
+
+You can pick how much of the flow to own.
+
+```ts
+// 1. All of it. You open the browser and route the callback yourself.
+const { url, state } = await client.createAuthorization()
+const tokens = await client.completeAuthorization({ callbackUrl })
+
+// 2. Start anywhere, await anywhere, correlated by state.
+const tokens = await client.waitForAuthorization(state, { timeoutMs: 120_000 })
+
+// 3. None of it. Hand it a receiver and it runs the whole thing.
+const tokens = await client.login({ receiver: loopbackReceiver() })
+```
+
+Level 3 is what a CLI wants. Level 1 is what a web server wants, because the request that starts the
+flow is not the request that finishes it. Level 2 is the bridge between them, and it is covered in
+[the state handoff](/flows/state-handoff).
+
+## Zero dependencies, on purpose
+
+`@ai-oauth-sdk/core` has no runtime dependencies. That is not a boast about bundle size, it is about
+what a package handling bearer tokens is allowed to pull into your process. Everything the flow
+needs is either in the platform (`fetch`, `crypto.subtle`) or written here, including a pure
+JavaScript SHA-256 fallback for runtimes that lack WebCrypto.
+
+Randomness is the one thing that never degrades. With no CSPRNG available the library throws rather
+than quietly reaching for `Math.random()` to generate your `state`.
+
+## What is not here
+
+- **No token proxy.** The token goes from the provider to your process and nowhere else.
+- **No account model.** `accountKey` namespaces credentials; it is a string, not a user table.
+- **No refresh daemon.** Refresh happens when you ask for a token, not on a timer.
+- **No provider API surface.** `apiBaseUrl` and `apiHeaders` exist so `createAuthenticatedFetch`
+  can be useful, and that is the whole of it.

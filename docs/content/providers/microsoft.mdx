@@ -1,0 +1,117 @@
+---
+title: Microsoft Entra ID
+description: For Azure OpenAI. A factory rather than a constant, because the endpoints are tenant-scoped.
+icon: Building2
+---
+
+```ts
+import { createAuthClient, microsoft } from '@ai-oauth-sdk/core'
+
+const provider = microsoft({
+  clientId: 'your-app-registration-id',
+  tenant: 'contoso.onmicrosoft.com',
+})
+
+const client = createAuthClient({ provider })
+```
+
+Every other built-in is a constant. This one is a function, because the endpoints contain the tenant
+and there is no public client id to ship. Every Azure app registration is its own client.
+
+## Options
+
+<TypeTable
+  type={{
+    clientId: {
+      type: 'string',
+      description: 'Your registered application (client) id.',
+      required: true,
+    },
+    tenant: {
+      type: 'string',
+      description:
+        'A tenant GUID, a domain, or one of the multi-tenant aliases (common, organizations, consumers).',
+      default: 'common',
+    },
+    scopes: {
+      type: 'string[]',
+      description: 'Replaces the default scope set.',
+      default: "Azure OpenAI's .default scope plus offline_access, openid, profile",
+    },
+    loopbackPort: {
+      type: 'number',
+      description: 'Loopback port. 0 picks a free one, which Entra accepts.',
+      default: '0',
+    },
+  }}
+/>
+
+## What it builds
+
+For tenant `T`, the endpoints are all under
+`https://login.microsoftonline.com/T/oauth2/v2.0`:
+
+| | |
+| --- | --- |
+| Authorization | `/authorize` |
+| Token | `/token` |
+| Device | `/devicecode` |
+| Logout | `/logout` |
+| Userinfo | `https://graph.microsoft.com/oidc/userinfo` |
+
+Default scopes are `https://cognitiveservices.azure.com/.default`, `offline_access`, `openid` and
+`profile`. The first is what grants Azure OpenAI access; the `.default` suffix tells Entra to issue
+whatever the app registration has been consented for, rather than asking per-scope.
+
+## Registering the app
+
+In Entra ID, App registrations, new registration. Then:
+
+1. Under **Authentication**, add a **Mobile and desktop applications** platform and a redirect URI of
+   `http://localhost`. Entra ignores the port for loopback URIs, which is why `loopbackPort: 0`
+   works.
+2. Set **Allow public client flows** to yes. That is what lets PKCE work without a client secret.
+3. Under **API permissions**, add the Azure OpenAI (Cognitive Services) delegated permission your
+   app needs and grant consent.
+
+Do not add a client secret. A public client with PKCE is the correct shape for a desktop or CLI
+application, and a secret shipped in one is not a secret.
+
+## Device flow
+
+Entra's device grant is ordinary RFC 8628, so it works with no extra configuration:
+
+```ts
+const tokens = await client.deviceLogin({
+  onCode: ({ verificationUri, userCode }) =>
+    console.log(`Open ${verificationUri} and enter ${userCode}`),
+})
+```
+
+Note that conditional access policies can block the device flow at the tenant level, in which case
+the approval page refuses rather than the endpoint. That looks like a login that never completes.
+
+## Multi-tenant
+
+`tenant: 'common'` accepts both work and personal Microsoft accounts. `organizations` restricts to
+work accounts, `consumers` to personal ones. A specific GUID or domain restricts to that directory,
+which is usually what you want for an internal tool.
+
+## Calling Azure OpenAI
+
+The base URL is your own resource, so set it yourself rather than relying on the descriptor:
+
+```ts
+const api = createAuthenticatedFetch(client, {
+  baseUrl: 'https://my-resource.openai.azure.com/openai',
+})
+
+const response = await api('/deployments/gpt-5/chat/completions?api-version=2024-10-21', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+})
+```
+
+Azure OpenAI accepts the bearer token in place of the `api-key` header when the resource is
+configured for Entra authentication.

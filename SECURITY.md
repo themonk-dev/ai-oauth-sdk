@@ -95,7 +95,7 @@ public, PKCE-protected values published by those vendors' own CLIs. They are not
 secrets. One client *secret* is embedded: Google's, because its token endpoint refuses
 an installed-app exchange without one and Google documents those secrets as
 non-confidential. Everything is overridable — see
-[docs/credentials.md](docs/credentials.md).
+[the credentials page](https://ai-oauth-sdk.pages.dev/resources/credentials).
 
 Using a vendor's CLI client id means presenting yourself as that CLI. Review the
 provider's terms before shipping it in a product — and see [DISCLAIMER.md](DISCLAIMER.md),

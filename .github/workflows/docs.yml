@@ -1,0 +1,44 @@
+name: Docs
+
+# The documentation site is a separate project with its own lockfile, outside
+# the pnpm workspace, so it gets its own workflow rather than a job in the
+# package gate. Nothing here touches `packages/`, and the package gate never
+# installs Vite.
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', '.github/workflows/docs.yml']
+  pull_request:
+    paths: ['docs/**', '.github/workflows/docs.yml']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: docs
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit, not a tag, for the same reason as the package
+      # workflows: a tag is a mutable pointer its owner can move.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: docs/.nvmrc
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - run: pnpm typecheck
+      - run: pnpm build
