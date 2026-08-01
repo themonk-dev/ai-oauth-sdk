@@ -1,6 +1,6 @@
 {
   "title": "Recipes",
   "description": "Complete patterns for wiring the SDK into a real application",
-  "icon": "ChefHat",
+  "icon": "RiRestaurant2Line",
   "pages": ["index", "server-callback", "multi-user", "storage", "ai-sdk", "electron", "testing"]
 }

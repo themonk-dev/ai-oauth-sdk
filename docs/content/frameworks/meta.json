@@ -1,6 +1,6 @@
 {
   "title": "Frameworks",
   "description": "One observable store, four idiomatic bindings",
-  "icon": "Blocks",
+  "icon": "RiLayoutGridLine",
   "pages": ["index", "react", "vue", "svelte", "solid"]
 }

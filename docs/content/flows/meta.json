@@ -1,7 +1,7 @@
 {
   "title": "Flows",
   "description": "Every way the authorization code gets back to you",
-  "icon": "Waypoints",
+  "icon": "RiNodeTree",
   "pages": [
     "index",
     "loopback",

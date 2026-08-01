@@ -16,15 +16,15 @@
     "typecheck": "react-router typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@remixicon/react": "^4.9.0",
     "cnfast": "^0.1.0",
     "fumadocs-core": "^16.14.0",
     "fumadocs-mdx": "^15.2.1",
     "fumadocs-ui": "^16.14.0",
-    "lucide-react": "^1.28.0",
+    "isbot": "^5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router": "^8.3.0",
-    "isbot": "^5"
+    "react-router": "^8.3.0"
   },
   "devDependencies": {
     "@react-router/dev": "^8.3.0",

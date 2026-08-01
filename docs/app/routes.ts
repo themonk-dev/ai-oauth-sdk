@@ -7,8 +7,8 @@ export default [
   route('llms-full.txt', 'llms/full.ts'),
   route('llms.mdx/*', 'llms/mdx.ts'),
 
-  // Docs are served from the root. The splat matches everything below `/`, and
-  // the index route covers `/` itself, which the splat does not see.
+  // The splat matches everything below `/`; React Router matches an empty
+  // remainder against the root layout, so `/` needs its own route.
   index('routes/index.tsx'),
   route('*', 'routes/docs.tsx'),
 ] satisfies RouteConfig

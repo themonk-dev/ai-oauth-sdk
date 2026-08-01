@@ -1,9 +1,5 @@
 export type LogoProps = React.SVGAttributes<SVGElement>
 
-/**
- * A keyhole inside a rounded square. Drawn in `currentColor` so it inherits
- * whatever the nav or the footer is using, in either theme.
- */
 export const Logo = (props: LogoProps) => (
   <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
     <rect

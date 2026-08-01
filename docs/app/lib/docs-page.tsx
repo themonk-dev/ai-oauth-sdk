@@ -18,7 +18,7 @@ import { docs, getPageMarkdownUrl, source } from './source'
 
 /**
  * Two routes render a documentation page: an index route for `/`, and a splat
- * for everything below it. React Router matches the empty remainder against the
+ * for everything below it. React Router matches an empty remainder against the
  * root layout rather than the splat, so one route cannot serve both.
  */
 export async function loadDocsPage(slugs: string[]) {
@@ -79,6 +79,7 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
     <DocsPage toc={toc} tableOfContent={{ style: 'clerk' }}>
       <DocsTitle>{page.title}</DocsTitle>
       <DocsDescription>{page.description}</DocsDescription>
+
       <nav
         aria-label="Page actions"
         className="-mt-4 flex flex-row items-center gap-2 border-b pb-6"
@@ -89,6 +90,7 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
           githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/${path}`}
         />
       </nav>
+
       <DocsBody>
         <Mdx components={useMDXComponents()} />
       </DocsBody>

@@ -9,9 +9,6 @@ import { RuntimeCards } from './runtime-cards'
 
 import type { MDXComponents } from 'mdx/types'
 
-/**
- * Registered globally so pages do not each repeat the same import block.
- */
 export function getMDXComponents(components?: MDXComponents) {
   return {
     ...defaultMdxComponents,

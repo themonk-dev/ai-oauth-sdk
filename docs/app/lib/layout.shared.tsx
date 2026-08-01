@@ -1,4 +1,4 @@
-import { Package } from 'lucide-react'
+import { RiNpmjsLine } from '@remixicon/react'
 
 import { Logo } from '@/components/logo'
 import { appName, githubUrl } from './shared'
@@ -22,7 +22,7 @@ export function baseOptions(): BaseLayoutProps {
     githubUrl,
     links: [
       {
-        icon: <Package />,
+        icon: <RiNpmjsLine />,
         text: 'npm',
         url: 'https://www.npmjs.com/package/ai-oauth-sdk',
         active: 'none',

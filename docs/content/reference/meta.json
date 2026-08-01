@@ -1,6 +1,6 @@
 {
   "title": "Reference",
   "description": "Every public API, grouped by what it does",
-  "icon": "BookMarked",
+  "icon": "RiBook2Line",
   "pages": ["auth-client", "tokens", "receivers", "storage", "errors", "packages"]
 }

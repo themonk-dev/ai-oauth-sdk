@@ -2,6 +2,8 @@
 
 Vue 3 composable for [`ai-oauth-sdk`](https://github.com/themonk-dev/ai-oauth-sdk).
 
+**[Documentation](https://ai-oauth-sdk.pages.dev/frameworks/vue)**
+
 ```bash
 npm i @ai-oauth-sdk/vue @ai-oauth-sdk/browser
 ```
@@ -50,4 +52,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. These OAuth flows are not officially supported by any provider and may
 change without notice — see the
-[disclaimer](https://github.com/themonk-dev/ai-oauth-sdk/blob/main/DISCLAIMER.md).</sub>
+[disclaimer](https://ai-oauth-sdk.pages.dev/resources/disclaimer).</sub>
