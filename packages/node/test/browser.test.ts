@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { spawn } from 'node:child_process'
 
-import { escapeForCmd } from '../src/browser.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { canOpenBrowser, escapeForCmd, openBrowser } from '../src/browser.js'
+
+vi.mock('node:child_process', () => ({
+  spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
+}))
 
 /**
  * Windows is the only platform where the URL passes through a shell parser.
@@ -44,5 +50,58 @@ describe('escapeForCmd', () => {
   it('leaves an ordinary URL untouched', () => {
     const plain = 'https://provider.test/authorize'
     expect(escapeForCmd(plain)).toBe(plain)
+  })
+})
+
+/**
+ * The suite sets `AI_OAUTH_SDK_NO_BROWSER`, so these restore whatever was there
+ * rather than assuming it was unset.
+ */
+describe('AI_OAUTH_SDK_NO_BROWSER', () => {
+  const original = process.env['AI_OAUTH_SDK_NO_BROWSER']
+
+  beforeEach(() => {
+    vi.mocked(spawn).mockClear()
+  })
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env['AI_OAUTH_SDK_NO_BROWSER']
+    } else {
+      process.env['AI_OAUTH_SDK_NO_BROWSER'] = original
+    }
+  })
+
+  it('spawns nothing when set', () => {
+    process.env['AI_OAUTH_SDK_NO_BROWSER'] = '1'
+
+    openBrowser('https://provider.test/authorize')
+
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('reports no browser when set, whatever the platform', () => {
+    process.env['AI_OAUTH_SDK_NO_BROWSER'] = '1'
+
+    expect(canOpenBrowser()).toBe(false)
+  })
+
+  it('still launches when unset', () => {
+    delete process.env['AI_OAUTH_SDK_NO_BROWSER']
+
+    openBrowser('https://provider.test/authorize')
+
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the platform check alone when unset', () => {
+    delete process.env['AI_OAUTH_SDK_NO_BROWSER']
+
+    const expected =
+      process.platform === 'darwin' ||
+      process.platform === 'win32' ||
+      Boolean(process.env['DISPLAY'] ?? process.env['WAYLAND_DISPLAY'])
+
+    expect(canOpenBrowser()).toBe(expected)
   })
 })
