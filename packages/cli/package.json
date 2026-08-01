@@ -1,6 +1,6 @@
 {
   "name": "@ai-oauth-sdk/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Command-line tool to sign in to AI providers (ChatGPT, Claude, Gemini, Grok, Copilot) and print tokens for scripts.",
   "keywords": [
     "oauth",
