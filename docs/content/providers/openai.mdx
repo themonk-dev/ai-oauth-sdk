@@ -68,14 +68,65 @@ const tokens = await client.deviceLogin({
 <Callout type="warn" title="This is not an API key">
   OpenAI's authorization server advertises exactly four scopes: `openid`, `profile`, `email` and
   `offline_access`. A ChatGPT sign-in therefore grants identity and the ChatGPT-subscription
-  surface, not the REST API. `GET /v1/models` answers `403 Missing scopes: api.model.read`, and no
-  scope available here can fix that. Issue an API key for the REST API.
+  surface, not the REST API. `api.openai.com/v1/models` answers `403 Missing scopes:
+  api.model.read`, and no scope available here can fix that. Issue an API key for the REST API.
 </Callout>
 
-For the Codex surface, the base URL is `https://chatgpt.com/backend-api/codex` with a
-`chatgpt-account-id` header, and the account id comes from the JWT's `https://api.openai.com/auth`
-claim. The absence of that claim is how you tell an API account from a subscription one, which
-means the correct base URL depends on the credential rather than on the provider.
+## What it is
+
+The token does drive a model. Not at `api.openai.com`, but at
+`https://chatgpt.com/backend-api/codex`, which is where the Codex CLI sends its requests. That is
+what `apiBaseUrl` points at, so `createAuthenticatedFetch` reaches it without configuration.
+
+```ts
+import { createAuthenticatedFetch, fetchCodexModels } from '@ai-oauth-sdk/core'
+
+const models = await fetchCodexModels(client)
+const api = createAuthenticatedFetch(client)
+
+const response = await api('/responses', {
+  method: 'POST',
+  body: JSON.stringify({ model: models[0], input: 'hi' }),
+})
+```
+
+`fetchCodexModels` is worth calling rather than hardcoding a slug: the set depends on the user's
+plan, and the backend filters it by the `client_version` the descriptor sends, so two accounts on
+the same library version can see different models.
+
+### What the descriptor sends for you
+
+| Piece | Value | Why |
+| --- | --- | --- |
+| `chatgpt-account-id` | from the `id_token` | Names the account the request is billed against |
+| `OpenAI-Beta` | `responses=experimental` | The backend refuses the request without it |
+| `originator` | `codex_cli_rs` | Identifies the caller |
+| `client_version` | a Codex release number | Gates the model list. Omit it and every model reports as unsupported |
+| body rewrite | see below | The endpoint accepts a standard body, then behaves incorrectly |
+
+The body rewrite is the part worth knowing about. The Codex backend runs stateless, so a
+`/responses` call has to set `store: false`, configure `reasoning`, ask for
+`reasoning.encrypted_content` in `include`, carry no server-side ids on its input items, and send
+no `max_output_tokens`. Miss any of it and the call returns **200 with an empty stream** rather
+than an error. `normalizeCodexResponsesBody` fills those gaps, and the provider applies it through
+`transformRequestBody`. Anything you set explicitly is kept.
+
+Only `/responses` exists on this surface. There is no `/chat/completions`.
+
+<Callout type="warn" title="Speech to speech is not reachable from here">
+  ChatGPT's voice transport wants a token minted for the ChatGPT *web* client, which comes from a
+  browser session cookie rather than from an OAuth grant. No scope or header available here opens
+  it. Use an API key and OpenAI's documented `/v1/realtime/calls` interface for that.
+</Callout>
+
+### For an API-key account
+
+The absence of the `https://api.openai.com/auth` claim is how you tell an API account from a
+subscription one. Those want the REST API, so override the base URL per call:
+
+```ts
+const api = createAuthenticatedFetch(client, { baseUrl: 'https://api.openai.com/v1' })
+```
 
 ## Discovery disagrees
 
