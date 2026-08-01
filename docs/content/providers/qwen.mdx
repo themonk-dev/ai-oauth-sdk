@@ -1,0 +1,60 @@
+---
+title: Qwen
+description: Device flow only, as used by qwen-code. The free tier was discontinued in April 2026.
+icon: RiQwenAiFill
+---
+
+<Callout type="warn" title="Experimental, and the free tier is gone">
+  Alibaba discontinued the free Qwen OAuth tier in April 2026. Existing credentials keep working,
+  but new sign-ups may be refused. That surfaces as a `device_flow_failed` error rather than
+  anything this library can fix.
+</Callout>
+
+```ts
+import { createNodeAuthClient, publicClientIds } from '@ai-oauth-sdk/node'
+
+const client = createNodeAuthClient({
+  provider: 'qwen',
+  clientId: publicClientIds.qwen,
+})
+
+const tokens = await client.deviceLogin({
+  onCode: ({ verificationUri, userCode }) =>
+    console.log(`Open ${verificationUri} and enter ${userCode}`),
+})
+```
+
+| Setting | Value |
+| --- | --- |
+| Device | `https://chat.qwen.ai/api/v1/oauth2/device/code` |
+| Token | `https://chat.qwen.ai/api/v1/oauth2/token` |
+| Scopes | `openid`, `profile`, `email`, `model.completion` |
+| API base | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+
+## Device only
+
+The authorization endpoint is not registered for third-party redirects, so the code flow is not
+available. `redirect: { mode: 'custom' }` on the descriptor reflects that there is no redirect this
+library can construct for you.
+
+## The API is OpenAI-compatible
+
+DashScope's compatible-mode endpoint takes the usual chat-completions shape, so the token drops into
+an OpenAI client:
+
+```ts
+import OpenAI from 'openai'
+import { createAuthenticatedFetch } from '@ai-oauth-sdk/core'
+
+const qwen = new OpenAI({
+  apiKey: 'unused',
+  baseURL: client.provider.apiBaseUrl,
+  fetch: createAuthenticatedFetch(client),
+})
+```
+
+## If the login fails
+
+A refused sign-up looks the same as any other unapproved device grant: the poll runs until the code
+expires and then raises `device_flow_failed`. Check whether the account has an active Qwen
+subscription before assuming the flow is broken.

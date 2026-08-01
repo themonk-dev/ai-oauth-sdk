@@ -1,0 +1,111 @@
+---
+title: Popup and redirect
+description: The two ways a browser can get an authorization code back, and when each one is the right call.
+icon: RiWindow2Line
+---
+
+A page cannot bind a port, so the callback has to arrive through the browser. There are exactly two
+mechanisms, and neither dominates the other.
+
+## Popup
+
+A second window does the consent, posts the code back to the opener, and closes. The host page
+never navigates, so nothing in memory is lost.
+
+```ts
+import { loginWithPopup } from '@ai-oauth-sdk/browser'
+
+button.onclick = () => loginWithPopup('openai', { clientId, redirectUri })
+```
+
+Two constraints come with it.
+
+**It must originate from a user gesture.** Calling `loginWithPopup` from an effect, a timer, or
+after an `await` that yielded to the event loop will get the window blocked. Call it directly in
+the click handler.
+
+**Your redirect page has to post the result back.** Give the provider a URL on your own origin
+whose only job is:
+
+```html
+<script type="module">
+  import { postCallbackToOpener } from 'https://esm.sh/@ai-oauth-sdk/browser'
+  postCallbackToOpener()
+</script>
+```
+
+By the time that page runs, the popup is same-origin with the opener, so `postMessage` is available
+and the receiver ignores messages from anywhere else.
+
+A closed popup is the only signal the browser gives that the user gave up, so the receiver polls
+for it every 400ms by default and rejects when it disappears.
+
+## Full-page redirect
+
+The page navigates to the provider and the provider navigates back. Nothing in memory survives, so
+the flow spans two page loads and is completed on the second one.
+
+```ts
+import {
+  createBrowserAuthClient,
+  handleRedirectCallback,
+  startRedirectLogin,
+} from '@ai-oauth-sdk/browser'
+
+const client = createBrowserAuthClient({ provider: 'openai', clientId })
+
+const tokens = await handleRedirectCallback(client) // null when not a callback
+button.onclick = () => startRedirectLogin(client)
+```
+
+The PKCE verifier and the pending record live in `sessionStorage` between the two loads, which is
+why `createBrowserAuthClient` defaults to that adapter. Swap in `memoryStorage()` and the flow
+cannot complete, because the verifier is gone by the time the code comes back.
+
+`handleRedirectCallback` returns `null` when the current URL carries no callback, so calling it
+unconditionally during startup is the intended usage. It strips `code` and `state` from the address
+bar afterwards, which keeps them out of the history entry and out of any analytics that reads
+`location.href`.
+
+## Choosing
+
+| Behaviour | Popup | Redirect |
+| --- | --- | --- |
+| Host page state | preserved | lost |
+| Needs a user gesture | yes | no |
+| Popup blockers | can block it | unaffected |
+| Embedded webviews | often unavailable | works |
+| Second page needed | yes | no |
+| Address bar shows the provider | no | yes |
+
+Popup for a normal web app. Redirect for anything that might run inside a webview, an in-app
+browser, or a strict enterprise browser policy. Nothing stops you from offering the popup and
+falling back to the redirect when the window fails to open.
+
+## Both flows, one client
+
+```ts
+const client = createBrowserAuthClient({ provider: 'openai', clientId })
+
+async function signIn() {
+  try {
+    return await client.login({ receiver: popupReceiver({ redirectUri }) })
+  } catch (error) {
+    if (isOAuthError(error) && error.code === 'unsupported_runtime') {
+      return startRedirectLogin(client)
+    }
+
+    throw error
+  }
+}
+```
+
+## The token exchange happens in the page
+
+That is worth saying plainly. In a browser flow, the request to the provider's token endpoint comes
+from your page, which means the provider has to send CORS headers your origin can use. Providers
+built for desktop CLIs do not always do that, and no client library can add them.
+
+If the exchange fails with a CORS error, the fix is to move that half to your own server. See
+[callback routes](/docs/recipes/server-callback), where the browser only ever
+carries the code and your backend does the exchange.

@@ -3,6 +3,8 @@
 Sign in to an AI provider from the terminal and get a token you can pipe into
 anything.
 
+**[Documentation](https://ai-oauth-sdk.themonk.dev/docs/runtimes/cli)**
+
 ```bash
 npx @ai-oauth-sdk/cli login openai
 
@@ -105,4 +107,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. These OAuth flows are not officially supported by any provider and may
 change without notice — see the
-[disclaimer](https://github.com/themonk-dev/ai-oauth-sdk/blob/main/DISCLAIMER.md).</sub>
+[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>

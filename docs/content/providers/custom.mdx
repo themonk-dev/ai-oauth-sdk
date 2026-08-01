@@ -1,0 +1,190 @@
+---
+title: Custom providers
+description: Describe any OAuth 2.0 provider with defineProvider, or build one from an OIDC discovery document.
+icon: RiPuzzle2Line
+---
+
+The built-ins are a convenience. The flow code has no idea which provider it is running, so
+anything that speaks OAuth 2.0 works.
+
+## defineProvider
+
+```ts
+import { createAuthClient, defineProvider } from '@ai-oauth-sdk/core'
+
+const acme = defineProvider({
+  id: 'acme',
+  label: 'Acme AI',
+  clientId: 'my-client-id',
+  authorizationUrl: 'https://auth.acme.dev/authorize',
+  tokenUrl: 'https://auth.acme.dev/token',
+  scopes: ['openid', 'inference'],
+  redirect: { mode: 'loopback', loopbackPort: 0 },
+})
+
+const client = createAuthClient({ provider: acme })
+```
+
+`defineProvider` fills in what almost every provider shares: PKCE on, `S256`, a form-encoded token
+request with the client id in the body, `/callback` as the loopback path, and `localhost` as the
+loopback host. State only what makes yours different.
+
+## From an OIDC discovery document
+
+```ts
+import { providerFromDiscovery } from '@ai-oauth-sdk/core'
+
+const acme = await providerFromDiscovery('https://auth.acme.dev', {
+  id: 'acme',
+  label: 'Acme AI',
+  clientId: 'my-client-id',
+  redirect: { mode: 'loopback', loopbackPort: 0 },
+})
+```
+
+Pass the issuer URL, not the `.well-known` path. It fetches
+`/.well-known/openid-configuration` and takes `authorization_endpoint`, `token_endpoint`,
+`device_authorization_endpoint` and `scopes_supported` from it.
+
+This is the more durable option for anything long-lived, because an endpoint move needs no release
+on your side. Anything you pass explicitly still wins over the document.
+
+## The escape hatches
+
+Three fields exist for providers that leave the spec. Between them they are enough to keep even
+OpenRouter working without a special case in the flow code.
+
+| Hook | Type | Description |
+| --- | --- | --- |
+| `buildAuthParams` | `(params: Record<string, string>) => Record<string, string>` | Last chance to rewrite the authorization query. Receives the conventional params and returns the final set. |
+| `parseTokenResponse` | `(raw: Record<string, unknown>) => Record<string, unknown>` | Normalises a non-standard token body into the conventional shape: access_token, refresh_token, expires_in. |
+| `parseCallback` | `(input: string) => CallbackParseResult` | Parses whatever the user pastes or whatever lands on the redirect. Defaults to URL and query parsing. |
+
+A provider that names its redirect parameter something else and returns its token under a different
+key:
+
+```ts
+const odd = defineProvider({
+  id: 'odd',
+  label: 'Odd',
+  authorizationUrl: 'https://odd.example/auth',
+  tokenUrl: 'https://odd.example/keys',
+  scopes: [],
+  redirect: { mode: 'loopback', loopbackPort: 0 },
+  requiresClientId: false,
+  echoesState: false,
+  tokenRequest: { style: 'json', includeClientIdInBody: false },
+  buildAuthParams: (params) => ({ callback_url: params.redirect_uri ?? '' }),
+  parseTokenResponse: (raw) =>
+    typeof raw.key === 'string' ? { ...raw, access_token: raw.key, token_type: 'Bearer' } : raw,
+})
+```
+
+That is, more or less, the OpenRouter descriptor.
+
+## Enrichment and API headers
+
+Two more hooks, both optional and both about what happens after the token arrives.
+
+```ts
+defineProvider({
+  // ...
+  enrichTokens(raw, tokens) {
+    const payload = decodeJwtPayload(tokens.idToken)
+
+    return { accountId: getStringClaim(payload, 'sub'), email: getStringClaim(payload, 'email') }
+  },
+  apiHeaders: (tokens) => ({ 'x-account-id': tokens.accountId ?? '' }),
+})
+```
+
+`enrichTokens` derives `accountId` and `email` so `whoami` has something to print.
+`apiHeaders` is what `createAuthenticatedFetch` attaches to every request, which is how Anthropic's
+beta flag and OpenAI's account header get sent without you doing anything.
+
+## When the token is not enough
+
+Three more hooks, for APIs that want something beyond a bearer. All optional, all applied by
+`createAuthenticatedFetch`, and all there because a real provider needed them.
+
+```ts
+defineProvider({
+  // ...
+  apiQuery: () => ({ client_version: '0.142.5' }),
+  transformRequestBody: (url, body) => ({ ...body, store: false }),
+  async exchangeCredential(tokens, { fetch }) {
+    const session = await mintSessionToken(tokens, fetch)
+
+    return { accessToken: session.token, baseUrl: session.host, expiresAt: session.expiresAt }
+  },
+})
+```
+
+**`apiQuery(tokens)`** adds query parameters. A parameter already on the URL wins, so a caller can
+still override one per request. OpenAI needs this: its Codex surface gates the model list on
+`client_version`, and without it every model reports as unsupported.
+
+**`transformRequestBody(url, body, tokens)`** rewrites a JSON request body, and only a JSON one.
+Bodies that are streams, form data or raw bytes pass through untouched, because none of them can be
+rewritten without consuming or guessing at them. Reach for it when an endpoint accepts the shape a
+standard client sends and then misbehaves. OpenAI's `/responses` runs stateless and answers a
+request missing its reasoning configuration with an empty stream rather than an error.
+
+**`exchangeCredential(tokens, context)`** trades the stored token for the one the API actually
+takes, returning a `ResolvedCredential`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `accessToken` | `string` | **Required.** The credential to send. |
+| `tokenType` | `string` | Authorization scheme. Defaults to `Bearer`. |
+| `baseUrl` | `string` | Where to send it, when the provider names a host rather than declaring one. |
+| `headers` | `Record<string, string>` | Headers this credential needs. |
+| `expiresAt` | `number` | Epoch milliseconds. Absent means do not cache. |
+
+The result is cached until shortly before `expiresAt`, and re-run on a 401 instead of refreshing
+the underlying OAuth token, since for a provider that exchanges it is the short-lived credential
+that goes stale. GitHub Copilot is why this exists: the stored `ghu_` token is not what
+`api.githubcopilot.com` takes, and the exchange response also names the host, which differs for
+enterprise accounts. So neither is knowable from the descriptor.
+
+## Every field
+
+| Method | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | **Required.** Stable identifier, used as the storage key. |
+| `label` | `string` | **Required.** Human label for prompts and UI. |
+| `authorizationUrl` | `string` | **Required.** |
+| `tokenUrl` | `string` | **Required.** |
+| `scopes` | `string[]` | **Required.** |
+| `redirect` | `RedirectSpec` | **Required.** mode is loopback, hosted or custom. |
+| `clientId` | `string` | Usually supplied by the consumer instead. |
+| `clientSecret` | `string` | For providers that insist, such as Google. |
+| `requiresClientId` | `boolean` | Set false when none is transmitted. Defaults to `true`. |
+| `usePkce` | `boolean` | Defaults to `true`. |
+| `pkceMethod` | `'S256' | 'plain'` | Defaults to `S256`. |
+| `tokenRequest` | `TokenRequestSpec` | style form or json, plus header and body options. |
+| `extraAuthParams` | `Record<string, string>` | Appended to the authorization URL. |
+| `deviceAuthorizationUrl` | `string` | RFC 8628 endpoint, when supported. |
+| `deviceFlow` | `DeviceFlow` | Replaces the RFC 8628 implementation entirely. |
+| `devicePrerequisite` | `string` | Shown to the user alongside the code. |
+| `revocationUrl` | `string` | RFC 7009 endpoint. |
+| `userInfoUrl` | `string` | OIDC userinfo endpoint. |
+| `apiBaseUrl` | `string` | Prefix for relative URLs in createAuthenticatedFetch. |
+| `apiHeaders` | `(tokens) => Record<string, string>` | Headers every API request needs beyond `Authorization`. |
+| `apiQuery` | `(tokens) => Record<string, string>` | Query parameters every API request needs. |
+| `transformRequestBody` | `(url, body, tokens) => object` | Rewrites a JSON request body before it is sent. |
+| `exchangeCredential` | `(tokens, context) => Promise<ResolvedCredential>` | Trades the stored token for the one the API takes. |
+| `echoesState` | `boolean` | Whether state comes back on the callback. Defaults to `true`. |
+| `experimental` | `boolean` | Marks a descriptor whose constants are unofficial. |
+| `note` | `string` | Free-form note surfaced in errors. |
+
+## From the CLI
+
+```bash
+ai-oauth-sdk login acme --client-id my-client \
+  --authorize-url https://auth.acme.dev/authorize \
+  --token-url https://auth.acme.dev/token \
+  --device-url https://auth.acme.dev/device
+```
+
+Same descriptor, built from flags. Useful for trying a provider before writing any code.

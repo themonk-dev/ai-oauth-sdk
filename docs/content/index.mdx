@@ -1,0 +1,47 @@
+---
+title: Introduction
+description: AI OAuth SDK is a provider-agnostic OAuth 2.0 client for AI CLIs and apps. Sign in with ChatGPT, Claude, Gemini, Copilot or Grok, and get a token back.
+icon: RiBookOpenLine
+---
+
+Every AI coding CLI ships its own copy of the same four hundred lines: mint a PKCE pair, open a
+browser, catch the callback on a loopback port, exchange the code, refresh before expiry.
+
+This is that logic, extracted once, with the provider quirks already encoded. It does one job.
+Redirect the user, receive the callback, hand you the token. There is no API client here, no proxy,
+and no model wrappers.
+
+<Callout type="warn" title="Built for fun and for learning">
+  This is an independent, unofficial project. Some providers restrict what you may do with a
+  credential issued to their own CLI, so obtaining a token here does not mean you are allowed to use
+  it. Read their terms and decide for yourself. See the [disclaimer](/docs/resources/disclaimer).
+</Callout>
+
+```npm
+npx @ai-oauth-sdk/cli login openai
+```
+
+```ts
+import { login, publicClientIds } from 'ai-oauth-sdk/node'
+
+// You name the client id, the way Passport does. Nothing presents as a
+// vendor's CLI by accident.
+const { accessToken } = await login('openai', { clientId: publicClientIds.openai })
+```
+
+## Features
+
+<FeatureCards />
+
+## Runs anywhere
+
+One core with zero dependencies, and a thin adapter per runtime.
+
+<RuntimeCards />
+
+## Next steps
+
+- [Quickstart](/docs/quick-start), the shortest path to a token in each runtime
+- [Overview](/docs/overview), what the library does and where the provider differences live
+- [Providers](/docs/providers), the eight built-ins and how to describe your own
+- [Security](/docs/resources/security), what is enforced and what is left to you

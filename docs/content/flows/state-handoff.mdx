@@ -1,0 +1,123 @@
+---
+title: The state handoff
+description: Start a flow in one place, collect the token in another, correlated by state.
+icon: RiExchange2Line
+---
+
+This is the part that makes the library a library rather than a snippet.
+
+In a CLI, the process that starts the login is the process that receives the callback, so a closure
+holds everything. On a web server that is never true. The request that builds the authorization URL
+finishes long before the provider redirects the user back, and the callback may not even land on
+the same instance.
+
+`state` is the only thing tying the two together, and the registry is what makes it usable.
+
+```ts
+// 1. Start it, wherever
+const { url, state } = await client.createAuthorization()
+
+// 2. Finish it, wherever the callback actually lands
+app.get('/callback', async (req, res) => {
+  await client.completeAuthorization({ callbackUrl: req.url })
+})
+
+// 3. Or block on it, from a third place entirely
+const tokens = await client.waitForAuthorization(state, { timeoutMs: 120_000 })
+```
+
+## What createAuthorization stores
+
+```ts
+interface PendingAuthorization {
+  state: string
+  provider: string
+  redirectUri: string
+  codeVerifier?: string
+  createdAt: number
+  expiresAt: number
+  metadata?: Record<string, unknown>
+}
+```
+
+That record goes through your storage adapter, which is what lets the flow survive a process
+boundary. A full page redirect in a single-page app, a serverless function that gets a cold start
+between the two requests, a CLI that was restarted: all the same problem, and all solved by
+persisting the pending record rather than holding it in memory.
+
+It expires. `stateTtlMs` defaults to ten minutes, after which `completeAuthorization` raises
+`state_expired` and the right response is usually to start over rather than to show an error.
+
+## Metadata rides along
+
+Whatever you put in `metadata` comes back untouched, which is the clean way to remember what a flow
+was for:
+
+```ts
+const { url, state } = await client.createAuthorization({
+  metadata: { userId, returnTo: '/settings/integrations' },
+})
+
+// later, in the callback route
+const pending = await client.getPendingAuthorization(state)
+const returnTo = pending?.metadata?.returnTo ?? '/'
+```
+
+Read it with `getPendingAuthorization` before completing, since `completeAuthorization` consumes
+the record.
+
+## No race
+
+Three properties make `waitForAuthorization` safe to call at any point:
+
+- A result that arrives **before** anyone waits is buffered rather than dropped.
+- **Several waiters** on one `state` all get served.
+- A failure is delivered to waiters too, so a denied consent rejects them rather than leaving them
+  hanging until their timeout.
+
+That last one is why `handleRedirectCallback` hands the whole URL to `completeAuthorization`
+instead of inspecting it for an error first. A locally thrown error would never reach the waiters.
+
+## Completing from a raw URL
+
+```ts
+await client.completeAuthorization({ callbackUrl: req.url })
+```
+
+is equivalent to pulling out `code` and `state` yourself, except that it uses the provider's parser,
+so it also handles Anthropic's `code#state` string and OpenRouter's stateless callback. Express
+gives you a path-relative URL and Hono gives you an absolute one. Both are fine.
+
+## Cancelling
+
+```ts
+await client.cancelAuthorization(state)
+```
+
+Deletes the pending record and rejects anyone waiting on it with an `aborted` error. Worth wiring
+to a "cancel" button, because otherwise an abandoned flow sits in storage until its TTL passes.
+
+## The full picture
+
+<Mermaid
+  chart={`
+sequenceDiagram
+  participant A as Your app
+  participant S as Storage
+  participant P as Provider
+  participant C as Callback route
+  A->>A: createAuthorization()
+  Note over A: mints state and a PKCE pair
+  A->>S: write pending record
+  A->>P: send the user to the authorization URL
+  P->>C: redirect with code and state
+  C->>S: read pending record
+  C->>P: exchange the code
+  P-->>C: tokens
+  C-->>A: waitForAuthorization(state) resolves
+`}
+/>
+
+A worked example with Hono, Express, Fastify and Next.js is on
+[the callback routes page](/docs/recipes/server-callback). For many users at once, see
+[a multi-user server](/docs/recipes/multi-user).

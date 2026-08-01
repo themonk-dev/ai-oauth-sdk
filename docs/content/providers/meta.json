@@ -1,0 +1,18 @@
+{
+  "title": "Providers",
+  "description": "The eight built-ins, and how to describe your own",
+  "icon": "RiKey2Line",
+  "defaultOpen": true,
+  "pages": [
+    "index",
+    "openai",
+    "anthropic",
+    "google",
+    "github-copilot",
+    "openrouter",
+    "xai",
+    "qwen",
+    "microsoft",
+    "custom"
+  ]
+}

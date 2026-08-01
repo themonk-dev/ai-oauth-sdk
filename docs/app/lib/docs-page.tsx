@@ -1,0 +1,107 @@
+import { useFumadocsLoader } from 'fumadocs-core/source/client'
+import { DocsLayout, type DocsLayoutProps } from 'fumadocs-ui/layouts/docs'
+import {
+  DocsBody,
+  DocsDescription,
+  DocsPage,
+  DocsTitle,
+  MarkdownCopyButton,
+  ViewOptionsPopover,
+} from 'fumadocs-ui/layouts/docs/page'
+import { use } from 'react'
+
+import { useMDXComponents } from '@/components/mdx'
+import { VersionPicker } from '@/components/version-picker'
+import { icons } from './icons'
+import { baseOptions } from './layout.shared'
+import { gitConfig } from './shared'
+import { docs, getPageMarkdownUrl, source } from './source'
+
+/**
+ * Two routes render a documentation page: an index route for `/`, and a splat
+ * for everything below it. React Router matches an empty remainder against the
+ * root layout rather than the splat, so one route cannot serve both.
+ */
+export async function loadDocsPage(slugs: string[]) {
+  const page = source.getPage(slugs)
+
+  if (!page) {
+    throw new Response('Not found', { status: 404 })
+  }
+
+  return {
+    path: page.path,
+    title: page.data.title,
+    description: page.data.description ?? '',
+    markdownUrl: getPageMarkdownUrl(page).url,
+    pageTree: await source.serializePageTree(source.getPageTree()),
+  }
+}
+
+export type DocsPageData = Awaited<ReturnType<typeof loadDocsPage>>
+
+export function docsPageMeta(data: DocsPageData | undefined) {
+  if (!data) {
+    return [{ title: 'AI OAuth SDK' }]
+  }
+
+  return [
+    { title: `${data.title} | AI OAuth SDK` },
+    { name: 'description', content: data.description },
+  ]
+}
+
+function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
+  const page = docs.getPage(path)
+
+  if (!page) {
+    throw new Error(`unknown page: ${path}`)
+  }
+
+  const { toc } = use(page.load())
+  const Mdx = page.body
+  const Icon = typeof page.icon === 'string' ? icons[page.icon] : undefined
+
+  return (
+    <DocsPage toc={toc} tableOfContent={{ style: 'clerk' }}>
+      <DocsTitle className="flex items-center gap-3">
+        {Icon && (
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
+            <Icon className="size-5" />
+          </span>
+        )}
+        {page.title}
+      </DocsTitle>
+      <DocsDescription>{page.description}</DocsDescription>
+
+      <nav
+        aria-label="Page actions"
+        className="-mt-4 flex flex-row items-center gap-2 border-b pb-6"
+      >
+        <MarkdownCopyButton markdownUrl={markdownUrl} />
+        <ViewOptionsPopover
+          markdownUrl={markdownUrl}
+          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/${path}`}
+        />
+      </nav>
+
+      <DocsBody>
+        <Mdx components={useMDXComponents()} />
+      </DocsBody>
+    </DocsPage>
+  )
+}
+
+const sidebar: DocsLayoutProps['sidebar'] = {
+  footer: <VersionPicker />,
+}
+
+export function DocsPageView({ loaderData }: { loaderData: DocsPageData }) {
+  const { pageTree, path, markdownUrl } = useFumadocsLoader(loaderData)
+
+  return (
+    <DocsLayout {...baseOptions()} tree={pageTree} sidebar={sidebar}>
+      <Content path={path} markdownUrl={markdownUrl} />
+    </DocsLayout>
+  )
+}

@@ -1,0 +1,6 @@
+{
+  "title": "Resources",
+  "description": "Credentials, security, troubleshooting and the legal position",
+  "icon": "RiLifebuoyLine",
+  "pages": ["credentials", "security", "troubleshooting", "disclaimer", "contributing"]
+}

@@ -1,0 +1,20 @@
+{
+  "title": "AI OAuth SDK",
+  "description": "Provider-agnostic OAuth for AI CLIs and apps",
+  "root": true,
+  "pages": [
+    "---Get started---",
+    "index",
+    "overview",
+    "quick-start",
+    "---Using the SDK---",
+    "runtimes",
+    "frameworks",
+    "flows",
+    "recipes",
+    "---Reference---",
+    "providers",
+    "reference",
+    "resources"
+  ]
+}

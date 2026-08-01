@@ -1,0 +1,77 @@
+---
+title: Solid
+description: A primitive returning signals, cleaned up by onCleanup.
+icon: RiSparkling2Line
+---
+
+```npm
+npm install @ai-oauth-sdk/solid
+```
+
+Solid 1.8 and up.
+
+```tsx
+import { Show } from 'solid-js'
+import { createAuth } from '@ai-oauth-sdk/solid'
+import { popupReceiver } from '@ai-oauth-sdk/browser'
+
+function SignIn() {
+  const auth = createAuth({
+    provider: 'openai',
+    clientId,
+    receiver: popupReceiver(),
+  })
+
+  return (
+    <Show
+      when={auth.tokens()}
+      fallback={
+        <button disabled={auth.isLoading()} onClick={() => auth.login()}>
+          {auth.isLoading() ? 'Signing in...' : 'Sign in with ChatGPT'}
+        </button>
+      }
+    >
+      {(tokens) => (
+        <>
+          <span>{tokens().email}</span>
+          <button onClick={() => auth.logout()}>Sign out</button>
+        </>
+      )}
+    </Show>
+  )
+}
+```
+
+`tokens`, `isAuthenticated`, `isLoading` and `error` are accessors. Call them.
+
+## Signals without equals: false
+
+The signals use Solid's default equality check, and that is correct here for two reasons. The store
+already suppresses notifications when nothing moved, so a redundant set never reaches the signal.
+And a `TokenSet` is replaced wholesale rather than mutated, so reference equality is a true
+comparison rather than an accidental one.
+
+## Sharing it
+
+`onCleanup` is a no-op outside a reactive root, so a module-level `createAuth` never gets torn down
+and is fine to share:
+
+```ts
+// src/auth.ts
+export const auth = createAuth({
+  provider: 'openai',
+  clientId: import.meta.env.VITE_OPENAI_CLIENT_ID,
+  receiver: popupReceiver(),
+})
+```
+
+For a context-based version, put that object in a `createContext` and read it with `useContext`.
+There is no Solid-specific provider in the package, because there is nothing for it to do beyond
+what the framework already gives you.
+
+## SolidStart
+
+The same rule as the other frameworks: the module body runs on the server too. Keep
+`sessionStorageAdapter()` behind an `isServer` check and use `memoryStorage()` on the other side,
+or move the flow into a server route entirely with
+[the callback route recipe](/docs/recipes/server-callback).

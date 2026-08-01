@@ -1,0 +1,119 @@
+---
+title: React
+description: The useAuth hook and an AuthProvider for sharing one session across a tree.
+icon: RiReactjsLine
+---
+
+```npm
+npm install @ai-oauth-sdk/react
+```
+
+Works on React 17 and up. The binding is subscription-based rather than using
+`useSyncExternalStore`, which is what keeps 17 supported.
+
+## useAuth
+
+```tsx
+import { useAuth } from '@ai-oauth-sdk/react'
+import { popupReceiver } from '@ai-oauth-sdk/browser'
+
+function SignInButton() {
+  const { login, logout, tokens, isLoading, error } = useAuth({
+    provider: 'openai',
+    clientId,
+    receiver: popupReceiver(),
+  })
+
+  if (tokens) {
+    return (
+      <div>
+        <span>{tokens.email}</span>
+        <button onClick={() => logout()}>Sign out</button>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <button onClick={() => login()} disabled={isLoading}>
+        {isLoading ? 'Signing in...' : 'Sign in with ChatGPT'}
+      </button>
+      {error && <p role="alert">{error.message}</p>}
+    </>
+  )
+}
+```
+
+Options are everything `createAuthClient` takes, plus four:
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `receiver` | `CallbackReceiver` | Used by login() when none is passed per call. |
+| `restoreOnMount` | `boolean` | Load any persisted session on mount. Defaults to `true`. |
+| `onSuccess` | `(tokens: TokenSet) => void` | Called after a login. |
+| `onError` | `(error: unknown) => void` | Called on failure. |
+
+## Sharing one session
+
+Calling `useAuth` in two components gives you two clients, each with its own token cache. For
+anything beyond a single button, put it in context:
+
+```tsx
+import { AuthProvider, useAuthContext } from '@ai-oauth-sdk/react'
+
+function App() {
+  return (
+    <AuthProvider provider="openai" clientId={clientId} receiver={popupReceiver()}>
+      <Header />
+      <Chat />
+    </AuthProvider>
+  )
+}
+
+function Chat() {
+  const { getAccessToken, isAuthenticated } = useAuthContext()
+  // ...
+}
+```
+
+`useAuthContext()` throws when there is no provider above it, rather than returning undefined and
+failing later.
+
+## Store identity
+
+The store is rebuilt only when something that changes the client's behaviour changes: the provider,
+the client id, the redirect URI, the scopes, or the account key. Rebuilding it on every render
+would drop in-flight flows and the token cache.
+
+Your callbacks are read through a ref, so `onSuccess` and `onError` stay current without joining
+that identity. You do not need to memoise them.
+
+## Calling an API
+
+```tsx
+function Models() {
+  const { client, isAuthenticated } = useAuth({ provider: 'openai', clientId })
+  const [models, setModels] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return
+    }
+
+    const api = createAuthenticatedFetch(client)
+    api('/models')
+      .then((response) => response.json())
+      .then((body) => setModels(body.data.map((model) => model.id)))
+  }, [client, isAuthenticated])
+
+  return <ul>{models.map((id) => <li key={id}>{id}</li>)}</ul>
+}
+```
+
+Build the fetch inside the effect rather than in render. It closes over the client, and the client
+is stable, so there is nothing to memoise.
+
+## Cleanup
+
+Unmounting unsubscribes and cancels any in-flight login. That is deliberate: a login the user
+navigated away from should not resolve into a component that is gone.

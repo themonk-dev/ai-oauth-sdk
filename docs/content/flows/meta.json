@@ -1,0 +1,13 @@
+{
+  "title": "Flows",
+  "description": "Every way the authorization code gets back to you",
+  "icon": "RiNodeTree",
+  "pages": [
+    "index",
+    "loopback",
+    "popup-and-redirect",
+    "device-code",
+    "manual-paste",
+    "state-handoff"
+  ]
+}

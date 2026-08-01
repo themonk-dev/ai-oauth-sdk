@@ -31,6 +31,10 @@ export const codexBaseUrl = 'https://chatgpt.com/backend-api/codex'
  * Sent as `client_version` on every Codex request. The backend gates the model
  * list on it, so an absent or stale value makes every model report as
  * unsupported. Bump it toward the current Codex CLI release if models vanish.
+ *
+ * Three curl examples repeat this number, because a shell command cannot read a
+ * constant: `docs/content/quick-start.mdx`, `docs/content/runtimes/cli.mdx` and
+ * `packages/cli/README.md`. Update them alongside it.
  */
 export const codexClientVersion = '0.142.5'
 

@@ -1,0 +1,55 @@
+---
+title: Overview
+description: Which package to install for where your code runs, what each adapter adds on top of the zero-dependency core, and how to mix them.
+icon: RiDashboardLine
+---
+
+`@ai-oauth-sdk/core` is the whole flow: PKCE, the pending-authorization registry, the code
+exchange, refresh, and the provider descriptors. It has no runtime dependencies and touches nothing
+platform-specific.
+
+What it cannot do on its own is receive a callback or persist a token, because both depend on where
+it is running. That is what the adapters supply.
+
+<RuntimeCards />
+
+## What each adapter adds
+
+| Package | Receiver | Storage | Crypto |
+| --- | --- | --- | --- |
+| `core` | manual paste, device code | in-memory | `globalThis.crypto`, JS fallback |
+| `node` | loopback server, prompt, hybrid | JSON file at `0600` | `node:crypto` |
+| `browser` | popup, full-page redirect | `sessionStorage`, `localStorage` | WebCrypto |
+| `react-native` | deep link, auth session | SecureStore, AsyncStorage | bundled SHA-256 |
+| `cli` | picks one for you | same as `node` | same as `node` |
+
+The framework bindings (`react`, `vue`, `svelte`, `solid`) add no receiver or storage of their own.
+They wrap the shared store and leave both to you.
+
+## Importing
+
+Two equivalent ways. The umbrella package with subpaths:
+
+```ts
+import { createAuthClient } from 'ai-oauth-sdk/core'
+import { login } from 'ai-oauth-sdk/node'
+import { popupReceiver } from 'ai-oauth-sdk/browser'
+import { useAuth } from 'ai-oauth-sdk/react'
+```
+
+Or the scoped packages directly, which is what you want if you only need one:
+
+```ts
+import { createAuthClient } from '@ai-oauth-sdk/core'
+import { login } from '@ai-oauth-sdk/node'
+```
+
+Every adapter re-exports the core, so `import { OAuthError } from '@ai-oauth-sdk/node'` works and
+you rarely need two import lines from the same family.
+
+## Mixing them
+
+Nothing stops you from combining adapters. An Electron app runs the flow in the main process with
+`@ai-oauth-sdk/node` and renders with `@ai-oauth-sdk/react` in the renderer, passing only what the
+UI needs across IPC. A server-rendered app uses the core in a route handler and the browser package
+for the client half. The pieces meet at `AuthClient`, and it does not care which adapter built it.

@@ -1,0 +1,142 @@
+---
+title: Troubleshooting
+description: The failures people actually hit, what each one means, and the fix. Roughly ordered by how often they come up.
+icon: RiToolsLine
+---
+
+## The login hangs and never completes
+
+Almost always a redirect that cannot arrive.
+
+**Over SSH, or in a container.** A loopback redirect goes to the browser machine's own `localhost`,
+which is not yours. Use `--paste`, or `promptReceiver()`, or the device flow. The Node adapter's
+`defaultReceiver()` detects `SSH_TTY` and `SSH_CONNECTION` and switches automatically, so this
+usually means a receiver was chosen explicitly.
+
+**Device flow on OpenAI.** Turn on "Enable device code authorization for Codex" in
+[**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security) first. Without it the verification page refuses the code and the poll runs until
+the code expires.
+
+**Device flow on Entra ID.** Conditional access policies can block the device grant at the tenant
+level, and the refusal happens on the approval page rather than at the endpoint.
+
+Set `timeoutMs` so it fails rather than hanging:
+
+```ts
+await client.login({ receiver, timeoutMs: 120_000 })
+```
+
+## `configuration_error`: provider needs a clientId
+
+You did not pass one, and no provider defaults to one. Pass your own, or opt into the published one:
+
+```ts
+createAuthClient({ provider: 'openai', clientId: publicClientIds.openai })
+```
+
+## `invalid_client` from the provider
+
+The client id is not recognised or not allowlisted.
+
+- **xAI** rejects anything it has not allowlisted, and offers no self-service registration for a
+  desktop CLI. Use `publicClientIds.xai`.
+- **Google** may have rotated the published secret after a secret-scanning report. Register your own
+  Desktop app client and pass both values.
+- **A custom provider** where the id is right but the client type is wrong. Google's device endpoint
+  refuses Desktop app clients with `Invalid client type`, for instance.
+
+## `state_mismatch`
+
+The callback carried a `state` this client never issued. That is what a CSRF attempt looks like, so
+the library refuses it rather than continuing.
+
+Legitimate causes worth ruling out: two logins started from the same client where the second
+overwrote the first in a shared storage namespace, or a custom receiver that is not returning the
+`state` it received.
+
+## `state_expired` or `unknown_state`
+
+`state_expired` means the pending record passed its TTL, ten minutes by default. A user who left the
+tab open over lunch hits this. Raise `stateTtlMs` if that is common for your flow, or just send them
+back to the start.
+
+`unknown_state` usually means the callback page was reloaded. Pending records are consumed on the
+way through, so the second attempt finds nothing.
+
+Both are ordinary. Neither deserves an error page.
+
+## The flow works locally and fails in production
+
+`memoryStorage()`. It is the default, and it is correct only inside one process.
+
+Serverless functions do not share process memory, and neither do two instances behind a load
+balancer. The pending record written when the flow starts has to be readable when the callback
+arrives. In development that is the same process, which is exactly why the bug survives testing.
+
+See [database-backed storage](/docs/recipes/storage).
+
+## Requests get a 401 even though I just signed in
+
+**The token is not for that API.** An OpenAI ChatGPT sign-in grants `openid`, `profile`, `email` and
+`offline_access`, and nothing else, so `api.openai.com/v1/models` answers `403 Missing scopes:
+api.model.read` and no scope in this flow can fix it. That token does open
+`chatgpt.com/backend-api/codex`, which is where `apiBaseUrl` points, so
+`createAuthenticatedFetch` reaches it without configuration. Issue an API key if you want the REST
+API itself, and pass `baseUrl: 'https://api.openai.com/v1'`.
+
+**A missing provider header.** Anthropic OAuth bearers need `anthropic-beta: oauth-2025-04-20`
+alongside `anthropic-version`. `createAuthenticatedFetch` attaches both; a hand-rolled `headers`
+object will not.
+
+**The wrong credential.** GitHub Copilot's API does not accept the stored `ghu_` token at all. It
+wants a short-lived token obtained by exchanging it, and that same exchange names the host to send
+it to, which differs between individual and enterprise accounts. `createAuthenticatedFetch` handles
+both; sending `tokens.accessToken` by hand will not work.
+
+## The SDK sends the wrong credential
+
+If you are passing `createAuthenticatedFetch` to an SDK and seeing a placeholder token on the wire,
+you are on a version before `0.1.2`, where a caller-set `Authorization` header won. The AI SDK sets
+that header from its own `apiKey` even when `apiKey` is empty. Upgrade, or pass
+`respectCallerAuthorization: false` explicitly.
+
+## Popup blocked
+
+`loginWithPopup` must be called synchronously from a user gesture. An `await` before it yields to
+the event loop and the browser stops treating the call as user-initiated. Move the awaited work
+after the popup opens, or use the full-page redirect instead.
+
+## CORS errors on the token exchange
+
+In a browser flow, the request to the token endpoint comes from your page, so the provider has to
+send CORS headers your origin can use. Providers built for desktop CLIs do not always do that, and
+no client library can add them.
+
+Move that half to your own server. See
+[callback routes](/docs/recipes/server-callback).
+
+## Two processes keep invalidating each other's tokens
+
+Providers that rotate refresh tokens hand out a new one on every refresh and invalidate the old.
+Two CLI windows refreshing at once means the loser holds a dead token.
+
+The library handles this: before refreshing it re-reads storage and takes the stored token if
+another process already rotated it. If you are still seeing it, check that both processes share a
+storage backend rather than each holding their own.
+
+## `EADDRINUSE` on the loopback port
+
+Something already holds the port. For providers registered on a fixed port, `1455` for OpenAI and
+`56121` for xAI, there is no alternative but to free it. For the others, `loopbackPort: 0` picks
+whatever is available.
+
+## React Native: it throws about randomness
+
+The bundled SHA-256 fallback covers hashing, but there is no fallback for random bytes on purpose.
+If `crypto.getRandomValues` is unavailable, install `react-native-get-random-values` and import it
+before anything else in your entry file.
+
+## Still stuck
+
+Open an issue with the provider id, the receiver, the error `code`, and the `status` if there is
+one. `--json` on the CLI prints all of that in one place.

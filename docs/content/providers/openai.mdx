@@ -1,0 +1,149 @@
+---
+title: OpenAI
+description: The flow the Codex CLI uses. Loopback on port 1455, plus a device flow that is not RFC 8628.
+icon: RiOpenaiFill
+---
+
+```ts
+import { createNodeAuthClient, publicClientIds } from '@ai-oauth-sdk/node'
+
+const client = createNodeAuthClient({
+  provider: 'openai',
+  clientId: publicClientIds.openai,
+})
+```
+
+| Setting | Value |
+| --- | --- |
+| Authorization | `https://auth.openai.com/oauth/authorize` |
+| Token | `https://auth.openai.com/oauth/token` |
+| Redirect | loopback, port `1455` fixed, path `/auth/callback` |
+| Scopes | `openid`, `profile`, `email`, `offline_access` |
+| Userinfo | `https://auth.openai.com/api/accounts/oauth/userinfo` |
+| Device flow | yes, provider-specific |
+
+## The port is fixed
+
+OpenAI registered `http://localhost:1455/auth/callback` and matches it exactly, so an ephemeral
+port will not work. If something else on the machine holds 1455, the login fails at bind time
+rather than silently.
+
+## Three extra authorization parameters
+
+The descriptor sends `id_token_add_organizations=true` and `codex_cli_simplified_flow=true`. The
+first asks for organization claims in the `id_token`, which is where the account id comes from. The
+second selects the shorter CLI consent screen.
+
+## The account id
+
+It lives in the `id_token`, in one of three shapes depending on whether the user is on a personal
+plan or in an organization. `enrichTokens` tries all three and puts the result on
+`tokens.accountId`, alongside `tokens.email`.
+
+## The device flow
+
+OpenAI has one, and it shares nothing with RFC 8628 except the idea. JSON request bodies rather
+than form encoding, HTTP 403 and 404 as the "still pending" signal rather than
+`authorization_pending`, a server-generated PKCE verifier, and a second hop through the ordinary
+token endpoint. None of that is expressible as configuration, so it arrives as a `deviceFlow`
+implementation rather than a `deviceAuthorizationUrl`.
+
+```ts
+const tokens = await client.deviceLogin({
+  onCode: ({ verificationUri, userCode }) => console.log(`${verificationUri} -> ${userCode}`),
+})
+```
+
+<Callout type="warn" title="It has to be switched on first">
+  Turn on "Enable device code authorization for Codex" in
+  [**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security). Without
+  it the verification page refuses the code, and the command keeps polling for an approval that
+  cannot arrive. OpenAI rejects it on the page rather than at the endpoint, so there is nothing this
+  library can detect. The descriptor carries that sentence in `devicePrerequisite`, and the CLI
+  prints it next to the code.
+</Callout>
+
+## What the token is not
+
+<Callout type="warn" title="This is not an API key">
+  OpenAI's authorization server advertises exactly four scopes: `openid`, `profile`, `email` and
+  `offline_access`. A ChatGPT sign-in therefore grants identity and the ChatGPT-subscription
+  surface, not the REST API. `api.openai.com/v1/models` answers `403 Missing scopes:
+  api.model.read`, and no scope available here can fix that. Issue an API key for the REST API.
+</Callout>
+
+## What it is
+
+The token does drive a model. Not at `api.openai.com`, but at
+`https://chatgpt.com/backend-api/codex`, which is where the Codex CLI sends its requests. That is
+what `apiBaseUrl` points at, so `createAuthenticatedFetch` reaches it without configuration.
+
+```ts
+import { createAuthenticatedFetch, fetchCodexModels } from '@ai-oauth-sdk/core'
+
+const models = await fetchCodexModels(client)
+const api = createAuthenticatedFetch(client)
+
+const response = await api('/responses', {
+  method: 'POST',
+  body: JSON.stringify({ model: models[0], input: 'hi' }),
+})
+```
+
+`fetchCodexModels` is worth calling rather than hardcoding a slug: the set depends on the user's
+plan, and the backend filters it by the `client_version` the descriptor sends, so two accounts on
+the same library version can see different models.
+
+### What the descriptor sends for you
+
+| Piece | Value | Why |
+| --- | --- | --- |
+| `chatgpt-account-id` | from the `id_token` | Names the account the request is billed against |
+| `OpenAI-Beta` | `responses=experimental` | The backend refuses the request without it |
+| `originator` | `codex_cli_rs` | Identifies the caller |
+| `client_version` | a Codex release number | Gates the model list. Omit it and every model reports as unsupported |
+| body rewrite | see below | The endpoint accepts a standard body, then behaves incorrectly |
+
+The body rewrite is the part worth knowing about. The Codex backend runs stateless, so a
+`/responses` call has to set `store: false`, configure `reasoning`, ask for
+`reasoning.encrypted_content` in `include`, carry no server-side ids on its input items, and send
+no `max_output_tokens`. Miss any of it and the call returns **200 with an empty stream** rather
+than an error. `normalizeCodexResponsesBody` fills those gaps, and the provider applies it through
+`transformRequestBody`. Anything you set explicitly is kept.
+
+### What "the Codex surface" does and does not mean
+
+Only `/responses` exists here. There is no `/chat/completions`, so `openai.responses(...)` rather
+than `openai.chat(...)` if you are going through the AI SDK.
+
+The prompts are not restricted to code. It is an ordinary responses API and will answer anything,
+and image generation is reachable through the same endpoint via the image tool. What "Codex" limits
+is the *model set*: you get the models that backend exposes for the account's plan, filtered by
+`client_version`, rather than the full REST catalogue. `fetchCodexModels(client)` is how you find
+out which ones, and two accounts on the same library version can legitimately see different lists.
+
+What it is not is an API key. Nothing here reaches `api.openai.com`, fine-tuning, batch, embeddings
+or the assistants API. And usage is billed to the signed-in user's ChatGPT plan, under whatever
+terms OpenAI applies to that plan, which is worth reading before you build on it.
+
+<Callout type="warn" title="Speech to speech is not reachable from here">
+  ChatGPT's voice transport wants a token minted for the ChatGPT *web* client, which comes from a
+  browser session cookie rather than from an OAuth grant. No scope or header available here opens
+  it. Use an API key and OpenAI's documented `/v1/realtime/calls` interface for that.
+</Callout>
+
+### For an API-key account
+
+The absence of the `https://api.openai.com/auth` claim is how you tell an API account from a
+subscription one. Those want the REST API, so override the base URL per call:
+
+```ts
+const api = createAuthenticatedFetch(client, { baseUrl: 'https://api.openai.com/v1' })
+```
+
+## Discovery disagrees
+
+OpenAI publishes a discovery document whose endpoints differ from the ones every shipped client
+actually uses. The descriptor carries the working values. If you build one with
+`providerFromDiscovery('https://auth.openai.com', ...)` you will get the documented ones, which is
+worth knowing before you debug why it behaves differently.
