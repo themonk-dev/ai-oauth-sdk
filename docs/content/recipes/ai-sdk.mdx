@@ -85,9 +85,12 @@ empty stream rather than an error. See the [provider page](/docs/providers/opena
 into it. For an API-key account, whose token carries no `https://api.openai.com/auth` claim, pass
 `baseUrl: 'https://api.openai.com/v1'`.
 
-**GitHub Copilot.** Two things. The API host comes out of the token exchange, so it is data rather
-than configuration, and enterprise accounts get a different one. And the session token lives about
-25 minutes, so refresh is mandatory rather than a nicety.
+**GitHub Copilot.** The stored `ghu_` token is not what the API takes. It wants a short-lived
+Copilot token obtained by exchanging that one, and the same response names the host to send it to,
+which differs for enterprise accounts. `createAuthenticatedFetch` runs the exchange, caches it, and
+re-runs it on a 401. It also names an editor, which Copilot requires. Pass
+`headers: { 'Editor-Version': 'my-cli/1.0' }` to identify as yourself. The exchanged token lives
+about 25 minutes, which is the other reason a captured token will not do.
 
 **Anthropic.** OAuth bearers need `anthropic-beta: oauth-2025-04-20` alongside `anthropic-version`.
 The descriptor emits both through `apiHeaders`, and `createAuthenticatedFetch` attaches them. A
