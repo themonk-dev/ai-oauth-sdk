@@ -146,11 +146,15 @@ value:
 interface ResolvedAuth { apiKey?: string; headers?: Record<string, string>; baseUrl?: string }
 ```
 
-and letting `baseUrl` depend on the credential rather than being a constant —
-which is what GitHub Copilot needs, since its API host comes out of the token
-exchange. OpenAI no longer needs it: `apiBaseUrl` points at
-`chatgpt.com/backend-api/codex`, the surface these tokens actually open, and an
-API-key account passes `baseUrl` to `createAuthenticatedFetch` instead.
+That shape now exists as `ResolvedCredential`, returned by a provider's optional
+`exchangeCredential` hook and applied by `createAuthenticatedFetch`, which is
+what GitHub Copilot needed: its API credential and its host both come out of a
+token exchange rather than from the descriptor. OpenAI never needed it —
+`apiBaseUrl` points at `chatgpt.com/backend-api/codex`, the surface those tokens
+open, and an API-key account passes `baseUrl` to `createAuthenticatedFetch`.
+
+What is still missing is exposing the resolution as a value a caller can hold,
+rather than only as something the fetch does internally.
 
 The other gap is that `TokenSet` models OAuth only. Every tool surveyed models
 a discriminated union with an API-key variant, because to a user both answer the
