@@ -99,10 +99,21 @@ token minted for the ChatGPT *web* client, which comes from a browser session
 cookie rather than from an OAuth grant, so no scope or header here opens it. Use
 an API key and the documented `/v1/realtime/calls` interface for that.
 
-**GitHub Copilot** — two things. The API host comes out of the token exchange
-(`api.individual.githubcopilot.com`, or an enterprise host), so it is data, not
-configuration. And the session token lives ~25 minutes, so refresh is mandatory
-rather than a nicety — the `fetch` approach is the only one that works.
+**GitHub Copilot** — the stored token is not the credential the API takes. The
+device flow yields a `ghu_` GitHub token, and `api.githubcopilot.com` wants a
+short-lived Copilot token obtained by exchanging it. The same exchange response
+names the host to send it to (`api.individual.githubcopilot.com`, or an
+enterprise one), so neither the credential nor the base URL can be known from
+the descriptor alone.
+
+`createAuthenticatedFetch` runs that exchange, caches the result until shortly
+before it expires, and re-runs it on a 401. It also names an editor, which
+Copilot requires. Pass `headers: { 'Editor-Version': 'my-cli/1.0' }` to identify
+as yourself. `exchangeForCopilotToken()` is still exported for anyone driving
+requests by hand.
+
+The exchanged token lives about 25 minutes, which is the other reason the
+`fetch` approach is the only one that works here.
 
 **Anthropic** — OAuth bearers need `anthropic-beta: oauth-2025-04-20` alongside
 `anthropic-version`. Our descriptor already emits both through `apiHeaders`, and

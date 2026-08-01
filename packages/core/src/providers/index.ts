@@ -11,7 +11,7 @@ import { xai } from './xai.js'
 
 export { defineProvider, parseStandardCallback, readCallback } from './define.js'
 export { anthropic, githubCopilot, google, openai, openrouter, qwen, xai }
-export { exchangeForCopilotToken } from './github-copilot.js'
+export { copilotClientHeaders, exchangeForCopilotToken } from './github-copilot.js'
 export type { CopilotApiToken } from './github-copilot.js'
 export {
   codexBaseUrl,
