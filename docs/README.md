@@ -120,12 +120,23 @@ Workers Builds keeps the rest in its dashboard, and it has to agree with the lay
 | Root directory | `docs` |
 | Build command | `pnpm build` |
 | Deploy command | `npx wrangler deploy` |
-| Wrangler config | `docs/wrangler.jsonc` |
 
-The Node version comes from `.nvmrc` in this directory, so it does not need setting. Nothing in the
-build reads a secret, so the project needs no environment variables; if that ever changes, turn off
-builds for non-production branches first, because a fork's pull request would otherwise run its own
-code with them.
+Everything is relative to that root directory, so `wrangler.jsonc`, `pnpm-lock.yaml` and `.nvmrc`
+are all found without being named.
+
+**The root directory is the setting that matters, and getting it wrong fails in a confusing way.**
+Point it at the repository root instead and the install step runs there, which by design skips this
+directory: `pnpm-workspace.yaml` here declares no packages, so a root install never touches it. The
+build then reaches `react-router build` with no `node_modules` beside it and stops at
+`react-router: not found`, which reads like a missing dependency rather than a missing install.
+
+Building from the repository root works too, but only with both steps:
+`pnpm docs:install && pnpm docs:build`. Setting the root directory to `docs` is simpler, and lets
+the platform cache dependencies and detect the Node version on its own.
+
+Nothing in the build reads a secret, so the project needs no environment variables. If that ever
+changes, turn off builds for non-production branches first, because a fork's pull request would
+otherwise run its own code with them.
 
 ## Versions
 
