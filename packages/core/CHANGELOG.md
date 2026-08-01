@@ -1,5 +1,54 @@
 # @ai-oauth-sdk/core
 
+## 0.3.0
+
+### Minor Changes
+
+- 596450f: Make a GitHub Copilot token usable against the Copilot API.
+  `createAuthenticatedFetch` sent the stored `ghu_` GitHub token, which
+  `api.githubcopilot.com` rejects: it wants a short-lived Copilot token obtained
+  by exchanging the GitHub one, and the same exchange response names the host to
+  send it to, which differs between individual and enterprise accounts. So neither
+  the credential nor the base URL could be known from the descriptor, and every
+  request went out with the wrong one of each.
+
+  A new optional `exchangeCredential` hook on `ProviderConfig` resolves a stored
+  token into the `ResolvedCredential` a request actually needs: a token, a base
+  URL, headers and an expiry. `createAuthenticatedFetch` calls it, caches the
+  result until shortly before it expires, and re-runs it on a 401 rather than
+  refreshing the underlying OAuth token, since the exchanged credential is the
+  part that goes stale. Providers without the hook are unaffected.
+
+  `exchangeForCopilotToken()` now also returns `apiBaseUrl` when GitHub names one,
+  and is still exported for anyone driving requests by hand.
+
+  Two smaller corrections came with it. The `headers` option on
+  `createAuthenticatedFetch` now takes precedence over provider-supplied headers,
+  so `{ 'Editor-Version': 'my-cli/1.0' }` identifies you as yourself rather than
+  losing to the default; a header set on the request itself still wins over both.
+  And that merge is now case-insensitive, the way HTTP is.
+
+- 3b6f333: Make an OpenAI token usable for inference. `apiBaseUrl` pointed at
+  `https://api.openai.com/v1`, which answers every token this provider mints with
+  `403 Missing scopes: api.model.read`. It now points at
+  `https://chatgpt.com/backend-api/codex`, the surface a ChatGPT sign-in actually
+  opens, and the descriptor supplies the rest of what that endpoint needs: the
+  `OpenAI-Beta` and `originator` headers, a `client_version` query parameter, and
+  a `/responses` body rewritten for a stateless backend that would otherwise
+  answer with an empty stream.
+
+  Two new optional hooks on `ProviderConfig` carry that, and both are honoured by
+  `createAuthenticatedFetch`: `apiQuery(tokens)` adds query parameters, and
+  `transformRequestBody(url, body, tokens)` rewrites a JSON request body. Bodies
+  that are streams, form data or bytes are passed through untouched.
+
+  Also adds `fetchCodexModels(client)`, which lists the model slugs the signed-in
+  account can use. The set depends on the user's plan and on `client_version`, so
+  it is worth asking rather than hardcoding a slug.
+
+  Pass `baseUrl: 'https://api.openai.com/v1'` to `createAuthenticatedFetch` for an
+  API-key account, whose token carries no `https://api.openai.com/auth` claim.
+
 ## 0.2.1
 
 ## 0.2.0
