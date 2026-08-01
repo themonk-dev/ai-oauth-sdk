@@ -102,6 +102,51 @@ defineProvider({
 `apiHeaders` is what `createAuthenticatedFetch` attaches to every request, which is how Anthropic's
 beta flag and OpenAI's account header get sent without you doing anything.
 
+## When the token is not enough
+
+Three more hooks, for APIs that want something beyond a bearer. All optional, all applied by
+`createAuthenticatedFetch`, and all there because a real provider needed them.
+
+```ts
+defineProvider({
+  // ...
+  apiQuery: () => ({ client_version: '0.142.5' }),
+  transformRequestBody: (url, body) => ({ ...body, store: false }),
+  async exchangeCredential(tokens, { fetch }) {
+    const session = await mintSessionToken(tokens, fetch)
+
+    return { accessToken: session.token, baseUrl: session.host, expiresAt: session.expiresAt }
+  },
+})
+```
+
+**`apiQuery(tokens)`** adds query parameters. A parameter already on the URL wins, so a caller can
+still override one per request. OpenAI needs this: its Codex surface gates the model list on
+`client_version`, and without it every model reports as unsupported.
+
+**`transformRequestBody(url, body, tokens)`** rewrites a JSON request body, and only a JSON one.
+Bodies that are streams, form data or raw bytes pass through untouched, because none of them can be
+rewritten without consuming or guessing at them. Reach for it when an endpoint accepts the shape a
+standard client sends and then misbehaves. OpenAI's `/responses` runs stateless and answers a
+request missing its reasoning configuration with an empty stream rather than an error.
+
+**`exchangeCredential(tokens, context)`** trades the stored token for the one the API actually
+takes, returning a `ResolvedCredential`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `accessToken` | `string` | **Required.** The credential to send. |
+| `tokenType` | `string` | Authorization scheme. Defaults to `Bearer`. |
+| `baseUrl` | `string` | Where to send it, when the provider names a host rather than declaring one. |
+| `headers` | `Record<string, string>` | Headers this credential needs. |
+| `expiresAt` | `number` | Epoch milliseconds. Absent means do not cache. |
+
+The result is cached until shortly before `expiresAt`, and re-run on a 401 instead of refreshing
+the underlying OAuth token, since for a provider that exchanges it is the short-lived credential
+that goes stale. GitHub Copilot is why this exists: the stored `ghu_` token is not what
+`api.githubcopilot.com` takes, and the exchange response also names the host, which differs for
+enterprise accounts. So neither is knowable from the descriptor.
+
 ## Every field
 
 | Method | Type | Description |
@@ -125,6 +170,10 @@ beta flag and OpenAI's account header get sent without you doing anything.
 | `revocationUrl` | `string` | RFC 7009 endpoint. |
 | `userInfoUrl` | `string` | OIDC userinfo endpoint. |
 | `apiBaseUrl` | `string` | Prefix for relative URLs in createAuthenticatedFetch. |
+| `apiHeaders` | `(tokens) => Record<string, string>` | Headers every API request needs beyond `Authorization`. |
+| `apiQuery` | `(tokens) => Record<string, string>` | Query parameters every API request needs. |
+| `transformRequestBody` | `(url, body, tokens) => object` | Rewrites a JSON request body before it is sent. |
+| `exchangeCredential` | `(tokens, context) => Promise<ResolvedCredential>` | Trades the stored token for the one the API takes. |
 | `echoesState` | `boolean` | Whether state comes back on the callback. Defaults to `true`. |
 | `experimental` | `boolean` | Marks a descriptor whose constants are unofficial. |
 | `note` | `string` | Free-form note surfaced in errors. |

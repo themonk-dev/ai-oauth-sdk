@@ -28,6 +28,10 @@ curl -H "Authorization: Bearer $(ai-oauth-sdk token openai)" \
      "https://chatgpt.com/backend-api/codex/models?client_version=0.142.5"
 ```
 
+Not `api.openai.com`: a ChatGPT sign-in opens the subscription surface, not the REST API. The
+`client_version` above is a snapshot of `codexClientVersion` in the descriptor, which
+`createAuthenticatedFetch` sends for you.
+
 `token` prints the bare token and nothing else, so command substitution stays clean. To keep it out
 of your shell history entirely, let the CLI pass it in the environment instead:
 

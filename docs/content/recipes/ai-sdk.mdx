@@ -60,8 +60,8 @@ after twenty minutes is not something you want captured in a closure.
 | --- | --- | --- |
 | `fetch` | `FetchLike` | Underlying fetch. Defaults to `globalThis.fetch`. |
 | `retryOnUnauthorized` | `boolean` | Force a refresh and retry once when the API answers 401. Defaults to `true`. |
-| `baseUrl` | `string` | Prefix for relative URLs. Defaults to `the provider's apiBaseUrl`. |
-| `headers` | `Record<string, string>` | Merged into every request. |
+| `baseUrl` | `string` | Prefix for relative URLs. Wins over both the provider's `apiBaseUrl` and any host a credential exchange names. |
+| `headers` | `Record<string, string>` | Merged into every request. Beats anything the provider supplies, so this is where you override a default like Copilot's `Editor-Version`. A header set on the request itself still wins over both. |
 | `respectCallerAuthorization` | `boolean` | Let a caller-set Authorization header survive. Defaults to `false`. |
 
 The 401 retry matters more than it looks. A token can be revoked, or rotated by another process,

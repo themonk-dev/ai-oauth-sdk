@@ -111,7 +111,20 @@ no `max_output_tokens`. Miss any of it and the call returns **200 with an empty 
 than an error. `normalizeCodexResponsesBody` fills those gaps, and the provider applies it through
 `transformRequestBody`. Anything you set explicitly is kept.
 
-Only `/responses` exists on this surface. There is no `/chat/completions`.
+### What "the Codex surface" does and does not mean
+
+Only `/responses` exists here. There is no `/chat/completions`, so `openai.responses(...)` rather
+than `openai.chat(...)` if you are going through the AI SDK.
+
+The prompts are not restricted to code. It is an ordinary responses API and will answer anything,
+and image generation is reachable through the same endpoint via the image tool. What "Codex" limits
+is the *model set*: you get the models that backend exposes for the account's plan, filtered by
+`client_version`, rather than the full REST catalogue. `fetchCodexModels(client)` is how you find
+out which ones, and two accounts on the same library version can legitimately see different lists.
+
+What it is not is an API key. Nothing here reaches `api.openai.com`, fine-tuning, batch, embeddings
+or the assistants API. And usage is billed to the signed-in user's ChatGPT plan, under whatever
+terms OpenAI applies to that plan, which is worth reading before you build on it.
 
 <Callout type="warn" title="Speech to speech is not reachable from here">
   ChatGPT's voice transport wants a token minted for the ChatGPT *web* client, which comes from a
