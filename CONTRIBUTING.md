@@ -97,10 +97,15 @@ workspace so its toolchain stays out of the root lockfile and out of the audit g
 published packages.
 
 ```bash
-cd docs
-pnpm install
-pnpm dev      # http://localhost:5173
+pnpm docs:install
+pnpm docs:dev      # http://localhost:5173
+pnpm docs:build
+pnpm docs:start    # serve the built output
 ```
+
+Those are aliases for the scripts in `docs/package.json`, so `cd docs && pnpm dev` does the same
+thing. The install is separate because the root `pnpm install` does not reach a directory outside
+the workspace.
 
 Content is MDX under `docs/content`, and the sidebar comes from the `meta.json` files beside it.
 More detail is in [docs/README.md](docs/README.md).

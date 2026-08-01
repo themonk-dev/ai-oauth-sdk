@@ -175,12 +175,14 @@ recomputing the S256 challenge, so a broken verifier fails the suite rather than
 failing in production.
 
 The documentation site lives in [`docs/`](docs) and is a separate project with its own
-lockfile, deliberately outside the pnpm workspace:
+lockfile, deliberately outside the pnpm workspace. It has its own install step, since a
+`pnpm install` at the root does not reach it:
 
 ```bash
-cd docs
-pnpm install
-pnpm dev
+pnpm docs:install
+pnpm docs:dev      # hot reload, http://localhost:5173
+pnpm docs:build    # static output in docs/build/client
+pnpm docs:start    # serve that output
 ```
 
 ### Examples

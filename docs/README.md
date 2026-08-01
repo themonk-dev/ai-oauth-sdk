@@ -2,14 +2,33 @@
 
 The docs for `ai-oauth-sdk`, built with [Fumadocs](https://fumadocs.dev) on React Router.
 
+Node 24 or later, pinned in `.nvmrc`.
+
+From this directory:
+
 ```bash
 pnpm install
-pnpm dev      # http://localhost:5173
-pnpm build    # static output in build/client
-pnpm start    # serve the built output
+pnpm dev        # dev server with hot reload, http://localhost:5173
+pnpm build      # static output in build/client
+pnpm start      # serve that output, http://localhost:3000
+pnpm typecheck
 ```
 
-Node 24 or later, pinned in `.nvmrc`.
+Or from the repository root, without changing directory:
+
+```bash
+pnpm docs:install
+pnpm docs:dev
+pnpm docs:build
+pnpm docs:start
+pnpm docs:typecheck
+```
+
+Both take the usual flags, so `pnpm docs:dev --port 4000` and
+`pnpm docs:start --listen 4000` work.
+
+`pnpm docs:install` is a separate step because this directory has its own lockfile. A `pnpm install`
+at the repository root does not reach it.
 
 ## Why this is not in the workspace
 

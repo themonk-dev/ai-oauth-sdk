@@ -19,7 +19,12 @@
     "lint:fix": "eslint . --fix",
     "release": "pnpm build && changeset publish",
     "verify": "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm verify:exports",
-    "verify:exports": "node scripts/verify-exports.mjs"
+    "verify:exports": "node scripts/verify-exports.mjs",
+    "docs:install": "pnpm --dir docs install",
+    "docs:dev": "pnpm --dir docs dev",
+    "docs:build": "pnpm --dir docs build",
+    "docs:start": "pnpm --dir docs start",
+    "docs:typecheck": "pnpm --dir docs typecheck"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.9",

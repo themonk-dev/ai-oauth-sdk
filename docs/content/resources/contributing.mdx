@@ -76,11 +76,15 @@ dependencies stay out of the root lockfile and out of the audit gate that covers
 packages.
 
 ```bash
-cd docs
-pnpm install
-pnpm dev      # http://localhost:5173
-pnpm build    # static output in build/client
+pnpm docs:install
+pnpm docs:dev      # http://localhost:5173
+pnpm docs:build    # static output in docs/build/client
+pnpm docs:start    # serve the built output
 ```
+
+Those are root-level aliases for the scripts in `docs/package.json`, so `cd docs && pnpm dev` does
+the same thing. The install is separate because a `pnpm install` at the root does not reach a
+directory outside the workspace.
 
 Content is MDX under `docs/content`, and the sidebar is driven by the `meta.json` files next to it.
 `Tabs`, `Steps`, `Accordions`, `TypeTable`, `Callout` and `Cards` are registered globally, so pages
