@@ -10,12 +10,17 @@ export type {
 
 export {
   anthropic,
+  codexBaseUrl,
+  codexClientVersion,
   defineProvider,
   exchangeForCopilotToken,
+  extractCodexModelSlugs,
+  fetchCodexModels,
   githubCopilot,
   google,
   isProviderConfig,
   microsoft,
+  normalizeCodexResponsesBody,
   openai,
   openrouter,
   parseStandardCallback,

@@ -229,6 +229,32 @@ export interface ProviderConfig {
    * `createAuthenticatedFetch`.
    */
   apiHeaders?: (tokens: TokenSet) => Record<string, string>
+  /**
+   * Query parameters every API request needs. Used by
+   * `createAuthenticatedFetch`, which only adds a key the URL does not have.
+   *
+   * OpenAI's Codex surface gates the available model set on `client_version`:
+   * omit it and every model reports as unsupported, so it is not optional in
+   * the way a query parameter usually is.
+   */
+  apiQuery?: (tokens: TokenSet) => Record<string, string>
+  /**
+   * Last chance to rewrite a JSON request body before it is sent.
+   *
+   * Receives the resolved URL and the parsed body, and returns the body to
+   * send. Only called for requests whose body is a JSON object, so bodies that
+   * are streams, form data or anything else pass through untouched.
+   *
+   * This exists for endpoints that accept the shape a standard client sends but
+   * then behave incorrectly. OpenAI's Codex `/responses` runs stateless and
+   * answers a request missing its reasoning configuration with an empty stream
+   * rather than an error.
+   */
+  transformRequestBody?: (
+    url: string,
+    body: Record<string, unknown>,
+    tokens: TokenSet,
+  ) => Record<string, unknown>
   /** Marks providers whose constants are not officially published. */
   experimental?: boolean
   /** Free-form note surfaced in errors and docs. */

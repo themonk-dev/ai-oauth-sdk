@@ -148,8 +148,9 @@ interface ResolvedAuth { apiKey?: string; headers?: Record<string, string>; base
 
 and letting `baseUrl` depend on the credential rather than being a constant —
 which is what GitHub Copilot needs, since its API host comes out of the token
-exchange, and what a ChatGPT-subscription OpenAI token needs, since it must go
-to `chatgpt.com/backend-api` rather than `api.openai.com`.
+exchange. OpenAI no longer needs it: `apiBaseUrl` points at
+`chatgpt.com/backend-api/codex`, the surface these tokens actually open, and an
+API-key account passes `baseUrl` to `createAuthenticatedFetch` instead.
 
 The other gap is that `TokenSet` models OAuth only. Every tool surveyed models
 a discriminated union with an API-key variant, because to a user both answer the

@@ -21,8 +21,13 @@ const openai = createOpenAI({
   fetch: createAuthenticatedFetch(client),
 })
 
-const { text } = await generateText({ model: openai.chat('gpt-5'), prompt: 'hi' })
+const { text } = await generateText({ model: openai.responses('gpt-5.5'), prompt: 'hi' })
 ```
+
+`openai.responses`, not `openai.chat`: the ChatGPT surface serves `/responses`
+and nothing else. `fetchCodexModels(client)` returns the slugs the signed-in
+account can actually use, which is worth calling rather than hardcoding one,
+because the set depends on the user's plan.
 
 Verified against `ai` + `@ai-sdk/openai` with a stub provider: the request
 carries the OAuth bearer, the provider's own extra headers are attached, and an
@@ -69,11 +74,30 @@ for the old behaviour.
 The token alone is not always enough.
 
 **OpenAI** — a ChatGPT-subscription token does not work against
-`api.openai.com`. You need `chatgpt.com/backend-api/codex` with a
-`chatgpt-account-id` header, and the account id comes from the JWT's
-`https://api.openai.com/auth` claim. *The absence of that claim is how you tell
-an API account from a subscription one*, so `baseURL` depends on the credential,
-not the provider.
+`api.openai.com`, which wants an API key and answers this token with
+`403 Missing scopes: api.model.read`. It works against
+`chatgpt.com/backend-api/codex`, which is where the Codex CLI sends its
+requests, and that is what `apiBaseUrl` now points at.
+
+Four things beyond the bearer are needed there, and the descriptor supplies all
+of them: a `chatgpt-account-id` header, an `OpenAI-Beta` and an `originator`
+header, a `client_version` query parameter, and a rewritten request body. That
+last one is the awkward part. The backend runs stateless, so a `/responses` call
+has to set `store: false`, configure `reasoning`, ask for
+`reasoning.encrypted_content` in `include`, carry no server-side ids on its
+input items, and send no `max_output_tokens`. Miss any of it and the call
+returns 200 with an empty stream rather than an error.
+`normalizeCodexResponsesBody` does that, and the provider applies it through
+`transformRequestBody`.
+
+*The absence of the `https://api.openai.com/auth` claim is how you tell an API
+account from a subscription one.* For an API account, pass
+`baseUrl: 'https://api.openai.com/v1'` to `createAuthenticatedFetch`.
+
+Speech to speech is not reachable this way. ChatGPT's voice transport wants a
+token minted for the ChatGPT *web* client, which comes from a browser session
+cookie rather than from an OAuth grant, so no scope or header here opens it. Use
+an API key and the documented `/v1/realtime/calls` interface for that.
 
 **GitHub Copilot** — two things. The API host comes out of the token exchange
 (`api.individual.githubcopilot.com`, or an enterprise host), so it is data, not
