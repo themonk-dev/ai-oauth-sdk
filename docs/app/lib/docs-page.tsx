@@ -12,6 +12,7 @@ import { use } from 'react'
 import { Link } from 'react-router'
 
 import { useMDXComponents } from '@/components/mdx'
+import { icons } from './icons'
 import { baseOptions } from './layout.shared'
 import { gitConfig } from './shared'
 import { docs, getPageMarkdownUrl, source } from './source'
@@ -74,10 +75,18 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
 
   const { toc } = use(page.load())
   const Mdx = page.body
+  const Icon = typeof page.icon === 'string' ? icons[page.icon] : undefined
 
   return (
     <DocsPage toc={toc} tableOfContent={{ style: 'clerk' }}>
-      <DocsTitle>{page.title}</DocsTitle>
+      <DocsTitle className="flex items-center gap-3">
+        {Icon && (
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
+            <Icon className="size-5" />
+          </span>
+        )}
+        {page.title}
+      </DocsTitle>
       <DocsDescription>{page.description}</DocsDescription>
 
       <nav
