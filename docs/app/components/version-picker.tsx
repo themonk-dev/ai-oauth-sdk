@@ -4,8 +4,13 @@ import { Link, useLocation } from 'react-router'
 
 import { currentVersion, docsVersions, versionHrefFor } from '@/lib/versions'
 
+/**
+ * The sidebar footer stacks its children with no gap, and this sits directly
+ * under the GitHub and theme row, so the margin is the only thing keeping the
+ * two apart. It matches the footer's own 8px top padding.
+ */
 const TRIGGER =
-  'flex w-full items-center gap-2 rounded-lg border border-fd-border bg-fd-card px-2.5 py-2 text-xs text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground'
+  'mt-2 flex w-full items-center gap-2 rounded-lg border border-fd-border bg-fd-card px-2.5 py-2 text-xs text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground'
 
 /**
  * Renders as a label while there is one version, and as a dropdown once a
