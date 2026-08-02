@@ -1,0 +1,110 @@
+---
+title: Browser
+description: Popup and full-page redirect receivers, with session or local storage behind them.
+icon: RiGlobeLine
+---
+
+```npm
+npm install @ai-oauth-sdk/browser
+```
+
+A browser cannot bind a port, so the callback has to come back through the page itself. There are
+two ways to arrange that, and they trade off against each other.
+
+| Behaviour | Popup | Full-page redirect |
+| --- | --- | --- |
+| Host page state | kept | lost, page reloads |
+| Popup blockers | can block it | not affected |
+| Embedded webviews | often unavailable | works |
+| Completion | resolves in place | on the next page load |
+
+## Popup
+
+```ts
+import { loginWithPopup, postCallbackToOpener } from '@ai-oauth-sdk/browser'
+
+button.onclick = () => loginWithPopup('openai', { clientId, redirectUri })
+```
+
+It must be called from a user gesture, or the browser blocks the window.
+
+Your `redirectUri` points at a page on your own origin whose only job is one line:
+
+```html
+<!-- /auth/callback.html -->
+<script type="module">
+  import { postCallbackToOpener } from 'https://esm.sh/@ai-oauth-sdk/browser'
+  postCallbackToOpener()
+</script>
+```
+
+By the time that page runs, the popup is same-origin with the opener, so it can hand the code back
+over `postMessage`. Messages from any other origin are ignored.
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `redirectUri` | `string` | A page on your origin that calls postCallbackToOpener(). Defaults to `the current URL without its fragment`. |
+| `width` | `number` | Popup width. |
+| `height` | `number` | Popup height. |
+| `windowName` | `string` | Popup window name. |
+| `pollIntervalMs` | `number` | How often to check whether the user closed the popup. Defaults to `400`. |
+
+The popup is polled because a closed window is the only signal the browser gives that the user gave
+up on the flow.
+
+## Full-page redirect
+
+The flow now spans two page loads, so nothing can live in a closure. The PKCE verifier goes to
+`sessionStorage` on the way out and is read back on the way in.
+
+```ts
+import {
+  createBrowserAuthClient,
+  handleRedirectCallback,
+  startRedirectLogin,
+} from '@ai-oauth-sdk/browser'
+
+const client = createBrowserAuthClient({ provider: 'openai', clientId })
+
+// At startup. Returns null when the current URL is not a callback,
+// so calling it unconditionally is fine.
+const tokens = await handleRedirectCallback(client)
+
+if (tokens) {
+  console.log('signed in as', tokens.email)
+}
+
+button.onclick = () => startRedirectLogin(client)
+```
+
+`handleRedirectCallback` strips `code` and `state` from the address bar afterwards. Pass
+`{ cleanUrl: false }` to leave them, and `{ url }` to parse something other than
+`window.location.href`, in which case the address bar is left alone because you are clearly parsing
+something else.
+
+Use `startRedirectLogin` rather than `client.login({ receiver: redirectReceiver() })`. The receiver
+exists, but its `wait()` never settles, since the document is being torn down. The helper makes
+that explicit.
+
+## Storage
+
+```ts
+import { localStorageAdapter, sessionStorageAdapter } from '@ai-oauth-sdk/browser'
+```
+
+`createBrowserAuthClient` defaults to `sessionStorage`. It survives the redirect round-trip but not
+the tab, which is the safer default for a bearer token in a browser. Switch to `localStorage` when
+you want the session to outlive the tab, knowing that any XSS on your origin can then read it.
+
+<Callout type="warn" title="A token in a browser is readable by your page">
+  Neither storage is a vault. If a script on your origin can run, it can read the token. That is
+  true of every browser OAuth client, and it is the reason the popup and redirect receivers exist
+  for public clients with PKCE rather than for anything holding a secret.
+</Callout>
+
+## CORS
+
+The token exchange is a request from your page to the provider's token endpoint. Providers that
+were designed for desktop CLIs do not always send permissive CORS headers, and no client library
+can add them. If the exchange fails with a CORS error, run that half on your own server and use the
+[callback route recipe](/docs/v/0-3/recipes/server-callback) instead.

@@ -5,6 +5,16 @@ import { createElement } from 'react'
 import { icons } from './icons'
 import { docsContentRoute, docsRoute } from './shared'
 
+function resolveIcon(name?: string) {
+  if (!name) {
+    return undefined
+  }
+
+  const Icon = icons[name]
+
+  return Icon ? createElement(Icon) : undefined
+}
+
 export const docs = defineDocs({
   dir: 'content',
   docs: {
@@ -18,19 +28,26 @@ export const docs = defineDocs({
 export const source = loader({
   source: docs.toFumadocsSource(),
   baseUrl: docsRoute,
-  icon(name) {
-    if (!name) {
-      return undefined
-    }
+  icon: resolveIcon,
+})
 
-    const Icon = icons[name]
-
-    if (!Icon) {
-      return undefined
-    }
-
-    return createElement(Icon)
+// Archived versions live outside `content/` so the macro above does not sweep
+// them into the current sidebar. Each is a frozen copy: fix a typo in the live
+// docs and the archive keeps the typo, which is the point of an archive.
+export const docsV03 = defineDocs({
+  dir: 'versions/0-3',
+  docs: {
+    async: true,
+    postprocess: {
+      includeProcessedMarkdown: true,
+    },
   },
+})
+
+export const sourceV03 = loader({
+  source: docsV03.toFumadocsSource(),
+  baseUrl: `${docsRoute}/v/0-3`,
+  icon: resolveIcon,
 })
 
 export function getPageMarkdownUrl(page: (typeof source)['$inferPage']) {

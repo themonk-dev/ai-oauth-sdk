@@ -76,11 +76,11 @@ about that behaviour is on the token set itself.
 ## Several accounts
 
 ```ts
-const work = createAuthClient({ provider: 'anthropic', clientId, accountKey: 'work' })
-const personal = createAuthClient({ provider: 'anthropic', clientId, accountKey: 'personal' })
+const work = createAuthClient({ provider: 'claude', clientId, accountKey: 'work' })
+const personal = createAuthClient({ provider: 'claude', clientId, accountKey: 'personal' })
 ```
 
-`accountKey` changes the storage key from `tokens:anthropic` to `tokens:anthropic:work`. Nothing
+`accountKey` changes the storage key from `tokens:claude` to `tokens:claude:work`. Nothing
 else about the client changes. On the CLI that is `--account`.
 
 ## Reading the identity
@@ -104,7 +104,7 @@ on the token set when they are populated.
 
 ## Ending a session
 
-Only `google`, `xai` and `microsoft` declare an RFC 7009 revocation endpoint among the built-ins.
+Only `gemini`, `xai` and `azure-ai` declare an RFC 7009 revocation endpoint among the built-ins.
 For every other provider, clearing the local copy is all anyone can do from here.
 [`revoke()` and `logout()`](/docs/reference/auth-client#session) are the methods.
 

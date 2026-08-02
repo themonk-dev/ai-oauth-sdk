@@ -48,11 +48,11 @@ import { login, createNodeAuthClient, publicClientIds } from 'ai-oauth-sdk/node'
 
 // Picks a receiver, opens the browser, catches the callback, and stores the
 // tokens in ~/.ai-oauth-sdk/auth.json with mode 0600.
-await login('anthropic', { clientId: publicClientIds.anthropic })
+await login('claude', { clientId: publicClientIds.claude })
 
 const client = createNodeAuthClient({
-  provider: 'anthropic',
-  clientId: publicClientIds.anthropic,
+  provider: 'claude',
+  clientId: publicClientIds.claude,
 })
 
 const accessToken = await client.getAccessToken() // refreshes when near expiry
@@ -212,9 +212,9 @@ Gemini is the only built-in that also needs a secret, because its installed-app 
 
 ```ts
 createAuthClient({
-  provider: 'google',
-  clientId: publicClientIds.google,
-  clientSecret: publicClientSecrets.google,
+  provider: 'gemini',
+  clientId: publicClientIds.gemini,
+  clientSecret: publicClientSecrets.gemini,
 })
 ```
 

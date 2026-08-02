@@ -1,0 +1,92 @@
+---
+title: Vue
+description: A composable that returns refs, and cleans itself up through onScopeDispose.
+icon: RiVuejsLine
+---
+
+```npm
+npm install @ai-oauth-sdk/vue
+```
+
+Vue 3.3 and up.
+
+```vue
+<script setup lang="ts">
+import { useAuth } from '@ai-oauth-sdk/vue'
+import { popupReceiver } from '@ai-oauth-sdk/browser'
+
+const { login, logout, tokens, isLoading, error } = useAuth({
+  provider: 'openai',
+  clientId,
+  receiver: popupReceiver(),
+})
+</script>
+
+<template>
+  <div v-if="tokens">
+    <span>{{ tokens.email }}</span>
+    <button @click="logout()">Sign out</button>
+  </div>
+  <div v-else>
+    <button :disabled="isLoading" @click="login()">
+      {{ isLoading ? 'Signing in...' : 'Sign in with ChatGPT' }}
+    </button>
+    <p v-if="error" role="alert">{{ error.message }}</p>
+  </div>
+</template>
+```
+
+## What comes back
+
+`tokens`, `isLoading` and `error` are readonly refs. `isAuthenticated` is a computed. `client` is
+the plain `AuthClient`, not wrapped in anything.
+
+The token uses `shallowRef` rather than `ref`. A `TokenSet` is replaced wholesale and never mutated
+in place, so deep reactivity would only cost proxy overhead on an object nobody reaches into.
+
+## Where you can call it
+
+`onScopeDispose` is what handles cleanup, which means the composable works in `setup()`, in a
+detached `effectScope()`, and inside a Pinia store, without leaking the subscription. Outside a
+component or effect scope it is a no-op, which is exactly right: there is no scope to tie the
+lifetime to, so nothing gets torn down early.
+
+```ts
+// stores/auth.ts
+import { defineStore } from 'pinia'
+import { useAuth } from '@ai-oauth-sdk/vue'
+import { popupReceiver } from '@ai-oauth-sdk/browser'
+
+export const useAuthStore = defineStore('auth', () => {
+  return useAuth({
+    provider: 'openai',
+    clientId: import.meta.env.VITE_OPENAI_CLIENT_ID,
+    receiver: popupReceiver(),
+  })
+})
+```
+
+That is the way to share one session across a Vue app. Calling the composable in two components
+gives you two clients and two token caches.
+
+## Restoring
+
+`restoreOnMount` defaults to true, so any persisted session is loaded as soon as the composable
+runs. Set it to false when you want to control that yourself, then call `client` methods directly.
+
+## Nuxt
+
+The composable touches `window` only through whichever receiver and storage adapter you give it, so
+guard those rather than the composable:
+
+```ts
+const auth = useAuth({
+  provider: 'openai',
+  clientId,
+  ...(import.meta.client ? { receiver: popupReceiver() } : {}),
+})
+```
+
+On the server there is no receiver, so `login()` has nothing to run and the rest of the state still
+renders. For a real server-side flow, use a route handler instead: see
+[callback routes](/docs/v/0-3/recipes/server-callback).

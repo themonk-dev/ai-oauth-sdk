@@ -1,0 +1,104 @@
+---
+title: Device code
+description: RFC 8628 for machines with no reachable browser, plus the two providers that bend it.
+icon: RiBroadcastLine
+---
+
+The user is shown a short code and a URL. They open that URL on any device they like, enter the
+code, and approve. Meanwhile the process polls the token endpoint until the approval lands.
+
+Nothing is redirected anywhere, so this is the only flow that works when the machine running your
+code has no browser at all and no way to reach one.
+
+```ts
+const tokens = await client.deviceLogin({
+  onCode: ({ verificationUri, userCode, verificationUriComplete }) => {
+    console.log(`Open ${verificationUri} and enter ${userCode}`)
+  },
+})
+```
+
+From the CLI:
+
+```bash
+ai-oauth-sdk login github-copilot --device
+```
+
+## Which providers support it
+
+| Provider | Support |
+| --- | --- |
+| `github-copilot` | device flow only, no redirect URI is registered |
+| `qwen` | device flow only |
+| `xai` | device and loopback both |
+| `openai` | yes, but not RFC 8628, and it needs to be enabled per account |
+| `google` | no, see below |
+| `anthropic` | no |
+| `openrouter` | no |
+
+Google's device endpoint exists but accepts only clients registered as "TVs and Limited Input
+devices". The published gemini-cli client is a Desktop app and is refused with `Invalid client
+type`, so the descriptor deliberately does not declare the endpoint rather than advertising a flow
+that cannot work.
+
+## OpenAI is not RFC 8628
+
+It shares the shape and none of the wire format. JSON request bodies rather than form encoding,
+HTTP 403 and 404 as the "still pending" signal rather than `authorization_pending`, a
+server-generated PKCE verifier, and a second hop through the ordinary token endpoint afterwards.
+
+None of that is expressible as configuration, so OpenAI supplies the two steps itself through the
+`deviceFlow` hook on its descriptor. From the outside, `deviceLogin()` looks identical.
+
+<Callout type="warn" title="OpenAI device login has a prerequisite">
+  Turn on "Enable device code authorization for Codex" in
+  [**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security) before trying. Without it the verification page refuses the code, and the command sits there polling for
+  an approval that can never arrive. The provider descriptor carries that sentence in
+  `devicePrerequisite`, and the CLI prints it next to the code.
+</Callout>
+
+## What onCode receives
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `userCode` | `string` | The short code the user types. |
+| `verificationUri` | `string` | Where they type it. |
+| `verificationUriComplete` | `string | undefined` | Pre-filled variant, when the provider supplies one. Good for a QR code. |
+| `expiresAt` | `number` | Epoch milliseconds. Usually 10 to 15 minutes out. |
+| `intervalMs` | `number` | How often the library polls. Set by the provider. |
+| `codeVerifier` | `string | undefined` | Half a credential when present. Treat it like the device code. |
+
+`onCode` is awaited, so you can render a QR code or write to a log before polling starts.
+
+## Polling
+
+The library respects the provider's `interval` and backs off on `slow_down`, as the RFC requires.
+It stops on `expired_token` and `access_denied`, and it stops immediately if you abort:
+
+```ts
+const controller = new AbortController()
+setTimeout(() => controller.abort(), 5 * 60_000)
+
+await client.deviceLogin({ onCode, signal: controller.signal })
+```
+
+An abort raises `OAuthError` with code `aborted`. An approval that never comes raises
+`device_flow_failed`.
+
+## Copilot needs a second exchange
+
+The `ghu_` token GitHub returns is a GitHub token, not a Copilot API token:
+
+```ts
+import { exchangeForCopilotToken } from '@ai-oauth-sdk/core'
+
+const tokens = await client.deviceLogin({ onCode })
+const copilot = await exchangeForCopilotToken(tokens)
+
+// copilot.token expires in about 30 minutes. Fetch it per session,
+// do not store it. The durable credential is the one in tokens.
+```
+
+The API host comes out of that exchange too, which means it is data rather than configuration.
+Enterprise accounts get a different host from individual ones. See
+[GitHub Copilot](/docs/v/0-3/providers/github-copilot).

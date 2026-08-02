@@ -55,8 +55,8 @@ afterwards, build it yourself:
 import { createNodeAuthClient, defaultReceiver, publicClientIds } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'anthropic',
-  clientId: publicClientIds.anthropic,
+  provider: 'claude',
+  clientId: publicClientIds.claude,
 })
 
 if (!(await client.isAuthenticated())) {

@@ -34,17 +34,16 @@ are missing.
 | Provider | Flow | Client id | Status |
 | --- | --- | --- | --- |
 | [`openai`](/docs/providers/openai) | loopback `:1455`, device | `publicClientIds.openai` | stable |
-| [`anthropic`](/docs/providers/anthropic) | loopback any port, hosted paste | `publicClientIds.anthropic` | stable |
-| [`google`](/docs/providers/google) | loopback any port | id and secret | stable |
+| [`claude`](/docs/providers/claude) | loopback any port, hosted paste | `publicClientIds.claude` | stable |
+| [`gemini`](/docs/providers/gemini) | loopback any port | id and secret | stable |
 | [`github-copilot`](/docs/providers/github-copilot) | device only | `publicClientIds['github-copilot']` | stable |
 | [`openrouter`](/docs/providers/openrouter) | loopback any port | none, identified by callback URL | stable |
 | [`xai`](/docs/providers/xai) | loopback `:56121`, device | `publicClientIds.xai` | experimental |
 | [`qwen`](/docs/providers/qwen) | device only | `publicClientIds.qwen` | experimental |
-| [`microsoft`](/docs/providers/microsoft) | loopback any port | yours | stable |
+| [`azure-ai`](/docs/providers/azure-ai) | loopback any port | yours | stable |
 
-`microsoft` is a factory rather than a constant, exported as `azureAi()`, because its endpoints are
-tenant-scoped and every
-Azure app registration is its own client.
+`azure-ai` is a factory rather than a constant, exported as `azureAi()`, because its endpoints are
+tenant-scoped and every Azure app registration is its own client.
 
 Raw credential values are on the [credentials](/docs/resources/credentials) page.
 
@@ -53,8 +52,8 @@ Raw credential values are on the [credentials](/docs/resources/credentials) page
 | Provider | PKCE | Device flow | Revocation | Userinfo | Echoes `state` |
 | --- | --- | --- | --- | --- | --- |
 | `openai` | yes | yes, not RFC 8628 | no | yes | yes |
-| `anthropic` | yes | no | no | no | yes |
-| `google` | yes | no | yes | yes | yes |
+| `claude` | yes | no | no | no | yes |
+| `gemini` | yes | no | yes | yes | yes |
 | `github-copilot` | no | yes | no | no | not applicable |
 | `openrouter` | yes | no | no | no | **no** |
 | `xai` | yes | yes | yes | yes | yes |

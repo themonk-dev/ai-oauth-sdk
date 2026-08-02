@@ -149,12 +149,27 @@ The sidebar footer carries a version picker. It renders as a plain label while t
 and becomes a dropdown as soon as a second is archived, so it is never a menu with nothing in it.
 
 `defineDocs` is a macro, so a collection has to exist at build time. An archived version cannot be
-discovered from the filesystem and needs three changes:
+discovered from the filesystem and needs four changes:
 
-1. Copy `content/` to `content/v/<version>/`.
-2. Add a collection for it in `app/lib/source.ts`, and a loader with
-   `baseUrl: '/docs/v/<version>'`.
-3. Add an entry to `docsVersions` in `app/lib/versions.ts`, and a route for it in `app/routes.ts`.
+1. Copy `content/` to `versions/<slug>/`, then rewrite its internal links:
+   `sed -i 's|](/docs/|](/docs/v/<slug>/|g'`. Without that, every link in the archive drops the
+   reader back into the current docs.
+2. Add a collection and a loader in `app/lib/source.ts`, with `baseUrl: '/docs/v/<slug>'`.
+3. Register it in `collections` in `app/lib/docs-page.tsx`, add an entry to `docsVersions` in
+   `app/lib/versions.ts`, and add two routes in `app/routes.ts`, an index and a splat. Put them
+   above `docs/*`, which would otherwise swallow them.
+4. Add the directory to `archived` in `react-router.config.ts`, or nothing prerenders.
 
-That is the same shape other Fumadocs sites use for this, and the cost is a full copy of the content
-tree per archived version. Worth doing at a major release rather than at every patch.
+Archives live in `versions/`, not under `content/`, because the macro globs `content/**` and would
+pull an archived copy into the current sidebar.
+
+**Slugs carry no dot.** `0.3` in a path makes some static hosts read the segment as a filename and
+answer with a directory listing rather than the page, so the archive is served from `/docs/v/0-3`
+while the picker still says `0.3`.
+
+The picker resolves each version's link at build time and falls back to that version's index when
+the current page does not exist there. That matters after a rename: `/docs/providers/claude` has no
+counterpart in 0.3, where the page was `anthropic`.
+
+The cost is a full copy of the content tree per archived version, so this is worth doing at a
+breaking release rather than at every patch.

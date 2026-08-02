@@ -1,0 +1,94 @@
+---
+title: Manual paste
+description: Print the URL, let the user paste the result back. The fallback that always works.
+icon: RiClipboardLine
+---
+
+The process prints an authorization URL. The user opens it wherever their browser actually is,
+approves, and pastes what they get back. No port is bound and no redirect has to reach the machine.
+
+That makes it the right answer for SSH sessions, containers, CI, and any provider that only
+supports a hosted callback page.
+
+```ts
+import { promptReceiver } from '@ai-oauth-sdk/node'
+
+const tokens = await client.login({ receiver: promptReceiver() })
+```
+
+```bash
+ai-oauth-sdk login anthropic --paste
+```
+
+## What the user pastes
+
+Whatever the provider gave them. The receiver hands the raw string to the provider's own parser, so
+all three of these work:
+
+```
+https://localhost:1455/callback?code=abc123&state=xyz789
+abc123#xyz789
+abc123
+```
+
+Anthropic's hosted page hands back `code#state` as one opaque string rather than a URL, which is
+why the parsing is per-provider rather than a single regex.
+
+A bare code with no `state` is accepted only from providers that documented they do not echo it.
+Everywhere else the login is rejected, because a callback that cannot be matched to the flow that
+started it is indistinguishable from a forged one.
+
+## Options
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `redirectUri` | `string` | Where the provider should send the user. Defaults to `the provider's hosted callback page`. |
+| `openBrowser` | `boolean` | Also try to open a browser locally, in case there is one. Defaults to `true`. |
+| `message` | `(url: string) => string` | Replaces the printed instructions. |
+| `signal` | `AbortSignal` | Abandons the pending read. Used when racing this against another receiver. |
+
+## Do not make users choose
+
+A user who reaches for `--paste` on their own laptop, where a loopback server would have worked
+fine, used to get the worst of both: the redirect landed on a port nothing was listening on, the
+browser showed "This site can't be reached", and the code was only recoverable out of the address
+bar.
+
+Since the port is known up front, the fix is to listen on it anyway. `hybridReceiver` starts both
+halves and takes whichever finishes first:
+
+```ts
+import { hybridReceiver } from '@ai-oauth-sdk/node'
+
+await client.login({ receiver: hybridReceiver() })
+```
+
+Three details keep that race honest:
+
+- **The listener is best-effort.** Binding fails when the port is held or the sandbox forbids
+  `listen()`, which are exactly the conditions pasting exists to serve. A failure degrades to the
+  prompt alone rather than ending the login before the URL is even shown.
+- **Only the prompt's success competes.** A blank line or a mistyped paste rejects that half, and
+  letting a rejection win would tear down a server that was about to receive a perfectly good
+  callback.
+- **Only the prompt announces the URL.** `present()` is what opens the browser, and two halves
+  announcing means two tabs on the same authorization URL.
+
+Both halves have to advertise the same redirect URI, since the provider matches it against the
+value replayed at the code exchange, and an ephemeral port is only known once the server has bound.
+
+## Building your own prompt
+
+`promptReceiver` is a thin wrapper over `manualReceiver` from the core, which takes any async
+function returning a string. That is the hook for a TUI, a GUI dialog, or a test:
+
+```ts
+import { manualReceiver } from '@ai-oauth-sdk/core'
+
+const receiver = manualReceiver({
+  redirectUri: 'https://example.com/callback',
+  async prompt(url) {
+    return await showModalAndAwaitPaste(url)
+  },
+})
+```

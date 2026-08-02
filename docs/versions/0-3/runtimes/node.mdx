@@ -1,0 +1,170 @@
+---
+title: Node, Bun and Deno
+description: A loopback callback server, file-backed token storage, and a browser launcher.
+icon: RiNodejsLine
+---
+
+```npm
+npm install @ai-oauth-sdk/node
+```
+
+## One call
+
+```ts
+import { login, publicClientIds } from '@ai-oauth-sdk/node'
+
+const tokens = await login('openai', { clientId: publicClientIds.openai })
+console.log(tokens.accessToken)
+```
+
+`login()` starts a receiver, opens the browser, waits for the callback, exchanges the code, stores
+the result, and returns it. It is the whole flow in one line, and it is what a CLI wants.
+
+## Which receiver it picks
+
+This is the part worth understanding, because getting it wrong produces a command that hangs.
+
+```ts
+const isRemote = Boolean(process.env.SSH_TTY ?? process.env.SSH_CONNECTION)
+const isHeadless = !canOpenBrowser() || isRemote
+```
+
+- A **desktop** with a browser available gets `loopbackReceiver()`.
+- A **headless box or SSH session** gets `promptReceiver()` when the provider publishes a hosted
+  callback page, because a loopback URI on a remote host is a redirect nothing can receive.
+- A provider that only supports a **hosted redirect** always gets the prompt.
+- Everything else falls back to a loopback server that prints the URL instead of opening a browser.
+
+Override it whenever you know better:
+
+```ts
+import { login, loopbackReceiver } from '@ai-oauth-sdk/node'
+
+await login('openai', {
+  clientId,
+  receiver: loopbackReceiver({ port: 1455, openBrowser: false }),
+})
+```
+
+## A longer-lived client
+
+`login()` builds a client, uses it once, and returns the tokens. When you need the client
+afterwards, build it yourself:
+
+```ts
+import { createNodeAuthClient, defaultReceiver, publicClientIds } from '@ai-oauth-sdk/node'
+
+const client = createNodeAuthClient({
+  provider: 'anthropic',
+  clientId: publicClientIds.anthropic,
+})
+
+if (!(await client.isAuthenticated())) {
+  await client.login({ receiver: defaultReceiver(client.provider) })
+}
+
+const accessToken = await client.getAccessToken()
+```
+
+`createNodeAuthClient` differs from `createAuthClient` in two ways: it defaults storage to a file,
+and it uses `node:crypto` directly rather than depending on `globalThis.crypto` being exposed.
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `persist` | `boolean` | Write tokens to disk. Set false to keep them in memory only. Defaults to `true`. |
+| `authDir` | `string` | Directory for the credential file. Defaults to `~/.ai-oauth-sdk`. |
+| `storage` | `AuthStorage` | Replaces the file backend entirely. |
+
+## Storage on disk
+
+```ts
+import { defaultAuthDir, fileStorage, listStoredSessions } from '@ai-oauth-sdk/node'
+
+const storage = fileStorage({ dir: '/etc/myapp/credentials' })
+const sessions = await listStoredSessions()
+```
+
+The file is a single JSON document written with mode `0600`. `listStoredSessions()` reads it back
+and reports which providers and accounts have a stored token, which is what `ai-oauth-sdk list`
+prints.
+
+## Receivers
+
+<Accordions type="single">
+
+<Accordion title="loopbackReceiver()">
+
+Binds a one-shot HTTP server on `127.0.0.1`, opens the browser, and resolves when the redirect
+arrives. It answers `GET` and `HEAD` only, serves exactly one callback, and shuts down afterwards.
+
+```ts
+loopbackReceiver({
+  port: 1455, // 0 picks a free port
+  path: '/auth/callback',
+  openBrowser: true,
+  onAuthorizationUrl: (url) => console.log(`Open ${url}`),
+})
+```
+
+Providers that registered a specific port have to use it. OpenAI is registered on `1455`; xAI on
+`56121`. Anthropic and Google accept any port, so they default to `0`.
+
+</Accordion>
+
+<Accordion title="promptReceiver()">
+
+Prints the authorization URL, then reads the pasted result from stdin. The right default for SSH
+sessions, containers and CI.
+
+```ts
+promptReceiver({
+  openBrowser: false,
+  message: (url) => `Sign in at:\n\n  ${url}\n`,
+})
+```
+
+It accepts a full redirect URL, a bare code, or Anthropic's `code#state` string, because the
+provider's own parser handles the input.
+
+</Accordion>
+
+<Accordion title="hybridReceiver()">
+
+Runs both at once. The loopback server binds, the prompt is printed, and whichever completes first
+wins.
+
+```ts
+await client.login({ receiver: hybridReceiver({ port: 1455 }) })
+```
+
+Both halves advertise the same redirect URI, since the provider matches it against the value
+replayed at the code exchange. Only the prompt announces the URL, or the user would get two browser
+tabs. If binding the port fails, which is exactly the situation pasting exists for, it degrades to
+the prompt alone rather than failing the login.
+
+</Accordion>
+
+</Accordions>
+
+## Opening a browser
+
+```ts
+import { canOpenBrowser, openBrowser } from '@ai-oauth-sdk/node'
+
+if (canOpenBrowser()) {
+  openBrowser('https://example.com')
+}
+```
+
+Set `AI_OAUTH_SDK_NO_BROWSER` and neither does anything: `openBrowser()` returns without spawning
+and `canOpenBrowser()` reports false, so a receiver prints the URL instead. That is what you want in
+a test suite or a CI job that drives a login end to end.
+
+`canOpenBrowser()` is what `defaultReceiver` consults. On Linux it looks for a display; it returns
+false in a container with no `DISPLAY` and no `WAYLAND_DISPLAY`.
+
+## Bun and Deno
+
+Both run this package unchanged. `node:http` and `node:crypto` are supported in each, and the
+loopback server uses nothing exotic. Deno needs `--allow-net` for the callback server and
+`--allow-read --allow-write` if you keep the file storage.

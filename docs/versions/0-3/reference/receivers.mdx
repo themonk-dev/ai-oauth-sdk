@@ -1,0 +1,174 @@
+---
+title: Receivers
+description: The interface that gets the authorization code back into your process, every built-in implementation and its options, and how to write one of your own.
+icon: RiRssLine
+---
+
+```ts
+interface CallbackReceiver {
+  readonly id: string
+  start(context: ReceiverContext): Promise<StartedReceiver>
+}
+
+interface StartedReceiver {
+  redirectUri: string
+  present(url: string): Promise<void>
+  wait(): Promise<CallbackResult>
+  close(): Promise<void>
+}
+```
+
+`redirectUri` has to be final by the time `start()` resolves, because it goes into the
+authorization request. `close()` has to be safe to call whether or not `wait()` ever settled.
+
+## From @ai-oauth-sdk/core
+
+The core ships one receiver, because it is the only kind that needs nothing from the platform. A
+prompt is whatever function you give it.
+
+### manualReceiver(options)
+
+Prints or displays the URL through a callback you supply, then reads back whatever the user gives
+you.
+
+```ts
+manualReceiver({
+  redirectUri: 'https://example.com/callback',
+  prompt: async (url) => showModalAndAwaitPaste(url),
+})
+```
+
+The returned string is parsed with the provider's own parser, so a full URL, a bare code, or
+Anthropic's `code#state` all work.
+
+## From @ai-oauth-sdk/node
+
+Three receivers, covering the desktop case, the headless case, and the case where you cannot tell
+which you are in. `defaultReceiver()` picks between them for you.
+
+### loopbackReceiver(options)
+
+A one-shot HTTP server on `127.0.0.1`.
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `port` | `number` | 0 picks a free one. Defaults to `the provider's port`. |
+| `path` | `string` | Defaults to `the provider's path`. |
+| `host` | `string` | Defaults to `127.0.0.1`. |
+| `redirectHost` | `string` | Host used in the redirect URI, if it differs. |
+| `openBrowser` | `boolean` | Defaults to `true`. |
+| `onAuthorizationUrl` | `(url: string) => void` |  |
+| `successHtml` | `string` |  |
+| `failureHtml` | `(error: string) => string` |  |
+
+Answers `GET` and `HEAD` only, on the configured path only, exactly once.
+
+### promptReceiver(options)
+
+Prints the URL and reads the pasted result from stdin.
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `redirectUri` | `string` | Defaults to `the provider's hosted callback`. |
+| `openBrowser` | `boolean` | Defaults to `true`. |
+| `message` | `(url: string) => string` |  |
+| `signal` | `AbortSignal` | Abandons the pending read. |
+
+### hybridReceiver(options)
+
+Both of the above at once, first one wins. Takes everything `loopbackReceiver` takes, plus
+`message`.
+
+### defaultReceiver(provider)
+
+Picks between them based on the machine and the provider. This is what `login()` uses when you pass
+no receiver.
+
+## From @ai-oauth-sdk/browser
+
+A page cannot bind a port, so both of these route the callback back through the browser. They trade
+off against each other rather than one being better; see
+[popup and redirect](/docs/v/0-3/flows/popup-and-redirect).
+
+### popupReceiver(options)
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `redirectUri` | `string` | A page on your origin that calls postCallbackToOpener(). Defaults to `the current URL without its fragment`. |
+| `width` | `number` |  |
+| `height` | `number` |  |
+| `windowName` | `string` |  |
+| `pollIntervalMs` | `number` | Defaults to `400`. |
+
+### postCallbackToOpener(payload?)
+
+Call this on your redirect page. Returns `true` when it found a callback to post. Defaults to
+reading `window.location.search`.
+
+### redirectReceiver(options)
+
+Exists for completeness. Its `wait()` never settles, because the document is unloading, so use the
+two helpers instead.
+
+### startRedirectLogin(client, options) and handleRedirectCallback(client, options)
+
+The pair that actually implements a full-page redirect. See
+[popup and redirect](/docs/v/0-3/flows/popup-and-redirect).
+
+## From @ai-oauth-sdk/react-native
+
+Both take the native module as an argument rather than importing it, so the package installs in a
+bare app that has none of Expo.
+
+### deepLinkReceiver(options)
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `linking` | `LinkingLike` | **Required.** Linking from react-native. |
+| `redirectUri` | `string` | **Required.** Your app's callback URL. |
+
+Also checks `getInitialURL()`, so a cold start after the OS killed your app still completes.
+
+### authSessionReceiver(options)
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `webBrowser` | `WebBrowserLike` | **Required.** The expo-web-browser module. |
+| `redirectUri` | `string` | **Required.** From AuthSession.makeRedirectUri(). |
+| `browserOptions` | `Record<string, unknown>` | Forwarded to openAuthSessionAsync. |
+
+## Writing one
+
+```ts
+import type { CallbackReceiver } from '@ai-oauth-sdk/core'
+
+export function customProtocolReceiver(scheme: string): CallbackReceiver {
+  return {
+    id: 'custom-protocol',
+    async start(context) {
+      const pending = registerProtocolHandler(scheme)
+
+      return {
+        redirectUri: `${scheme}://auth/callback`,
+        async present(url) {
+          await context.openUrl?.(url)
+        },
+        async wait() {
+          const incoming = await pending.next()
+
+          return readCallback(context.provider, incoming)
+        },
+        async close() {
+          pending.dispose()
+        },
+      }
+    },
+  }
+}
+```
+
+`readCallback` from the core does the parsing and raises `authorization_denied` when the provider
+sent an error instead of a code, so every receiver handles that identically.
+
+`context` carries the resolved provider, an `openUrl` when the caller supplied one, and the login's
+`AbortSignal`. Honour the signal if your receiver can wait indefinitely.

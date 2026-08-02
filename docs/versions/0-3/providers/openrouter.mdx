@@ -1,0 +1,68 @@
+---
+title: OpenRouter
+description: A deliberately non-standard flow, kept working through two hooks rather than a special case.
+icon: OpenRouterIcon
+---
+
+```ts
+import { createNodeAuthClient } from '@ai-oauth-sdk/node'
+
+// No client id. OpenRouter identifies applications by their callback URL.
+const client = createNodeAuthClient({ provider: 'openrouter' })
+```
+
+| Setting | Value |
+| --- | --- |
+| Authorization | `https://openrouter.ai/auth` |
+| Token | `https://openrouter.ai/api/v1/auth/keys` |
+| Redirect | loopback, any port, path `/callback` |
+| Client id | none |
+| API base | `https://openrouter.ai/api/v1` |
+
+## Three departures from OAuth 2.0
+
+1. The redirect parameter is `callback_url`, not `redirect_uri`.
+2. No `client_id`, `response_type`, `scope` or `state` is sent. The application is identified by its
+   callback URL alone.
+3. The exchange returns `{ key }`, not `{ access_token }`, and the result is a durable
+   user-controlled API key with no refresh token and no expiry.
+
+None of that is special-cased in the flow code. The descriptor supplies `buildAuthParams` to rewrite
+the authorization query and `parseTokenResponse` to normalise the token body, which are the two
+escape hatches every provider has available.
+
+## No state means no CSRF guard
+
+<Callout type="error" title="Do not use this provider in a multi-user server">
+  Because nothing comes back to correlate on, the descriptor sets `echoesState: false` and the
+  library resolves the callback against the most recently started flow for this provider. In a CLI
+  or a single-flow app that is exactly right. In a server where several people can be mid-login at
+  once, it means one user's callback can complete another user's flow. There is no way to make that
+  safe from this side.
+</Callout>
+
+`requiresClientId: false` is the other half of the same story. Demanding a client id would be
+theatre, because none is ever transmitted.
+
+## The result is an API key
+
+```ts
+const tokens = await client.login({ receiver: loopbackReceiver() })
+
+tokens.accessToken // an OpenRouter API key, sk-or-...
+tokens.refreshToken // undefined
+tokens.expiresAt // undefined
+```
+
+There is nothing to refresh, so `getAccessToken()` returns the same value forever and `refresh()`
+fails. This is the one provider where passing `apiKey: tokens.accessToken` straight into an SDK is
+genuinely fine.
+
+The key is user-controlled, which means the user can see it and revoke it in their OpenRouter
+dashboard. Treat it as a long-lived credential and store it accordingly.
+
+## PKCE still applies
+
+The authorization request does carry `code_challenge` and `code_challenge_method`, which
+`buildAuthParams` preserves while dropping everything else. The verifier is checked at the
+exchange, so the flow is not unprotected. It is only unattributed.

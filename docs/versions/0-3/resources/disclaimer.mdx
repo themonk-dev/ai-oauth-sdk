@@ -1,0 +1,92 @@
+---
+title: Disclaimer
+description: This project exists for learning and experimentation. Read this before you point it at a provider.
+icon: RiAlertLine
+---
+
+This project is built for fun and for educational purposes. It exists to show how the OAuth flows
+inside AI coding CLIs actually work, and to make them reusable.
+
+It is an independent, unofficial project, not affiliated with, authorized by, endorsed by, sponsored
+by, or in any way officially connected to OpenAI, Anthropic, Google, GitHub, Microsoft, xAI,
+Alibaba, OpenRouter, or any other provider it can talk to.
+
+## Using a token may not be permitted
+
+A provider's terms of service govern what you may do with a credential issued to their own client,
+and several of them restrict it. Obtaining a token with this library does not mean you are allowed
+to use it, and nothing here grants you a permission the provider has not.
+
+Read the terms of service, the acceptable use policy and the developer policy for every provider you
+sign into, and decide for yourself whether your use is covered. If it is not, register your own
+OAuth client where the provider offers one, or use an API key instead. See
+[credentials](/docs/v/0-3/resources/credentials) for where self-registration is possible.
+
+**Use this entirely at your own discretion and at your own risk.** The maintainers of this project
+cannot and do not make any representation about whether a given use is permitted.
+
+## No official support for these flows
+
+None of these vendors publishes a supported, documented OAuth integration for third-party clients.
+What this library encodes was observed from the vendors' own publicly distributed command-line
+tools, Codex, Claude Code, Gemini CLI, the Copilot CLI, grok-cli and qwen-code, and from the
+standards those tools implement: RFC 6749, RFC 7636, RFC 8252, RFC 8628, and OpenID Connect
+Discovery.
+
+That has two consequences worth planning around.
+
+**Nothing here is stable by contract.** Endpoints, scopes, client ids and response shapes can change
+or stop working at any time, without notice, and without it being a bug in this library. The
+[custom provider](/docs/v/0-3/providers/custom) escape hatches exist partly so you can route around a change
+without waiting for a release.
+
+**No vendor owes you support for it.** Do not open a ticket with a provider about behaviour caused
+by this library.
+
+## Client identifiers
+
+The values in `publicClientIds` are public OAuth client identifiers, extracted from software the
+vendors distribute. OAuth is designed so that publishing a public client id is safe, and they are
+not secrets.
+
+They are still someone else's identifiers. Using one means presenting your application as that
+vendor's CLI. That is why no provider defaults to one and you have to name it explicitly. Before
+shipping it in anything, read the provider's terms of service and developer policy, and register
+your own client wherever one is on offer. The [credentials](/docs/v/0-3/resources/credentials) page lists where
+that is possible.
+
+One client secret is bundled, Google's, because its token endpoint refuses an installed-app exchange
+without one and Google documents installed-app secrets as non-confidential. It is overridable like
+everything else.
+
+## Trademarks
+
+ChatGPT, Codex and OpenAI are trademarks of OpenAI. Claude and Anthropic are trademarks of
+Anthropic. Gemini and Google are trademarks of Google LLC. GitHub and Copilot are trademarks of
+Microsoft Corporation. Grok and xAI are trademarks of xAI. Qwen is a trademark of Alibaba Group. All
+other marks belong to their respective owners.
+
+These names are used solely to identify which service a given configuration talks to, which is
+nominative fair use. Their appearance here does not imply any endorsement or association.
+
+## Your responsibility
+
+You are responsible for how you use this software, including compliance with each provider's terms
+of service, acceptable use policy, and applicable law. Whether a particular use is permitted is a
+question for the provider's terms and, if it matters to you, your own legal advice. It is not a
+question this project can answer for you.
+
+Authenticate only with accounts you own or are authorized to use.
+
+## Warranty
+
+This project is released under the MIT License and is provided "as is", without warranty of any
+kind, express or implied. See the LICENSE file for the full disclaimer of warranty and limitation
+of liability, which govern.
+
+## Requests from rights holders
+
+If you represent a provider and want your service's configuration changed or removed, please open an
+issue or use
+[private vulnerability reporting](https://github.com/themonk-dev/ai-oauth-sdk/security/advisories/new).
+We will act on it promptly.

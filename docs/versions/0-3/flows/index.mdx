@@ -1,0 +1,108 @@
+---
+title: Overview
+description: The callback receiver is the one seam that differs between a CLI, a single-page app, a phone and a headless box. Everything before and after it is shared.
+icon: RiDashboardLine
+---
+
+The authorization code has to get from the browser back into your process. Every runtime does that
+differently, and that difference is the only thing the flows disagree about. Everything before it
+(building the URL, minting `state`, deriving the PKCE pair) and everything after it (the exchange,
+storage, refresh) is shared.
+
+So it is one interface:
+
+```ts
+interface CallbackReceiver {
+  readonly id: string
+  start(context: ReceiverContext): Promise<StartedReceiver>
+}
+
+interface StartedReceiver {
+  redirectUri: string
+  present(url: string): Promise<void>
+  wait(): Promise<CallbackResult>
+  close(): Promise<void>
+}
+```
+
+A receiver knows its own redirect URI, can show the user the authorization URL, and resolves when
+the callback lands. `AuthClient.login()` drives those four methods and nothing else.
+
+## Choosing one
+
+| Situation | Receiver | Page |
+| --- | --- | --- |
+| CLI on a desktop | `loopbackReceiver()` | [Loopback](/docs/v/0-3/flows/loopback) |
+| Single-page app | `popupReceiver()` | [Popup and redirect](/docs/v/0-3/flows/popup-and-redirect) |
+| Embedded webview, popup blocked | redirect helpers | [Popup and redirect](/docs/v/0-3/flows/popup-and-redirect) |
+| No browser on this machine | `deviceLogin()` | [Device code](/docs/v/0-3/flows/device-code) |
+| SSH session, container, CI | `promptReceiver()` | [Manual paste](/docs/v/0-3/flows/manual-paste) |
+| Mobile app | `deepLinkReceiver()` or `authSessionReceiver()` | [React Native](/docs/v/0-3/runtimes/react-native) |
+| Your own web server | none, use the registry | [State handoff](/docs/v/0-3/flows/state-handoff) |
+
+Node picks one for you with `defaultReceiver(provider)` if you would rather not think about it. The
+CLI does that by default.
+
+## What login() actually does
+
+```ts
+const started = await receiver.start(context)
+
+try {
+  const authorization = await client.createAuthorization({ redirectUri: started.redirectUri })
+  await started.present(authorization.url)
+
+  const callback = await Promise.race([started.wait(), timeoutOrAbort])
+
+  // state is compared in constant time, and a callback with no state
+  // is rejected rather than waved through
+  return await client.completeAuthorization({ code: callback.code, state: authorization.state })
+} finally {
+  await started.close()
+}
+```
+
+The receiver goes first, because its redirect URI has to be in the authorization request. A
+loopback server bound to port `0` does not know its own port until it has bound.
+
+<Callout type="warn" title="A callback with no state is treated as forged">
+  Anyone can reach a loopback port or post a message to an opener, so a missing `state` parameter
+  must not become a way to skip the check. Only providers that documented they never echo it are
+  exempt, and those correlate against the most recently started flow instead, with the caveats on
+  [OpenRouter](/docs/v/0-3/providers/openrouter).
+</Callout>
+
+## Writing your own
+
+The interface is small enough to implement in about thirty lines. An Electron receiver that
+intercepts a custom protocol, a test receiver that resolves immediately, a receiver that reads the
+code out of a message queue: all of them fit.
+
+```ts
+import type { CallbackReceiver } from '@ai-oauth-sdk/core'
+
+export function queueReceiver(queue: Queue, redirectUri: string): CallbackReceiver {
+  return {
+    id: 'queue',
+    async start() {
+      return {
+        redirectUri,
+        async present(url) {
+          console.log(`Open ${url}`)
+        },
+        async wait() {
+          const message = await queue.take()
+
+          return { code: message.code, state: message.state }
+        },
+        async close() {
+          await queue.release()
+        },
+      }
+    },
+  }
+}
+```
+
+The only rules are that `redirectUri` must be final by the time `start()` resolves, and that
+`close()` has to be safe to call whether or not `wait()` ever settled.

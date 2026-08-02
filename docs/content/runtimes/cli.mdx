@@ -57,7 +57,7 @@ ai-oauth-sdk exec openai -- ./deploy.sh
 Inside `deploy.sh` the token is `$AI_OAUTH_SDK_TOKEN`. Rename it with `--env-var`:
 
 ```bash
-ai-oauth-sdk exec anthropic --env-var ANTHROPIC_TOKEN -- npm test
+ai-oauth-sdk exec claude --env-var ANTHROPIC_TOKEN -- npm test
 ```
 
 ## Login options
@@ -65,7 +65,7 @@ ai-oauth-sdk exec anthropic --env-var ANTHROPIC_TOKEN -- npm test
 ```bash
 ai-oauth-sdk login openai                      # loopback server, opens a browser
 ai-oauth-sdk login github-copilot --device     # device code, no local browser
-ai-oauth-sdk login anthropic --paste           # print the URL, paste the result
+ai-oauth-sdk login claude --paste              # print the URL, paste the result
 ai-oauth-sdk login openai --port 1455          # bind a specific loopback port
 ai-oauth-sdk login openai --timeout 120        # give up after two minutes
 ```
@@ -77,10 +77,10 @@ the callback caught locally and never has to copy anything. Whichever finishes f
 ## Several accounts
 
 ```bash
-ai-oauth-sdk login anthropic --account work
-ai-oauth-sdk login anthropic --account personal
+ai-oauth-sdk login claude --account work
+ai-oauth-sdk login claude --account personal
 
-ai-oauth-sdk token anthropic --account work
+ai-oauth-sdk token claude --account work
 ai-oauth-sdk list
 ```
 
@@ -89,7 +89,7 @@ ai-oauth-sdk list
 ## Credentials
 
 ```bash
-ai-oauth-sdk login google --client-id '<id>.apps.googleusercontent.com' \
+ai-oauth-sdk login gemini --client-id '<id>.apps.googleusercontent.com' \
                           --client-secret '<secret>'
 ```
 
@@ -97,7 +97,7 @@ Prefer the environment variable for the secret. A flag is visible in `ps` and la
 history:
 
 ```bash
-AI_OAUTH_SDK_CLIENT_SECRET='<secret>' ai-oauth-sdk login google
+AI_OAUTH_SDK_CLIENT_SECRET='<secret>' ai-oauth-sdk login gemini
 ```
 
 The CLI never writes a client secret to the credential file. It is read fresh on each invocation,

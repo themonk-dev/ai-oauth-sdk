@@ -8,9 +8,9 @@ icon: RiGeminiFill
 import { createNodeAuthClient, publicClientIds, publicClientSecrets } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'google',
-  clientId: publicClientIds.google,
-  clientSecret: publicClientSecrets.google,
+  provider: 'gemini',
+  clientId: publicClientIds.gemini,
+  clientSecret: publicClientSecrets.gemini,
 })
 ```
 
@@ -33,7 +33,7 @@ the exchange without one, so both values are published.
 Register a "Desktop app" OAuth client in the Google Cloud console to present as yourself instead.
 
 <Callout title="It matches a secret-scanning pattern">
-  `publicClientSecrets.google` starts with `GOCSPX-`, which is the pattern GitHub scans for. This
+  `publicClientSecrets.gemini` starts with `GOCSPX-`, which is the pattern GitHub scans for. This
   repository excludes the two files that carry it from its own alerts, but for a public repository a
   matched pattern can still be forwarded to the issuer, who may rotate it. Nothing breaks
   structurally if that happens: pass your own with `--client-id` and `--client-secret`, the

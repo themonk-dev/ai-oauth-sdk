@@ -26,8 +26,8 @@ loopback redirect URI, precisely so native apps can use an ephemeral port. Not e
 | --- | --- | --- |
 | `openai` | `1455`, fixed | `/auth/callback` |
 | `xai` | `56121`, fixed | `/callback` |
-| `anthropic` | any | `/callback` |
-| `google` | any | `/oauth2callback` |
+| `claude` | any | `/callback` |
+| `gemini` | any | `/oauth2callback` |
 | `openrouter` | any | `/callback` |
 
 Providers registered on a specific port have to use it. For the others, `loopbackPort: 0` means
