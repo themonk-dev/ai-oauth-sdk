@@ -1,38 +1,15 @@
 {
-  // Deploy config for the documentation site, which Cloudflare Workers Builds
-  // ships. It sits at the repository root rather than beside the site in
-  // `docs/` for one reason: that is where the deploy runs.
-  //
-  // Without a config here, `wrangler deploy` finds the SDK's pnpm workspace,
-  // decides it is being asked to ship a workspace rather than an application,
-  // and refuses: "application detection logic has been run in the root of a
-  // workspace". A config in this directory answers that question, so the
-  // default deploy command works with nothing configured in the dashboard.
-  //
-  // There is no `main`: the site is built with `ssr: false`, so the Worker is
-  // nothing but its assets.
+  // At the repository root rather than beside the site in docs/, because that is
+  // where the deploy runs. With no config here, wrangler finds the SDK's pnpm
+  // workspace and refuses to guess which application it is meant to ship.
   "name": "ai-oauth-sdk-docs",
   "compatibility_date": "2026-08-01",
   "assets": {
-    // `pnpm docs:build` prerenders every page into here. `docs/build/server` is
-    // not deployed, since there is nothing to run.
     "directory": "./docs/build/client",
-
-    // Serves `/docs/quick-start/index.html` for `/docs/quick-start`, which is
-    // the layout the prerender writes.
     "html_handling": "auto-trailing-slash",
-
-    // Deliberately not `single-page-application`.
-    //
-    // Every page is prerendered to its own HTML, so the SPA rewrite is not
-    // needed to serve them, and it would answer an unknown URL with the HTML
-    // prerendered for `/`. That HTML carries `/`'s route data, so it hydrates
-    // against the wrong route and fails.
-    //
-    // `404-page` was the other candidate, using React Router's
-    // `__spa-fallback.html`. Tried it: the shell hydrates, asks for route data
-    // that is not there, and renders "Something went wrong" rather than the
-    // site's own not-found page. A plain 404 is more honest than that.
+    // Not `single-page-application`. Every page is prerendered to its own HTML,
+    // and that setting would answer an unknown URL with the HTML built for `/`,
+    // which carries that route's data and hydrates against the wrong one.
     "not_found_handling": "none"
   }
 }
