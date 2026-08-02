@@ -33,12 +33,8 @@ export async function run(argv: string[]): Promise<number> {
   const args = parseArgs(argv)
   const json = flagBoolean(args.flags, 'json')
 
-  if (!args.command || args.command === 'help' || flagBoolean(args.flags, 'help') || flagBoolean(args.flags, 'h')) {
-    info(helpText())
-
-    return args.command && args.command !== 'help' ? 1 : 0
-  }
-
+  // Before the help branch below, which matches on "no command" and would
+  // otherwise answer `ai-oauth-sdk -v` with the help text.
   if (args.command === 'version' || flagBoolean(args.flags, 'version') || flagBoolean(args.flags, 'v')) {
     const { createRequire } = await import('node:module')
     const require = createRequire(import.meta.url)
@@ -48,9 +44,17 @@ export async function run(argv: string[]): Promise<number> {
     return 0
   }
 
-  const handler = HANDLERS[args.command]
+  if (args.command === 'help' || flagBoolean(args.flags, 'help') || flagBoolean(args.flags, 'h')) {
+    info(helpText())
 
-  if (!handler) {
+    return 0
+  }
+
+  const handler = args.command ? HANDLERS[args.command] : undefined
+
+  // An unknown command is reported ahead of an unknown option, because the
+  // command is what decides which options are known in the first place.
+  if (args.command && !handler) {
     error(`Unknown command "${args.command}".`)
     info(dim('Run `ai-oauth-sdk help` to see the available commands.'))
 
@@ -64,6 +68,14 @@ export async function run(argv: string[]): Promise<number> {
     info(dim(`  ${unknown.hint}`))
 
     return 1
+  }
+
+  // A bare invocation asks for help. Flags with no command are a mistake, and
+  // saying so beats printing help and exiting 0 as though it worked.
+  if (!handler) {
+    info(helpText())
+
+    return Object.keys(args.flags).length === 0 ? 0 : 1
   }
 
   try {
