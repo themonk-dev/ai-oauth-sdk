@@ -1,4 +1,4 @@
-import { RiArrowRightLine, RiCheckLine, RiFileCopyLine } from '@remixicon/react'
+import { RiCheckLine, RiFileCopyLine, RiStarLine } from '@remixicon/react'
 import { HomeLayout } from 'fumadocs-ui/layouts/home'
 import { useState } from 'react'
 import { Link } from 'react-router'
@@ -6,7 +6,8 @@ import { Link } from 'react-router'
 import { CodeShowcase } from '@/components/code-showcase'
 import { ProviderGrid } from '@/components/provider-grid'
 import { baseOptions } from '@/lib/layout.shared'
-import { appName, githubUrl } from '@/lib/shared'
+import { homeStructuredData, pageMeta } from '@/lib/seo'
+import { appName, githubUrl, sdkVersion } from '@/lib/shared'
 
 import type { ReactNode } from 'react'
 
@@ -107,20 +108,19 @@ const footerLinks = [
 
 export function meta() {
   return [
-    { title: `${appName} · sign in with any AI provider` },
-    {
-      name: 'description',
-      content:
-        'Provider-agnostic OAuth 2.0 for AI CLIs and apps. Redirect the user, receive the callback, get a token back.',
-    },
+    ...pageMeta({
+      title: `${appName} · OAuth 2.0 for every AI provider`,
+      description:
+        'Redirect, callback, token. Zero dependencies, eight providers built in, MIT licensed. Sign in with ChatGPT, Claude, Gemini, Grok or Copilot from Node, the browser, React Native or the terminal.',
+      path: '/',
+    }),
+    homeStructuredData(sdkVersion),
   ]
 }
 
 /**
  * The nav links the docs layout does not carry, since the sidebar covers them
- * everywhere else. The call to action is a custom item rather than Fumadocs'
- * button, which would paint itself in the docs theme's primary and put the one
- * accent hue on an otherwise monochrome page.
+ * everywhere else.
  */
 function landingOptions() {
   const base = baseOptions()
@@ -134,18 +134,6 @@ function landingOptions() {
       { text: 'Runtimes', url: '/docs/runtimes', active: 'none' as const },
       { text: 'Security', url: '/docs/resources/security', active: 'none' as const },
       ...(base.links ?? []),
-      {
-        type: 'custom' as const,
-        secondary: true,
-        children: (
-          <Link
-            to="/docs"
-            className="inline-flex h-[34px] items-center rounded-lg bg-lp-button px-4 text-sm font-medium text-lp-button-fg transition-colors hover:bg-lp-button-hover"
-          >
-            Read the docs
-          </Link>
-        ),
-      },
     ],
   }
 }
@@ -191,14 +179,17 @@ function Eyebrow({ children }: { children: ReactNode }) {
   )
 }
 
+/** Both calls to action point at the repository; the docs have the nav. */
 function PrimaryLink({ to, children }: { to: string; children: ReactNode }) {
   return (
     <Link
       to={to}
+      target="_blank"
+      rel="noreferrer"
       className="inline-flex h-[46px] items-center gap-2 rounded-lg bg-lp-button px-6 text-[15px] font-medium text-lp-button-fg transition-colors hover:bg-lp-button-hover"
     >
+      <RiStarLine className="size-4" />
       {children}
-      <RiArrowRightLine className="size-4" />
     </Link>
   )
 }
@@ -272,7 +263,7 @@ export default function Home() {
             the provider quirks already encoded.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
-            <PrimaryLink to="/docs">Read the docs</PrimaryLink>
+            <PrimaryLink to={githubUrl}>Star on GitHub</PrimaryLink>
             <SecondaryLink to="/docs/quick-start">Quickstart</SecondaryLink>
             <InstallCommand />
           </div>
@@ -352,10 +343,8 @@ export default function Home() {
             Read the docs and get a token in the next five minutes.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <PrimaryLink to="/docs">Read the docs</PrimaryLink>
-            <SecondaryLink to={githubUrl} external>
-              Open GitHub
-            </SecondaryLink>
+            <PrimaryLink to={githubUrl}>Star on GitHub</PrimaryLink>
+            <SecondaryLink to="/docs">Read the docs</SecondaryLink>
           </div>
           <div className="mt-11 rounded-xl border border-lp-line bg-lp-surface px-6 py-6">
             <div className="mb-2 text-[15px] font-semibold">Built for fun and for learning</div>

@@ -16,7 +16,8 @@ import { VersionPicker } from '@/components/version-picker'
 import { docsVersions, type VersionLink } from './versions'
 import { icons } from './icons'
 import { baseOptions } from './layout.shared'
-import { gitConfig } from './shared'
+import { pageMeta } from './seo'
+import { appName, gitConfig } from './shared'
 import { docs, docsV03, getPageMarkdownUrl, source, sourceV03 } from './source'
 
 /** Every documentation collection, keyed by the version it belongs to. */
@@ -42,6 +43,7 @@ export async function loadDocsPage(slugs: string[], version: DocsVersionKey = 'l
 
   return {
     path: page.path,
+    url: page.url,
     version,
     title: page.data.title,
     description: page.data.description ?? '',
@@ -90,13 +92,14 @@ function providerIdFor(path: string) {
 
 export function docsPageMeta(data: DocsPageData | undefined) {
   if (!data) {
-    return [{ title: 'AI OAuth SDK' }]
+    return [{ title: appName }]
   }
 
-  return [
-    { title: `${data.title} | AI OAuth SDK` },
-    { name: 'description', content: data.description },
-  ]
+  return pageMeta({
+    title: `${data.title} | ${appName}`,
+    description: data.description,
+    path: data.url,
+  })
 }
 
 function Content({

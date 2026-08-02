@@ -62,6 +62,21 @@
   --lp-panel: #000000;
 }
 
+/*
+ * Solar paints its primary blue, which tinted every link, every active sidebar
+ * row and every icon chip in the docs. They borrow the landing page's
+ * foreground instead, so both halves of the site are the same monochrome.
+ * Declared in each scope because a `var()` resolves against the element it is
+ * declared on, not the one that ends up using it.
+ */
+:root {
+  --color-fd-primary: var(--lp-fg);
+}
+
+.dark {
+  --color-fd-primary: var(--lp-fg);
+}
+
 @theme inline {
   --font-landing: 'Noto Sans', ui-sans-serif, system-ui, sans-serif;
 

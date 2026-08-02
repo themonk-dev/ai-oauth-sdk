@@ -6,6 +6,7 @@ export default [
   route('llms.txt', 'llms/index.ts'),
   route('llms-full.txt', 'llms/full.ts'),
   route('llms.mdx/*', 'llms/mdx.ts'),
+  route('sitemap.xml', 'llms/sitemap.ts'),
 
   index('routes/home.tsx'),
 

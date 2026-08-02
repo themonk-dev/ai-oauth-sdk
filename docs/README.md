@@ -93,6 +93,26 @@ mirrors each one across the same neutral ramp it was picked from. Nothing under 
 `HomeLayout` rather than the design's own, so search, the theme switch and the mobile menu keep
 working and match the docs.
 
+The docs do borrow one value back: Fumadocs' `solar` theme paints `--color-fd-primary` blue, which
+tinted every link, active sidebar row and icon chip. It is overridden with `--lp-fg`, so the whole
+site is the same monochrome.
+
+## Social cards and SEO
+
+`app/lib/seo.ts` builds the `og:` and `twitter:` tags, the canonical link, and the JSON-LD on the
+home page. Every page gets its own title, description and URL; the card image is shared.
+
+**The card cannot follow the reader's theme.** A crawler fetches `og:image` once and the platform
+caches the result, so there is no request to vary on. `public/og.png` is the light one and ships;
+`public/og-dark.png` exists for the places that *can* choose, such as a `<picture>` in a README.
+
+Both are rendered from `og/card.html` and `og/card-dark.html`. To change one, edit the template and
+screenshot it at 1200x630 with any headless browser, writing over the PNG in `public/`. The
+templates are plain HTML with the marks inlined, so nothing needs installing to open them.
+
+`sitemap.xml` is generated in `app/llms/sitemap.ts` from the same loaders that build the sidebar, so
+a new page is listed by existing there. Archived versions are included at a lower priority.
+
 The base path lives in one place, `docsRoute` in `app/lib/shared.ts`. Changing it moves the loader,
 the prerender list and the nav together, but absolute links written in MDX are not derived from it
 and would need updating too.
