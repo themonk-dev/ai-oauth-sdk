@@ -14,7 +14,7 @@
     "token"
   ],
   "license": "MIT",
-  "homepage": "https://ai-oauth-sdk.themonk.dev/docs/runtimes/cli",
+  "homepage": "https://ai-oauth.themonk.dev/docs/runtimes/cli",
   "bugs": {
     "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
   },

@@ -2,7 +2,7 @@
 
 Zero-dependency, framework-agnostic OAuth 2.0 + PKCE engine for AI provider sign-in.
 
-**[Documentation](https://ai-oauth-sdk.themonk.dev/docs/reference/auth-client)**
+**[Documentation](https://ai-oauth.themonk.dev/docs/reference/auth-client)**
 
 This is the part that runs everywhere. No Node APIs, no DOM APIs, no dependencies. Pair it with a
 runtime adapter ([`@ai-oauth-sdk/node`](../node), [`@ai-oauth-sdk/browser`](../browser),
@@ -49,7 +49,7 @@ flow.
 
 `createAuthenticatedFetch(client)` returns a `fetch` that attaches a valid token, refreshes before
 expiry, adds whatever headers the provider needs, and retries once on a 401. Hand it to any SDK
-that takes a `fetch`. See [Using the token](https://ai-oauth-sdk.themonk.dev/docs/recipes/ai-sdk).
+that takes a `fetch`. See [Using the token](https://ai-oauth.themonk.dev/docs/recipes/ai-sdk).
 
 ## License
 
@@ -61,4 +61,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. No provider officially supports these OAuth flows, and any of them may
 change without notice. Please read the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer).</sub>

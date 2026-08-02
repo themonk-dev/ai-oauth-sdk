@@ -15,7 +15,7 @@
     "authentication"
   ],
   "license": "MIT",
-  "homepage": "https://ai-oauth-sdk.themonk.dev/docs/reference/auth-client",
+  "homepage": "https://ai-oauth.themonk.dev/docs/reference/auth-client",
   "bugs": {
     "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
   },

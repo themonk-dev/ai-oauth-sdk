@@ -11,7 +11,7 @@
     "loopback"
   ],
   "license": "MIT",
-  "homepage": "https://ai-oauth-sdk.themonk.dev/docs/runtimes/node",
+  "homepage": "https://ai-oauth.themonk.dev/docs/runtimes/node",
   "bugs": {
     "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
   },

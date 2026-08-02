@@ -2,7 +2,7 @@
 
 **Sign in with ChatGPT, Claude, Gemini or Grok, and get the token back.**
 
-**[Documentation](https://ai-oauth-sdk.themonk.dev/docs)**
+**[Documentation](https://ai-oauth.themonk.dev/docs)**
 
 The umbrella package: one install, one subpath per runtime, plus a CDN build.
 
@@ -45,4 +45,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. No provider officially supports these OAuth flows, and any of them may
 change without notice. Please read the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer).</sub>

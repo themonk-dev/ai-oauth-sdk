@@ -12,7 +12,7 @@
     "redirect"
   ],
   "license": "MIT",
-  "homepage": "https://ai-oauth-sdk.themonk.dev/docs/runtimes/browser",
+  "homepage": "https://ai-oauth.themonk.dev/docs/runtimes/browser",
   "bugs": {
     "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
   },

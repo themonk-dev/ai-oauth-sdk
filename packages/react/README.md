@@ -2,7 +2,7 @@
 
 React bindings for [`ai-oauth-sdk`](https://github.com/themonk-dev/ai-oauth-sdk).
 
-**[Documentation](https://ai-oauth-sdk.themonk.dev/docs/frameworks/react)**
+**[Documentation](https://ai-oauth.themonk.dev/docs/frameworks/react)**
 
 ```bash
 npm i @ai-oauth-sdk/react @ai-oauth-sdk/browser
@@ -54,4 +54,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. No provider officially supports these OAuth flows, and any of them may
 change without notice. Please read the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer).</sub>

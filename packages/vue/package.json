@@ -12,7 +12,7 @@
     "claude"
   ],
   "license": "MIT",
-  "homepage": "https://ai-oauth-sdk.themonk.dev/docs/frameworks/vue",
+  "homepage": "https://ai-oauth.themonk.dev/docs/frameworks/vue",
   "bugs": {
     "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
   },

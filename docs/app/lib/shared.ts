@@ -1,6 +1,6 @@
 export const appName = 'AI OAuth SDK'
 
-export const siteUrl = 'https://ai-oauth-sdk.themonk.dev'
+export const siteUrl = 'https://ai-oauth.themonk.dev'
 
 export const docsRoute = '/docs'
 export const docsContentRoute = '/llms.mdx'

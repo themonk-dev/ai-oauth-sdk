@@ -3,7 +3,7 @@
 Browser adapter for [`ai-oauth-sdk`](https://github.com/themonk-dev/ai-oauth-sdk), covering popup
 and full-page redirect sign-in for SPAs.
 
-**[Documentation](https://ai-oauth-sdk.themonk.dev/docs/runtimes/browser)**
+**[Documentation](https://ai-oauth.themonk.dev/docs/runtimes/browser)**
 
 ```bash
 npm i @ai-oauth-sdk/browser
@@ -60,4 +60,4 @@ MIT
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
 to their owners. No provider officially supports these OAuth flows, and any of them may
 change without notice. Please read the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer).</sub>
