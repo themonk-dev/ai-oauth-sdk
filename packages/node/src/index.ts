@@ -33,7 +33,7 @@ export * from '@ai-oauth-sdk/core'
  * session) fall back to paste. Providers that only support a hosted redirect
  * skip loopback entirely.
  *
- * A provider that supports *both* — Anthropic, which prefers loopback locally
+ * A provider that supports *both*, such as Claude, which prefers loopback locally
  * but publishes a page that displays the code — takes the hosted route once the
  * machine is headless. Sending a remote box's `localhost` URI to a browser on
  * the user's laptop produces a redirect nothing can receive and a command that

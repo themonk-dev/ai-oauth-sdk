@@ -139,7 +139,7 @@ function resolveClientId(providerId: string, args: ParsedArgs): string | undefin
  * The client secret is read from the environment as well as from a flag,
  * because the env var is the better channel — a flag is visible in `ps` and
  * lands in shell history. Falling back to a published secret follows the
- * client-id reasoning above: only Google ships one, its token endpoint refuses
+ * client-id reasoning above: only Gemini ships one, its token endpoint refuses
  * the exchange without it, and an installed-app secret is non-confidential by
  * design. Either channel overrides it.
  */
@@ -291,7 +291,7 @@ function describeAccount(tokens: TokenSet): string {
 /**
  * Chooses how the callback comes back.
  *
- * Under `--paste`, a provider with a hosted page — Anthropic — shows the code
+ * Under `--paste`, a provider with a hosted page, such as Claude, shows the code
  * itself, so pasting is the whole flow and there is nothing to listen for.
  * Everyone else redirects to a loopback port whose number we already know, so
  * the hybrid receiver listens on it and the callback lands without anything

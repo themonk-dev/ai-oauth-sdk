@@ -9,7 +9,7 @@ const PASTE_FALLBACK_PORT = 1455
 export interface ManualReceiverOptions {
   /**
    * Shows the authorization URL and returns whatever the user pastes back —
-   * a full redirect URL, a bare code, or Anthropic's `code#state`.
+   * a full redirect URL, a bare code, or Claude's `code#state`.
    */
   prompt: (url: string, context: ReceiverContext) => Promise<string>
   /** Fixed redirect URI. Defaults to whatever the provider's mode implies. */

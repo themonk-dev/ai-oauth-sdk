@@ -11,6 +11,8 @@ import { xai } from './xai.js'
 
 export { defineProvider, parseStandardCallback, readCallback } from './define.js'
 export { anthropic, githubCopilot, google, openai, openrouter, qwen, xai }
+/** Product name for {@link anthropic}. The provider id stays `anthropic`. */
+export { anthropic as claude } from './anthropic.js'
 export { copilotClientHeaders, exchangeForCopilotToken } from './github-copilot.js'
 export type { CopilotApiToken } from './github-copilot.js'
 export {
@@ -20,10 +22,10 @@ export {
   fetchCodexModels,
   normalizeCodexResponsesBody,
 } from './openai.js'
-export { microsoft } from './microsoft.js'
+export { azureAi, microsoft } from './microsoft.js'
 export { publicClientIds, publicClientSecrets } from './public-client-ids.js'
 export type { PublicClientIdProvider } from './public-client-ids.js'
-export type { MicrosoftProviderOptions } from './microsoft.js'
+export type { AzureAiProviderOptions, MicrosoftProviderOptions } from './microsoft.js'
 
 /** Built-in descriptors, keyed by id. */
 export const providers = {

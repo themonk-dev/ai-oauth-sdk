@@ -101,7 +101,7 @@ export interface TokenRequestSpec {
   /**
    * Send `state` on the code exchange. Default false.
    *
-   * The spec puts `state` on the authorization request only. Anthropic also
+   * The spec puts `state` on the authorization request only. Claude also
    * accepts it on the exchange; OpenAI rejects the request outright, so this
    * cannot be on by default.
    */
@@ -218,7 +218,7 @@ export interface ProviderConfig {
   apiBaseUrl?: string
   /**
    * Parses whatever the user pastes back. Defaults to URL/query parsing;
-   * providers like Anthropic hand back a bare `code#state` string.
+   * providers like Claude hand back a bare `code#state` string.
    */
   parseCallback?: (input: string) => CallbackParseResult
   /**
@@ -248,7 +248,7 @@ export interface ProviderConfig {
   enrichTokens?: (raw: Record<string, unknown>, tokens: TokenSet) => Partial<TokenSet>
   /**
    * Extra headers every API request needs beyond `Authorization` — OpenAI wants
-   * the account id, Anthropic wants a version and a beta flag. Used by
+   * the account id, Claude wants a version and a beta flag. Used by
    * `createAuthenticatedFetch`.
    */
   apiHeaders?: (tokens: TokenSet) => Record<string, string>
