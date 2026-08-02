@@ -3,7 +3,7 @@
 Sign in to an AI provider from the terminal and get a token you can pipe into
 anything.
 
-**[Documentation](https://ai-oauth-sdk.themonk.dev/docs/runtimes/cli)**
+**[Documentation](https://ai-oauth.themonk.dev/docs/runtimes/cli)**
 
 ```bash
 npx @ai-oauth-sdk/cli login openai
@@ -20,7 +20,7 @@ Install it properly to drop the `npx`:
 
 ```bash
 npm i -g @ai-oauth-sdk/cli
-ai-oauth-sdk login anthropic
+ai-oauth-sdk login claude
 ```
 
 ## Commands
@@ -33,12 +33,11 @@ list                  List all stored sessions
 refresh <provider>    Force a token refresh
 logout <provider>     Forget the stored token
 providers             List supported providers
-exec <provider> -- …  Run a command with the token in its environment
+exec <provider> -- ...  Run a command with the token in its environment
 ```
 
-`token` prints the bare token to **stdout** and nothing else — everything human
-goes to stderr, so `$(...)` capture is always clean. `--json` gives structured
-output for every command.
+`token` prints the bare token to **stdout** and nothing else. Everything meant for a human goes
+to stderr, so `$(...)` capture is always clean. `--json` gives structured output for every command.
 
 ## Keeping tokens out of your shell history
 
@@ -54,7 +53,7 @@ file. Use `--env-var OPENAI_API_KEY` to name it something a tool already reads.
 
 ```bash
 ai-oauth-sdk login github-copilot --device   # type a code on your phone
-ai-oauth-sdk login anthropic --paste         # print the URL, paste the result back
+ai-oauth-sdk login claude --paste            # print the URL, paste the result back
 ```
 
 Plain `login` already picks sensibly: a loopback server on a desktop, and paste
@@ -63,9 +62,9 @@ over SSH or with no `DISPLAY`, where a loopback redirect could never arrive.
 ## Several accounts
 
 ```bash
-ai-oauth-sdk login anthropic --account work
-ai-oauth-sdk login anthropic --account personal
-ai-oauth-sdk token anthropic --account work
+ai-oauth-sdk login claude --account work
+ai-oauth-sdk login claude --account personal
+ai-oauth-sdk token claude --account work
 ai-oauth-sdk list
 ```
 
@@ -85,12 +84,11 @@ afterwards without repeating the flags.
 
 ## Providers
 
-`openai` · `anthropic` · `google` · `xai` · `github-copilot` · `openrouter` ·
-`qwen`
+`openai`, `claude`, `gemini`, `xai`, `github-copilot`, `openrouter`, `qwen`
 
-`openai`, `anthropic`, `github-copilot`, `openrouter` and `qwen` work with no
-setup. `google` and `xai` need credentials you register yourself — pass
-`--client-id` (and `--client-secret` for Google).
+`openai`, `claude`, `github-copilot`, `openrouter` and `qwen` work with no
+setup. `gemini` and `xai` need credentials you register yourself, so pass `--client-id`, and
+`--client-secret` too for Gemini.
 
 ## Where tokens live
 
@@ -105,6 +103,6 @@ MIT
 
 <sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
-to their owners. These OAuth flows are not officially supported by any provider and may
-change without notice — see the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
+to their owners. No provider officially supports these OAuth flows, and any of them may
+change without notice. Please read the
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer).</sub>

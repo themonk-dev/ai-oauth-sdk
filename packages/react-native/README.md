@@ -2,7 +2,7 @@
 
 React Native / Expo adapter for [`ai-oauth-sdk`](https://github.com/themonk-dev/ai-oauth-sdk).
 
-**[Documentation](https://ai-oauth-sdk.themonk.dev/docs/runtimes/react-native)**
+**[Documentation](https://ai-oauth.themonk.dev/docs/runtimes/react-native)**
 
 ```bash
 npm i @ai-oauth-sdk/react-native
@@ -60,7 +60,7 @@ Expo use `expo-standard-web-crypto`.
 
 **No `react-native-url-polyfill` either.** React Native's built-in URL shim throws from
 its `searchParams` getter, and its `URLSearchParams` has historically accepted only an
-object — enough to break an authorization URL before the browser even opens. So the
+object, which is enough to break an authorization URL before the browser even opens. So the
 OAuth path never touches either global: query strings are built and parsed internally,
 byte-for-byte identically to what `URLSearchParams` would emit, which the test suite
 asserts against the real implementation across the whole ASCII range.
@@ -69,9 +69,9 @@ Install the polyfill if your own code wants a spec-compliant `URL`. Nothing here
 
 ## Storage
 
-`secureStoreAdapter(SecureStore)` — Keychain / EncryptedSharedPreferences. Use this for
-refresh tokens. `asyncStorageAdapter(AsyncStorage)` is available but is not encrypted
-at rest.
+`secureStoreAdapter(SecureStore)` uses the Keychain on iOS and EncryptedSharedPreferences on
+Android. Use it for refresh tokens. `asyncStorageAdapter(AsyncStorage)` is available too, but it is
+not encrypted at rest.
 
 ## License
 
@@ -81,6 +81,6 @@ MIT
 
 <sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
-to their owners. These OAuth flows are not officially supported by any provider and may
-change without notice — see the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
+to their owners. No provider officially supports these OAuth flows, and any of them may
+change without notice. Please read the
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer).</sub>

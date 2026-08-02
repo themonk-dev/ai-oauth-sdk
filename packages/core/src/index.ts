@@ -26,6 +26,7 @@ export {
   openrouter,
   parseStandardCallback,
   providerFromDiscovery,
+  ProviderId,
   publicClientIds,
   publicClientSecrets,
   providers,
