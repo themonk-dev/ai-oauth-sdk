@@ -27,8 +27,9 @@ pnpm docs:typecheck
 Both take the usual flags, so `pnpm docs:dev --port 4000` and
 `pnpm docs:start --listen 4000` work.
 
-`pnpm docs:install` is a separate step because this directory has its own lockfile. A `pnpm install`
-at the repository root does not reach it.
+`pnpm docs:install` is a separate step because this directory has its own lockfile, and a
+`pnpm install` at the repository root does not reach it. Run it before `docs:dev`. `docs:build`
+installs on its own, so that deploying from the repository root is one command.
 
 ## Why this is not in the workspace
 
@@ -113,26 +114,23 @@ nested lockfile is picked up automatically.
 since `ssr: false` means there is no server to run. The asset settings that matter are commented
 there.
 
-Workers Builds keeps the rest in its dashboard, and it has to agree with the layout here:
+Workers Builds keeps the rest in its dashboard. Either of these works:
 
-| Setting | Value |
-| --- | --- |
-| Root directory | `docs` |
-| Build command | `pnpm build` |
-| Deploy command | `npx wrangler deploy` |
+| Setting | From the repository root | From this directory |
+| --- | --- | --- |
+| Root directory | *(repository root)* | `docs` |
+| Build command | `pnpm docs:build` | `pnpm build` |
+| Deploy command | `npx wrangler deploy --config docs/wrangler.jsonc` | `npx wrangler deploy` |
 
-Everything is relative to that root directory, so `wrangler.jsonc`, `pnpm-lock.yaml` and `.nvmrc`
-are all found without being named.
+The second is tidier: `wrangler.jsonc`, `pnpm-lock.yaml` and `.nvmrc` are all found without being
+named, and the platform caches dependencies and detects the Node version on its own.
 
-**The root directory is the setting that matters, and getting it wrong fails in a confusing way.**
-Point it at the repository root instead and the install step runs there, which by design skips this
-directory: `pnpm-workspace.yaml` here declares no packages, so a root install never touches it. The
-build then reaches `react-router build` with no `node_modules` beside it and stops at
-`react-router: not found`, which reads like a missing dependency rather than a missing install.
-
-Building from the repository root works too, but only with both steps:
-`pnpm docs:install && pnpm docs:build`. Setting the root directory to `docs` is simpler, and lets
-the platform cache dependencies and detect the Node version on its own.
+The first works because `docs:build` installs before it builds, and it needs to. A host that builds
+from the repository root installs there, and a root install skips this directory by design:
+`pnpm-workspace.yaml` here declares no packages, which is exactly what keeps Vite and the MDX
+toolchain out of the root lockfile that `pnpm audit` reads. Without its own install, the build
+reaches `react-router build` with no `node_modules` beside it and stops at `react-router: not
+found`, which reads like a missing dependency and is not one.
 
 Nothing in the build reads a secret, so the project needs no environment variables. If that ever
 changes, turn off builds for non-production branches first, because a fork's pull request would
