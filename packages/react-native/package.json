@@ -11,6 +11,10 @@
     "deep-link"
   ],
   "license": "MIT",
+  "homepage": "https://ai-oauth.themonk.dev/docs/runtimes/react-native",
+  "bugs": {
+    "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",

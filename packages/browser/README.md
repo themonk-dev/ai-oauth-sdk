@@ -1,9 +1,9 @@
 # @ai-oauth-sdk/browser
 
-Browser adapter for [`ai-oauth-sdk`](https://github.com/themonk-dev/ai-oauth-sdk) — popup and
-full-page redirect sign-in for SPAs.
+Browser adapter for [`ai-oauth-sdk`](https://github.com/themonk-dev/ai-oauth-sdk), covering popup
+and full-page redirect sign-in for SPAs.
 
-**[Documentation](https://ai-oauth-sdk.themonk.dev/docs/runtimes/browser)**
+**[Documentation](https://ai-oauth.themonk.dev/docs/runtimes/browser)**
 
 ```bash
 npm i @ai-oauth-sdk/browser
@@ -11,7 +11,7 @@ npm i @ai-oauth-sdk/browser
 
 ## Popup
 
-Keeps your page alive — no navigation, no state to rehydrate.
+Keeps your page alive. No navigation, no state to rehydrate.
 
 ```ts
 import { loginWithPopup, postCallbackToOpener } from '@ai-oauth-sdk/browser'
@@ -32,7 +32,7 @@ import { createBrowserAuthClient, startRedirectLogin, handleRedirectCallback } f
 
 const client = createBrowserAuthClient({ provider: 'openai', clientId })
 
-// Safe to call unconditionally on startup — returns null when not a callback.
+// Safe to call unconditionally on startup. Returns null when this is not a callback.
 const tokens = await handleRedirectCallback(client)
 
 button.onclick = () => startRedirectLogin(client)
@@ -43,10 +43,9 @@ the tab. Swap in `localStorageAdapter()` if you want the session to outlive the 
 
 ## Exports
 
-`popupReceiver` · `postCallbackToOpener` · `redirectReceiver` · `startRedirectLogin` ·
-`handleRedirectCallback` · `createBrowserAuthClient` · `loginWithPopup` ·
-`sessionStorageAdapter` · `localStorageAdapter`, plus everything from
-[`@ai-oauth-sdk/core`](../core).
+`popupReceiver`, `postCallbackToOpener`, `redirectReceiver`, `startRedirectLogin`,
+`handleRedirectCallback`, `createBrowserAuthClient`, `loginWithPopup`, `sessionStorageAdapter` and
+`localStorageAdapter`, plus everything from [`@ai-oauth-sdk/core`](../core).
 
 Storage adapters degrade to in-memory when the browser throws on access (Safari
 private mode, cross-origin iframes) rather than breaking sign-in.
@@ -59,6 +58,6 @@ MIT
 
 <sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
-to their owners. These OAuth flows are not officially supported by any provider and may
-change without notice — see the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
+to their owners. No provider officially supports these OAuth flows, and any of them may
+change without notice. Please read the
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer).</sub>
