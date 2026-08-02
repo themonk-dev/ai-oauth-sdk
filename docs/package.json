@@ -16,7 +16,12 @@
     "typecheck": "react-router typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@ai-oauth-sdk/browser": "^1.0.0",
+    "@ai-oauth-sdk/react": "^1.0.0",
+    "@ai-sdk/google": "^4.0.31",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
     "@remixicon/react": "^4.9.0",
+    "ai": "^7.0.48",
     "cnfast": "^0.1.0",
     "fumadocs-core": "^16.14.0",
     "fumadocs-mdx": "^15.2.1",

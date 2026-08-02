@@ -9,6 +9,7 @@ export default [
   route('sitemap.xml', 'llms/sitemap.ts'),
 
   index('routes/home.tsx'),
+  route('demo', 'routes/demo.tsx'),
 
   // React Router matches an empty remainder against the layout rather than a
   // splat, so `/docs` needs its own route alongside everything below it.
