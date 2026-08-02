@@ -42,6 +42,8 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'react', label: 'React' },
 ]
 
+const PANEL = 'overflow-x-auto px-5.5 pt-6.5 pb-8.5 font-mono'
+
 const TYPING_MS = 55
 const SETTLE_MS = 700
 const LINE_MS = 550
@@ -118,30 +120,31 @@ export function CodeShowcase() {
 
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-800 bg-lp-panel">
-      <div className="flex items-center justify-between border-b border-neutral-800 px-3">
-        <div className="flex">
-          {TABS.map((entry) => (
-            <button
-              key={entry.key}
-              type="button"
-              onClick={() => setTab(entry.key)}
-              data-active={entry.key === tab}
-              className="relative cursor-pointer px-3.5 py-3.5 font-mono text-xs text-neutral-500 transition-colors hover:text-neutral-100 data-[active=true]:text-neutral-100"
-            >
-              {entry.label}
-              {entry.key === tab && (
-                <span className="absolute inset-x-2.5 -bottom-px h-0.5 bg-neutral-200" />
-              )}
-            </button>
-          ))}
-        </div>
-        <span className="hidden font-mono text-[11px] text-neutral-600 sm:block">
-          127.0.0.1:8976
-        </span>
+      <div className="flex border-b border-neutral-800 px-3">
+        {TABS.map((entry) => (
+          <button
+            key={entry.key}
+            type="button"
+            onClick={() => setTab(entry.key)}
+            data-active={entry.key === tab}
+            className="relative cursor-pointer px-3.5 py-3.5 font-mono text-xs text-neutral-500 transition-colors hover:text-neutral-100 data-[active=true]:text-neutral-100"
+          >
+            {entry.label}
+            {entry.key === tab && (
+              <span className="absolute inset-x-2.5 -bottom-px h-0.5 bg-neutral-200" />
+            )}
+          </button>
+        ))}
       </div>
 
-      {tab === 'terminal' ? (
-        <div className="min-h-[184px] overflow-x-auto px-5.5 pt-6.5 pb-8.5 font-mono text-sm leading-loose">
+      {/* Every panel occupies the same cell, so the box is always as tall as the
+          tallest one and neither switching tabs nor the typing animation moves it. */}
+      <div className="grid">
+        <div
+          aria-hidden={tab !== 'terminal'}
+          data-active={tab === 'terminal'}
+          className={`${PANEL} invisible col-start-1 row-start-1 text-sm leading-loose data-[active=true]:visible`}
+        >
           <div className="whitespace-pre text-neutral-200">
             <span className="text-neutral-500">$ </span>
             {cycle.command}
@@ -155,11 +158,18 @@ export function CodeShowcase() {
             </div>
           ))}
         </div>
-      ) : (
-        <pre className="min-h-[184px] overflow-x-auto px-5.5 pt-6.5 pb-8.5 font-mono text-[13.5px] leading-[1.9] text-neutral-200">
-          {SNIPPETS[tab]}
-        </pre>
-      )}
+
+        {Object.entries(SNIPPETS).map(([key, snippet]) => (
+          <pre
+            key={key}
+            aria-hidden={tab !== key}
+            data-active={tab === key}
+            className={`${PANEL} invisible col-start-1 row-start-1 text-[13.5px] leading-[1.9] text-neutral-200 data-[active=true]:visible`}
+          >
+            {snippet}
+          </pre>
+        ))}
+      </div>
     </div>
   )
 }
