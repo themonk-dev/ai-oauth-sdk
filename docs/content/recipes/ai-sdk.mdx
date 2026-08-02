@@ -9,7 +9,7 @@ Signing in is the easy half. This is what to do with what comes back.
 ## Short answer
 
 Pass `createAuthenticatedFetch(client)` as the `fetch` option of whatever client you already use.
-The Vercel AI SDK, the OpenAI SDK and the Anthropic SDK all accept one.
+The Vercel AI SDK, the OpenAI SDK and the Claude SDK all accept one.
 
 ```ts
 import { createOpenAI } from '@ai-sdk/openai'
@@ -92,7 +92,7 @@ re-runs it on a 401. It also names an editor, which Copilot requires. Pass
 `headers: { 'Editor-Version': 'my-cli/1.0' }` to identify as yourself. The exchanged token lives
 about 25 minutes, which is the other reason a captured token will not do.
 
-**Anthropic.** OAuth bearers need `anthropic-beta: oauth-2025-04-20` alongside `anthropic-version`.
+**Claude.** OAuth bearers need `anthropic-beta: oauth-2025-04-20` alongside `anthropic-version`.
 The descriptor emits both through `apiHeaders`, and `createAuthenticatedFetch` attaches them. A
 hand-rolled `headers` object will not.
 

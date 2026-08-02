@@ -1,5 +1,5 @@
 ---
-title: Google
+title: Gemini
 description: The flow the Gemini CLI uses. The only built-in that needs a client secret as well as an id.
 icon: RiGeminiFill
 ---
@@ -25,8 +25,8 @@ const client = createNodeAuthClient({
 
 ## Why there is a secret
 
-Google's "installed application" clients need both a client id and a client secret. That secret is
-not confidential in the usual sense, and Google's own documentation says installed-app secrets
+Gemini's "installed application" clients need both a client id and a client secret. That secret is
+not confidential in the usual sense, and the published documentation says installed-app secrets
 cannot be treated as such. PKCE is what actually secures the flow. But their token endpoint rejects
 the exchange without one, so both values are published.
 
@@ -53,14 +53,14 @@ behind it. Narrow it if your use case allows.
 
 ## Two required authorization parameters
 
-The descriptor sends `access_type=offline` and `prompt=consent`. The first is required for Google
-to return a refresh token at all; without it you get an access token that expires in an hour and
-nothing to renew it with. The second forces the consent screen even on a repeat sign-in, which is
+The descriptor sends `access_type=offline` and `prompt=consent`. The first is what makes a refresh
+token come back at all; without it you get an access token that expires in an hour and nothing to
+renew it with. The second forces the consent screen even on a repeat sign-in, which is
 what makes the refresh token come back reliably rather than only on the very first grant.
 
 ## No device flow, deliberately
 
-Google's device endpoint exists, but it accepts only clients registered as "TVs and Limited Input
+The device endpoint exists, but it accepts only clients registered as "TVs and Limited Input
 devices". The published gemini-cli client is a Desktop app and is refused with `Invalid client
 type`. Declaring the endpoint would advertise a flow that cannot work here, so the descriptor does
 not.
@@ -70,7 +70,7 @@ limited-input client and describe it with `defineProvider`.
 
 ## Revocation
 
-Google is one of the two built-ins with an RFC 7009 endpoint:
+Gemini is one of the two built-ins with an RFC 7009 endpoint:
 
 ```ts
 await client.logout({ revoke: true })

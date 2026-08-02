@@ -1,5 +1,5 @@
 ---
-title: Anthropic
+title: Claude
 description: The flow Claude Code uses. Loopback on any port, or a hosted page that hands back a code#state string.
 icon: RiClaudeFill
 ---
@@ -24,7 +24,7 @@ const client = createNodeAuthClient({
 
 ## Two redirect modes
 
-Anthropic registers loopback URIs with the port component ignored, as RFC 8252 asks, so any port
+Claude registers loopback URIs with the port component ignored, as RFC 8252 asks, so any port
 works. That is the default and nothing is pasted.
 
 It also publishes a hosted page that displays a code, which is the right answer over SSH. The
@@ -67,7 +67,7 @@ createAuthClient({
 ## The token request
 
 The endpoint accepts both form and JSON bodies. This library sends the RFC 6749 form encoding;
-other clients send JSON. Anthropic also accepts `state` on the code exchange, which most providers
+other clients send JSON. Claude also accepts `state` on the code exchange, which most providers
 reject, so the descriptor sets `includeState`.
 
 ## Calling the API
@@ -92,5 +92,5 @@ A hand-rolled `headers` object will not carry the beta flag, and the request wil
 
 ## No device flow
 
-Anthropic does not offer one. On a machine with no browser at all, the hosted callback page plus
+Claude does not offer one. On a machine with no browser at all, the hosted callback page plus
 paste is the path, and it works because the user can open that URL on any device.

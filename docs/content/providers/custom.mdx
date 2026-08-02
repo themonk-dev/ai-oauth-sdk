@@ -99,7 +99,7 @@ defineProvider({
 ```
 
 `enrichTokens` derives `accountId` and `email` so `whoami` has something to print.
-`apiHeaders` is what `createAuthenticatedFetch` attaches to every request, which is how Anthropic's
+`apiHeaders` is what `createAuthenticatedFetch` attaches to every request, which is how Claude's
 beta flag and OpenAI's account header get sent without you doing anything.
 
 ## When the token is not enough
@@ -158,7 +158,7 @@ enterprise accounts. So neither is knowable from the descriptor.
 | `scopes` | `string[]` | **Required.** |
 | `redirect` | `RedirectSpec` | **Required.** mode is loopback, hosted or custom. |
 | `clientId` | `string` | Usually supplied by the consumer instead. |
-| `clientSecret` | `string` | For providers that insist, such as Google. |
+| `clientSecret` | `string` | For providers that insist, such as Gemini. |
 | `requiresClientId` | `boolean` | Set false when none is transmitted. Defaults to `true`. |
 | `usePkce` | `boolean` | Defaults to `true`. |
 | `pkceMethod` | `'S256' | 'plain'` | Defaults to `S256`. |

@@ -42,8 +42,9 @@ are missing.
 | [`qwen`](/docs/providers/qwen) | device only | `publicClientIds.qwen` | experimental |
 | [`microsoft`](/docs/providers/microsoft) | loopback any port | yours | stable |
 
-`microsoft` is a factory rather than a constant, because its endpoints are tenant-scoped and every
-Entra app registration is its own client.
+`microsoft` is a factory rather than a constant, exported as `azureAi()`, because its endpoints are
+tenant-scoped and every
+Azure app registration is its own client.
 
 Raw credential values are on the [credentials](/docs/resources/credentials) page.
 

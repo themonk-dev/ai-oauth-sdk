@@ -107,7 +107,7 @@ loopbackReceiver({
 ```
 
 Providers that registered a specific port have to use it. OpenAI is registered on `1455`; xAI on
-`56121`. Anthropic and Google accept any port, so they default to `0`.
+`56121`. Claude and Gemini accept any port, so they default to `0`.
 
 </Accordion>
 
@@ -123,7 +123,7 @@ promptReceiver({
 })
 ```
 
-It accepts a full redirect URL, a bare code, or Anthropic's `code#state` string, because the
+It accepts a full redirect URL, a bare code, or Claude's `code#state` string, because the
 provider's own parser handles the input.
 
 </Accordion>
