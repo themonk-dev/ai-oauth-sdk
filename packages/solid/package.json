@@ -1,7 +1,7 @@
 {
   "name": "@ai-oauth-sdk/solid",
   "version": "0.3.0",
-  "description": "SolidJS primitive for ai-oauth-sdk — sign in with ChatGPT, Claude, Gemini or Grok.",
+  "description": "SolidJS primitive for ai-oauth-sdk. Sign in with ChatGPT, Claude, Gemini or Grok.",
   "keywords": [
     "oauth",
     "pkce",
@@ -12,6 +12,10 @@
     "chatgpt"
   ],
   "license": "MIT",
+  "homepage": "https://ai-oauth-sdk.themonk.dev/docs/frameworks/solid",
+  "bugs": {
+    "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",

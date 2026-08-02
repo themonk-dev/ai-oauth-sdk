@@ -1,7 +1,7 @@
 {
   "name": "ai-oauth-sdk",
   "version": "0.3.0",
-  "description": "Minimal, provider-agnostic OAuth for AI CLIs and apps — sign in with ChatGPT, Claude, Gemini or Grok and get a token back. Works in Node, browsers, React, React Native, and via CDN.",
+  "description": "Minimal, provider-agnostic OAuth for AI CLIs and apps. Sign in with ChatGPT, Claude, Gemini or Grok and get a token back. Works in Node, browsers, React, React Native, and via CDN.",
   "keywords": [
     "oauth",
     "oauth2",
@@ -19,7 +19,7 @@
     "sign-in-with-chatgpt"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/themonk-dev/ai-oauth-sdk#readme",
+  "homepage": "https://ai-oauth-sdk.themonk.dev/docs",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",

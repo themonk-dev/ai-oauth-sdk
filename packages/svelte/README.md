@@ -24,7 +24,7 @@ npm i @ai-oauth-sdk/svelte @ai-oauth-sdk/browser
   <button on:click={() => auth.logout()}>Sign out ({$auth.tokens.email})</button>
 {:else}
   <button on:click={() => auth.login()} disabled={$auth.isLoading}>
-    {$auth.error ? `Retry — ${$auth.error.message}` : 'Sign in with ChatGPT'}
+    {$auth.error ? `Retry: ${$auth.error.message}` : 'Sign in with ChatGPT'}
   </button>
 {/if}
 ```
@@ -35,11 +35,12 @@ npm i @ai-oauth-sdk/svelte @ai-oauth-sdk/browser
 (`login`, `logout`, `refresh`, `getAccessToken`, `cancel`) hang off the store
 object itself.
 
-The core store already satisfies Svelte's contract — `subscribe(fn)` emits the
-current value immediately and returns an unsubscribe function — so this package
-is a thin typing layer rather than a reimplementation. `svelte` is an optional
-peer dependency, and nothing here imports from it, so the store also works in
-plain JS or with any other consumer of that contract.
+The core store already satisfies Svelte's contract on its own: `subscribe(fn)` emits the current
+value immediately and returns an unsubscribe function. So this package is a thin typing layer
+rather than a reimplementation.
+
+`svelte` is an optional peer dependency and nothing here imports from it, which means the store
+also works in plain JS, or with any other consumer of that same contract.
 
 ## License
 
@@ -49,6 +50,6 @@ MIT
 
 <sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
-to their owners. These OAuth flows are not officially supported by any provider and may
-change without notice — see the
+to their owners. No provider officially supports these OAuth flows, and any of them may
+change without notice. Please read the
 [disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>

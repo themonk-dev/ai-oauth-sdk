@@ -12,6 +12,10 @@
     "claude"
   ],
   "license": "MIT",
+  "homepage": "https://ai-oauth-sdk.themonk.dev/docs/frameworks/react",
+  "bugs": {
+    "url": "https://github.com/themonk-dev/ai-oauth-sdk/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",

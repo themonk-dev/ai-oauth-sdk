@@ -23,22 +23,22 @@ const { login, logout, tokens, isLoading, error } = useAuth({
 <template>
   <button v-if="tokens" @click="logout()">Sign out ({{ tokens.email }})</button>
   <button v-else :disabled="isLoading" @click="login()">
-    {{ error ? `Retry — ${error.message}` : 'Sign in with ChatGPT' }}
+    {{ error ? `Retry: ${error.message}` : 'Sign in with ChatGPT' }}
   </button>
 </template>
 ```
 
 ## Notes
 
-Returns readonly refs, so template state can't be reassigned by accident.
-`tokens` and `error` are `shallowRef`s — a `TokenSet` is replaced wholesale and
-never mutated in place, so deep reactivity would only cost proxy overhead.
+Returns readonly refs, so template state cannot be reassigned by accident. `tokens` and `error` are
+`shallowRef`s: a `TokenSet` is replaced wholesale and never mutated in place, so deep reactivity
+would only cost proxy overhead.
 
-Cleanup runs through `onScopeDispose`, so this works unchanged inside
-`setup()`, a detached `effectScope()`, or a Pinia store.
+Cleanup runs through `onScopeDispose`, so this works unchanged inside `setup()`, a detached
+`effectScope()`, or a Pinia store.
 
-Cancelling a login (closing the popup) resolves to `undefined` and leaves
-`error` untouched — that's a user action, not a failure.
+Cancelling a login by closing the popup resolves to `undefined` and leaves `error` untouched. That
+is a user action, not a failure.
 
 Requires Vue 3.3+. `vue` is a peer dependency.
 
@@ -50,6 +50,6 @@ MIT
 
 <sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
-to their owners. These OAuth flows are not officially supported by any provider and may
-change without notice — see the
+to their owners. No provider officially supports these OAuth flows, and any of them may
+change without notice. Please read the
 [disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>

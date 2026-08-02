@@ -25,7 +25,7 @@ function SignIn() {
       when={auth.tokens()}
       fallback={
         <button onClick={() => auth.login()} disabled={auth.isLoading()}>
-          {auth.error() ? `Retry — ${auth.error()!.message}` : 'Sign in with ChatGPT'}
+          {auth.error() ? `Retry: ${auth.error()!.message}` : 'Sign in with ChatGPT'}
         </button>
       }
     >
@@ -37,10 +37,11 @@ function SignIn() {
 
 ## Notes
 
-Everything is an accessor — call them (`auth.tokens()`) to read inside a
-reactive scope. Cleanup runs through `onCleanup`, so the subscription is
-released with the owning root; called outside a root it simply does nothing,
-which is the correct behaviour there.
+Everything is an accessor, so call them to read inside a reactive scope: `auth.tokens()`, not
+`auth.tokens`.
+
+Cleanup runs through `onCleanup`, so the subscription is released with the owning root. Called
+outside a root it simply does nothing, which is the correct behaviour there.
 
 Requires Solid 1.8+. `solid-js` is a peer dependency.
 
@@ -52,6 +53,6 @@ MIT
 
 <sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
-to their owners. These OAuth flows are not officially supported by any provider and may
-change without notice — see the
+to their owners. No provider officially supports these OAuth flows, and any of them may
+change without notice. Please read the
 [disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>

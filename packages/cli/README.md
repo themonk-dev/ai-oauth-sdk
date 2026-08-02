@@ -33,12 +33,11 @@ list                  List all stored sessions
 refresh <provider>    Force a token refresh
 logout <provider>     Forget the stored token
 providers             List supported providers
-exec <provider> -- …  Run a command with the token in its environment
+exec <provider> -- ...  Run a command with the token in its environment
 ```
 
-`token` prints the bare token to **stdout** and nothing else — everything human
-goes to stderr, so `$(...)` capture is always clean. `--json` gives structured
-output for every command.
+`token` prints the bare token to **stdout** and nothing else. Everything meant for a human goes
+to stderr, so `$(...)` capture is always clean. `--json` gives structured output for every command.
 
 ## Keeping tokens out of your shell history
 
@@ -85,12 +84,11 @@ afterwards without repeating the flags.
 
 ## Providers
 
-`openai` · `anthropic` · `google` · `xai` · `github-copilot` · `openrouter` ·
-`qwen`
+`openai`, `anthropic`, `google`, `xai`, `github-copilot`, `openrouter`, `qwen`
 
 `openai`, `anthropic`, `github-copilot`, `openrouter` and `qwen` work with no
-setup. `google` and `xai` need credentials you register yourself — pass
-`--client-id` (and `--client-secret` for Google).
+setup. `google` and `xai` need credentials you register yourself, so pass `--client-id`, and
+`--client-secret` too for Google.
 
 ## Where tokens live
 
@@ -105,6 +103,6 @@ MIT
 
 <sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
-to their owners. These OAuth flows are not officially supported by any provider and may
-change without notice — see the
+to their owners. No provider officially supports these OAuth flows, and any of them may
+change without notice. Please read the
 [disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
