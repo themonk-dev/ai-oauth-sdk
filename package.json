@@ -24,6 +24,7 @@
     "docs:dev": "pnpm --dir docs dev",
     "docs:build": "pnpm --dir docs install --frozen-lockfile --ignore-scripts && pnpm --dir docs build",
     "docs:start": "pnpm --dir docs start",
+    "docs:deploy": "cd docs && npx wrangler deploy",
     "docs:typecheck": "pnpm --dir docs typecheck"
   },
   "devDependencies": {
