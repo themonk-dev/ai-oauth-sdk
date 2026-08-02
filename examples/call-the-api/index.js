@@ -2,8 +2,8 @@
  * The whole loop: sign in, then call the provider's API with the token.
  *
  *   node index.js openai
- *   node index.js anthropic
- *   node index.js google
+ *   node index.js claude
+ *   node index.js gemini
  *
  * Signing in is the easy part. What usually goes wrong afterwards is the
  * *other* headers a provider expects, and the moment a token expires mid-run.
@@ -28,7 +28,7 @@ const whoami = (body) => `signed in as ${body.email ?? body.sub ?? 'unknown'}`
 const listCodexModels = (body) => `${extractCodexModelSlugs(body).length} models available`
 
 const REQUESTS = {
-  anthropic: { path: '/models', describe: countModels },
+  claude: { path: '/models', describe: countModels },
   openrouter: { path: '/models', describe: countModels },
   xai: { path: '/models', describe: countModels },
   qwen: { path: '/models', describe: countModels },
@@ -40,11 +40,11 @@ const REQUESTS = {
   // resolves to chatgpt.com and the descriptor supplies the rest.
   openai: { path: '/models', describe: listCodexModels },
 
-  // Google's coding endpoint is not a model list, and reaching it needs a
+  // Gemini's coding endpoint is not a model list, and reaching it needs a
   // project handshake first. Identity is what the token plainly grants. An
   // absolute URL bypasses `apiBaseUrl`, which `createAuthenticatedFetch`
   // honours.
-  google: { path: 'https://openidconnect.googleapis.com/v1/userinfo', describe: whoami },
+  gemini: { path: 'https://openidconnect.googleapis.com/v1/userinfo', describe: whoami },
 }
 
 const request = REQUESTS[providerId]
@@ -56,7 +56,7 @@ if (!request) {
 }
 
 // You name the credential. publicClientIds holds the ones the vendors' own CLIs
-// publish — pass your own instead if you registered one. Google is the only
+// publish — pass your own instead if you registered one. Gemini is the only
 // provider whose token endpoint also insists on a secret.
 const clientId = publicClientIds[providerId]
 const clientSecret = publicClientSecrets[providerId]
@@ -79,7 +79,7 @@ if (!(await client.getTokens())) {
 }
 
 // This fetch attaches the bearer token, adds whatever extra headers the
-// provider requires (OpenAI wants the account id, Anthropic a version plus a
+// provider requires (OpenAI wants the account id, Claude a version plus a
 // beta flag), and recovers from a 401 by refreshing once and retrying.
 const api = createAuthenticatedFetch(client)
 

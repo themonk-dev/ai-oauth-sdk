@@ -20,7 +20,7 @@ Install it properly to drop the `npx`:
 
 ```bash
 npm i -g @ai-oauth-sdk/cli
-ai-oauth-sdk login anthropic
+ai-oauth-sdk login claude
 ```
 
 ## Commands
@@ -53,7 +53,7 @@ file. Use `--env-var OPENAI_API_KEY` to name it something a tool already reads.
 
 ```bash
 ai-oauth-sdk login github-copilot --device   # type a code on your phone
-ai-oauth-sdk login anthropic --paste         # print the URL, paste the result back
+ai-oauth-sdk login claude --paste            # print the URL, paste the result back
 ```
 
 Plain `login` already picks sensibly: a loopback server on a desktop, and paste
@@ -62,9 +62,9 @@ over SSH or with no `DISPLAY`, where a loopback redirect could never arrive.
 ## Several accounts
 
 ```bash
-ai-oauth-sdk login anthropic --account work
-ai-oauth-sdk login anthropic --account personal
-ai-oauth-sdk token anthropic --account work
+ai-oauth-sdk login claude --account work
+ai-oauth-sdk login claude --account personal
+ai-oauth-sdk token claude --account work
 ai-oauth-sdk list
 ```
 
@@ -84,11 +84,11 @@ afterwards without repeating the flags.
 
 ## Providers
 
-`openai`, `anthropic`, `google`, `xai`, `github-copilot`, `openrouter`, `qwen`
+`openai`, `claude`, `gemini`, `xai`, `github-copilot`, `openrouter`, `qwen`
 
-`openai`, `anthropic`, `github-copilot`, `openrouter` and `qwen` work with no
-setup. `google` and `xai` need credentials you register yourself, so pass `--client-id`, and
-`--client-secret` too for Google.
+`openai`, `claude`, `github-copilot`, `openrouter` and `qwen` work with no
+setup. `gemini` and `xai` need credentials you register yourself, so pass `--client-id`, and
+`--client-secret` too for Gemini.
 
 ## Where tokens live
 

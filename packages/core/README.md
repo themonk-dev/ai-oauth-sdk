@@ -27,7 +27,7 @@ const tokens = await client.completeAuthorization({ code, state })
 
 ## What's in here
 
-**Providers.** Descriptors for `openai`, `anthropic`, `google` and `xai`, plus
+**Providers.** Descriptors for `openai`, `claude`, `gemini` and `xai`, plus
 `defineProvider()` and `providerFromDiscovery()` for your own.
 
 **PKCE.** `createPkce()`, with a pure-JS SHA-256 fallback for runtimes without
