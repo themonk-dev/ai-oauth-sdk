@@ -1,16 +1,16 @@
 import { OAuthError } from '../errors.js'
 import type { FetchLike, ProviderConfig, ProviderInput } from '../types.js'
 import { defineProvider } from './define.js'
-import { anthropic } from './anthropic.js'
+import { claude } from './claude.js'
 import { githubCopilot } from './github-copilot.js'
-import { google } from './google.js'
+import { gemini } from './gemini.js'
 import { openai } from './openai.js'
 import { openrouter } from './openrouter.js'
 import { qwen } from './qwen.js'
 import { xai } from './xai.js'
 
 export { defineProvider, parseStandardCallback, readCallback } from './define.js'
-export { anthropic, githubCopilot, google, openai, openrouter, qwen, xai }
+export { claude, gemini, githubCopilot, openai, openrouter, qwen, xai }
 export { copilotClientHeaders, exchangeForCopilotToken } from './github-copilot.js'
 export type { CopilotApiToken } from './github-copilot.js'
 export {
@@ -20,16 +20,16 @@ export {
   fetchCodexModels,
   normalizeCodexResponsesBody,
 } from './openai.js'
-export { microsoft } from './microsoft.js'
+export { azureAi } from './azure-ai.js'
 export { publicClientIds, publicClientSecrets } from './public-client-ids.js'
 export type { PublicClientIdProvider } from './public-client-ids.js'
-export type { MicrosoftProviderOptions } from './microsoft.js'
+export type { AzureAiProviderOptions } from './azure-ai.js'
 
 /** Built-in descriptors, keyed by id. */
 export const providers = {
   openai,
-  anthropic,
-  google,
+  claude,
+  gemini,
   xai,
   'github-copilot': githubCopilot,
   openrouter,
@@ -37,6 +37,31 @@ export const providers = {
 } as const
 
 export type BuiltInProviderId = keyof typeof providers
+
+/**
+ * The same ids, under names you can autocomplete. Every value is the plain
+ * kebab-case string, so `ProviderId.GitHubCopilot` and `'github-copilot'` are
+ * interchangeable and a custom id is still just a string.
+ *
+ * ```ts
+ * createAuthClient({
+ *   provider: ProviderId.Claude,
+ *   clientId: publicClientIds[ProviderId.Claude],
+ * })
+ * ```
+ *
+ * Azure AI is absent because it has no fixed id to name: its endpoints are
+ * tenant-scoped, so you build the descriptor with `azureAi({ tenant })`.
+ */
+export const ProviderId = {
+  OpenAI: 'openai',
+  Claude: 'claude',
+  Gemini: 'gemini',
+  Grok: 'xai',
+  GitHubCopilot: 'github-copilot',
+  OpenRouter: 'openrouter',
+  Qwen: 'qwen',
+} as const satisfies Record<string, BuiltInProviderId>
 
 /** Anything accepted where a provider is expected. */
 export type ProviderLike = BuiltInProviderId | (string & {}) | ProviderConfig

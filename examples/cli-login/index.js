@@ -33,7 +33,7 @@ Providers: ${Object.keys(providers).join(', ')}
 }
 
 // Your own credential wins; otherwise opt into the one that provider's CLI
-// publishes. Only Google ships a secret, and only Google's token endpoint
+// publishes. Only Gemini ships a secret, and only Gemini's token endpoint
 // requires one.
 const flag = (name) => rest.find((arg) => arg.startsWith(`--${name}=`))?.split('=')[1]
 

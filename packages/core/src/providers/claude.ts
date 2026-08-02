@@ -2,12 +2,12 @@ import type { CallbackParseResult, TokenSet } from '../types.js'
 import { defineProvider, parseStandardCallback } from './define.js'
 
 /**
- * Anthropic returns the authorization code to a hosted page as `CODE#STATE`
+ * Claude returns the authorization code to a hosted page as `CODE#STATE`
  * rather than as query params, so the user pastes a single opaque string. We
  * still accept a full redirect URL, because the same provider also supports a
  * loopback redirect where the code arrives normally.
  */
-function parseAnthropicCallback(input: string): CallbackParseResult {
+function parseClaudeCallback(input: string): CallbackParseResult {
   const trimmed = input.trim()
 
   if (trimmed.includes('?') || trimmed.startsWith('http')) {
@@ -24,16 +24,20 @@ function parseAnthropicCallback(input: string): CallbackParseResult {
 }
 
 /**
- * Anthropic / Claude — the flow Claude Code uses.
+ * Claude, using the flow Claude Code uses.
  *
  * Defaults to a loopback redirect, so a local server catches the callback and
- * nothing is pasted. Anthropic registers loopback URIs with the port component
+ * nothing is pasted. Loopback URIs are registered with the port component
  * ignored (RFC 8252), so any port works. `--paste` falls back to the hosted
  * page that displays a code, which is the right answer over SSH.
+ *
+ * The id was `anthropic` before 0.4. `previousIds` carries that, so a stored
+ * credential is found under the old key once and moved to the new one.
  */
-export const anthropic = defineProvider({
-  id: 'anthropic',
-  label: 'Claude (Anthropic)',
+export const claude = defineProvider({
+  id: 'claude',
+  previousIds: ['anthropic'],
+  label: 'Claude',
   authorizationUrl: 'https://claude.ai/oauth/authorize',
   tokenUrl: 'https://platform.claude.com/v1/oauth/token',
   /**
@@ -73,11 +77,11 @@ export const anthropic = defineProvider({
   /**
    * The endpoint accepts both form and JSON bodies — verified live, where an
    * invalid grant is answered identically either way. Other clients send JSON;
-   * we send the RFC 6749 form encoding. Anthropic also accepts `state` on the
+   * we send the RFC 6749 form encoding. Claude also accepts `state` on the
    * exchange, which most providers reject.
    */
   tokenRequest: { style: 'form', includeClientIdInBody: true, includeState: true },
-  parseCallback: parseAnthropicCallback,
+  parseCallback: parseClaudeCallback,
   enrichTokens(raw, _tokens: TokenSet) {
     const account = raw['account']
 

@@ -198,7 +198,7 @@ export interface ExchangeCodeInput {
  * Trades an authorization code for tokens.
  *
  * `state` belongs to the authorization request, not this one, so it is sent
- * only where a provider opts in. Anthropic accepts it here too, which is why it
+ * only where a provider opts in. Claude accepts it here too, which is why it
  * was once sent unconditionally — but OpenAI rejects the whole exchange with
  * "Unknown parameter: 'state'".
  */

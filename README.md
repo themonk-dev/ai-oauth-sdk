@@ -114,7 +114,7 @@ pnpm docs:start
 caller, a server-side callback handler and a page loaded from a CDN.
 
 ```bash
-node examples/call-the-api/index.js anthropic
+node examples/call-the-api/index.js claude
 node examples/cli-login/index.js login openai
 node examples/server-callback/index.js          # then open http://localhost:3000
 ```

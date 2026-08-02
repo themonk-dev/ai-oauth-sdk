@@ -56,11 +56,11 @@ describe('secureStoreAdapter key encoding', () => {
     const fake = fakeSecureStore()
     const storage = secureStoreAdapter(fake.store)
 
-    await storage.set('tokens:anthropic', 'value')
-    expect(await storage.get('tokens:anthropic')).toBe('value')
+    await storage.set('tokens:claude', 'value')
+    expect(await storage.get('tokens:claude')).toBe('value')
 
-    await storage.delete('tokens:anthropic')
-    expect(await storage.get('tokens:anthropic')).toBeNull()
+    await storage.delete('tokens:claude')
+    expect(await storage.get('tokens:claude')).toBeNull()
     expect(fake.keys()).toEqual([])
   })
 

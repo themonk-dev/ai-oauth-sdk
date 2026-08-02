@@ -39,11 +39,11 @@ const PARAM_PATTERN = new RegExp(
 /** Token shapes the supported providers issue, in case they appear bare. */
 const TOKEN_SHAPES: { issuer: string; pattern: RegExp }[] = [
   { issuer: 'Authorization header value', pattern: /\bBearer\s+[\w.~+/=-]{8,}/gi },
-  { issuer: 'Anthropic', pattern: /\bsk-ant-[\w-]{8,}/gi },
+  { issuer: 'Claude', pattern: /\bsk-ant-[\w-]{8,}/gi },
   { issuer: 'OpenRouter', pattern: /\bsk-or-v1-[\w-]{8,}/gi },
   { issuer: 'OpenAI', pattern: /\bsk-[A-Za-z0-9_-]{16,}/g },
   { issuer: 'GitHub', pattern: /\bgh[pousr]_[A-Za-z0-9]{16,}/g },
-  { issuer: 'Google', pattern: /\bya29\.[\w.-]{8,}/g },
+  { issuer: 'Gemini', pattern: /\bya29\.[\w.-]{8,}/g },
   {
     issuer: 'JWT',
     pattern: /\bey[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g,

@@ -3,11 +3,11 @@ import type { TokenSet } from '../types.js'
 import { defineProvider } from './define.js'
 
 /**
- * Google / Gemini — the flow the Gemini CLI uses.
+ * Gemini, using the flow the Gemini CLI uses.
  *
- * Google's "installed application" clients need both a `clientId` and a
- * `clientSecret`. That secret is not confidential in the usual sense — Google's
- * own docs say installed-app secrets cannot be treated as such — but their
+ * Gemini's "installed application" clients need both a `clientId` and a
+ * `clientSecret`. That secret is not confidential in the usual sense, since the
+ * published docs say installed-app secrets cannot be treated as such, but the
  * token endpoint rejects the exchange without one, so both are published:
  *
  * ```ts
@@ -20,20 +20,21 @@ import { defineProvider } from './define.js'
  *
  * Register a "Desktop app" OAuth client in the Google Cloud console to present
  * as yourself instead. PKCE is what actually secures the flow; the secret is a
- * formality Google's endpoint insists on.
+ * formality the token endpoint insists on.
  *
- * `loopbackPort: 0` means "bind any free port" — Google accepts loopback
- * redirects on arbitrary ports (RFC 8252), which avoids collisions.
+ * `loopbackPort: 0` means "bind any free port". Loopback redirects are accepted
+ * on arbitrary ports (RFC 8252), which avoids collisions.
  *
- * No device flow is declared, deliberately. Google's device endpoint exists but
+ * No device flow is declared, deliberately. The device endpoint exists but
  * accepts only a client registered as "TVs and Limited Input devices", and a
  * coding CLI is not a television — the published gemini-cli client is a Desktop
  * app and is refused with `Invalid client type`. Declaring the endpoint would
  * advertise a flow that cannot work here.
  */
-export const google = defineProvider({
-  id: 'google',
-  label: 'Gemini (Google)',
+export const gemini = defineProvider({
+  id: 'gemini',
+  previousIds: ['google'],
+  label: 'Gemini',
   authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
   tokenUrl: 'https://oauth2.googleapis.com/token',
   revocationUrl: 'https://oauth2.googleapis.com/revoke',
@@ -45,14 +46,14 @@ export const google = defineProvider({
     'https://www.googleapis.com/auth/userinfo.profile',
   ],
   redirect: { mode: 'loopback', loopbackPort: 0, loopbackPath: '/oauth2callback' },
-  /** `access_type: offline` is required for Google to return a refresh token at all. */
+  /** `access_type: offline` is required for a refresh token to be returned at all. */
   extraAuthParams: {
     access_type: 'offline',
     prompt: 'consent',
   },
   tokenRequest: { style: 'form', includeClientIdInBody: true },
   note:
-    'Google needs a clientId *and* a clientSecret. publicClientIds.google and ' +
+    'Gemini needs a clientId *and* a clientSecret. publicClientIds.google and ' +
     'publicClientSecrets.google are the pair gemini-cli ships; installed-app ' +
     'secrets are non-confidential by design. Register your own "Desktop app" ' +
     'client in the Google Cloud console to present as yourself instead.',
