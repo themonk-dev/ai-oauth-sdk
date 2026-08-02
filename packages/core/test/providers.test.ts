@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 
 import { buildAuthorizationUrl, defaultRedirectUri } from '../src/authorize.js'
 import { OAuthError } from '../src/errors.js'
+import { createAuthClient } from '../src/client.js'
+import { memoryStorage } from '../src/storage.js'
 import {
-  anthropic,
+  azureAi,
+  claude,
   defineProvider,
-  google,
+  gemini,
   openai,
   parseStandardCallback,
   providers,
@@ -17,8 +20,8 @@ import {
 describe('built-in provider descriptors', () => {
   it('exposes every built-in provider', () => {
     expect(Object.keys(providers)).toContain('openai')
-    expect(Object.keys(providers)).toContain('anthropic')
-    expect(Object.keys(providers)).toContain('google')
+    expect(Object.keys(providers)).toContain('claude')
+    expect(Object.keys(providers)).toContain('gemini')
     expect(Object.keys(providers)).toContain('xai')
   })
 
@@ -57,11 +60,11 @@ describe('built-in provider descriptors', () => {
    * people over SSH.
    */
   it('defaults Anthropic to loopback, keeping the hosted page for pasting', () => {
-    expect(anthropic.redirect.mode).toBe('loopback')
-    expect(anthropic.redirect.loopbackPort).toBe(0)
-    expect(anthropic.redirect.hostedUri).toBe('https://platform.claude.com/oauth/code/callback')
+    expect(claude.redirect.mode).toBe('loopback')
+    expect(claude.redirect.loopbackPort).toBe(0)
+    expect(claude.redirect.hostedUri).toBe('https://platform.claude.com/oauth/code/callback')
     // Port 0 means "pick one at bind time", so there is no static default URI.
-    expect(defaultRedirectUri(anthropic)).toBeUndefined()
+    expect(defaultRedirectUri(claude)).toBeUndefined()
   })
 
   /*
@@ -70,16 +73,16 @@ describe('built-in provider descriptors', () => {
    * so it stays opt-in rather than riding along with every chat token.
    */
   it('asks Anthropic for no more than chat needs', () => {
-    expect(anthropic.scopes).toContain('user:inference')
-    expect(anthropic.scopes).not.toContain('org:create_api_key')
-    expect(anthropic.scopes).not.toContain('user:file_upload')
-    expect(anthropic.scopes).not.toContain('user:mcp_servers')
+    expect(claude.scopes).toContain('user:inference')
+    expect(claude.scopes).not.toContain('org:create_api_key')
+    expect(claude.scopes).not.toContain('user:file_upload')
+    expect(claude.scopes).not.toContain('user:mcp_servers')
   })
 
   it('gives Google an ephemeral loopback port', () => {
-    expect(google.redirect.loopbackPort).toBe(0)
+    expect(gemini.redirect.loopbackPort).toBe(0)
     // Port 0 means "pick one at bind time", so there is no static default URI.
-    expect(defaultRedirectUri(google)).toBeUndefined()
+    expect(defaultRedirectUri(gemini)).toBeUndefined()
   })
 
   it('marks xAI experimental and withholds a client id', () => {
@@ -136,7 +139,7 @@ describe('buildAuthorizationUrl', () => {
   it('asks Google for offline access, so a refresh token comes back', () => {
     const url = new URL(
       buildAuthorizationUrl({
-        provider: google,
+        provider: gemini,
         clientId: 'c',
         redirectUri: 'http://localhost:0/oauth2callback',
         state: 's',
@@ -197,8 +200,8 @@ describe('readCallback — the shared receiver path', () => {
   })
 
   it("honours a provider's own parser", () => {
-    // Anthropic pastes back `code#state`, which the standard parser cannot read.
-    expect(readCallback(anthropic, 'authcode123#statexyz')).toEqual({
+    // Claude pastes back `code#state`, which the standard parser cannot read.
+    expect(readCallback(claude, 'authcode123#statexyz')).toEqual({
       code: 'authcode123',
       state: 'statexyz',
     })
@@ -226,21 +229,21 @@ describe('callback parsing', () => {
   })
 
   it("parses Anthropic's code#state paste format", () => {
-    expect(anthropic.parseCallback!('authcode123#statexyz')).toEqual({
+    expect(claude.parseCallback!('authcode123#statexyz')).toEqual({
       code: 'authcode123',
       state: 'statexyz',
     })
   })
 
   it('still accepts a real URL for Anthropic loopback mode', () => {
-    expect(anthropic.parseCallback!('http://localhost:54545/callback?code=abc&state=xyz')).toEqual({
+    expect(claude.parseCallback!('http://localhost:54545/callback?code=abc&state=xyz')).toEqual({
       code: 'abc',
       state: 'xyz',
     })
   })
 
   it('tolerates a pasted code with no state', () => {
-    expect(anthropic.parseCallback!('justacode')).toEqual({ code: 'justacode' })
+    expect(claude.parseCallback!('justacode')).toEqual({ code: 'justacode' })
   })
 })
 
@@ -260,7 +263,7 @@ describe('resolveProvider', () => {
 
   it('throws a helpful error for an unknown id', () => {
     expect(() => resolveProvider('nope')).toThrowError(OAuthError)
-    expect(() => resolveProvider('nope')).toThrowError(/Built-ins: openai, anthropic, google, xai/)
+    expect(() => resolveProvider('nope')).toThrowError(/Built-ins: openai, claude, gemini, xai/)
   })
 
   it('accepts an inline descriptor', () => {
@@ -279,5 +282,52 @@ describe('resolveProvider', () => {
     expect(custom.pkceMethod).toBe('S256')
     expect(custom.tokenRequest.style).toBe('form')
     expect(custom.redirect.loopbackPath).toBe('/callback')
+  })
+})
+
+describe('renamed provider ids', () => {
+  it('declares the id each renamed provider used to have', () => {
+    expect(claude.previousIds).toEqual(['anthropic'])
+    expect(gemini.previousIds).toEqual(['google'])
+    expect(azureAi({ clientId: 'x' }).previousIds).toEqual(['microsoft'])
+  })
+
+  it('finds a credential stored under the old id, and moves it', async () => {
+    const storage = memoryStorage()
+    const tokens = { accessToken: 'a', tokenType: 'Bearer', provider: 'anthropic', raw: {} }
+    await storage.set('tokens:anthropic', JSON.stringify(tokens))
+
+    const client = createAuthClient({ provider: 'claude', clientId: 'c', storage })
+
+    expect(await client.getTokens()).toEqual(tokens)
+    // Moved rather than copied, so the next read takes the direct path.
+    expect(await storage.get('tokens:claude')).toBe(JSON.stringify(tokens))
+    expect(await storage.get('tokens:anthropic')).toBeNull()
+  })
+
+  it('keeps the account suffix when it moves one', async () => {
+    const storage = memoryStorage()
+    const tokens = { accessToken: 'a', tokenType: 'Bearer', provider: 'anthropic', raw: {} }
+    await storage.set('tokens:anthropic:work', JSON.stringify(tokens))
+
+    const client = createAuthClient({
+      provider: 'claude',
+      clientId: 'c',
+      accountKey: 'work',
+      storage,
+    })
+
+    expect(await client.getTokens()).toEqual(tokens)
+    expect(await storage.get('tokens:claude:work')).toBe(JSON.stringify(tokens))
+  })
+
+  it('prefers a credential already under the new id', async () => {
+    const storage = memoryStorage()
+    await storage.set('tokens:anthropic', JSON.stringify({ accessToken: 'old' }))
+    await storage.set('tokens:claude', JSON.stringify({ accessToken: 'new' }))
+
+    const client = createAuthClient({ provider: 'claude', clientId: 'c', storage })
+
+    expect((await client.getTokens())?.accessToken).toBe('new')
   })
 })

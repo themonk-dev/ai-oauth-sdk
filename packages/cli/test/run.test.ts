@@ -73,7 +73,7 @@ describe('providers', () => {
   it('lists providers as a table', async () => {
     expect(await run(['providers'])).toBe(0)
     expect(err()).toContain('openai')
-    expect(err()).toContain('anthropic')
+    expect(err()).toContain('claude')
     expect(err()).toContain('github-copilot')
   })
 
@@ -168,17 +168,17 @@ describe('list', () => {
   })
 
   it('distinguishes named accounts', async () => {
-    await seedSession('tokens:anthropic:work', {
+    await seedSession('tokens:claude:work', {
       accessToken: 'a',
       tokenType: 'Bearer',
-      provider: 'anthropic',
+      provider: 'claude',
       email: 'work@example.com',
       raw: {},
     })
 
     expect(await run(['list', '--auth-dir', dir, '--json'])).toBe(0)
     const parsed = JSON.parse(out()) as Array<{ provider: string; account?: string }>
-    expect(parsed[0]?.provider).toBe('anthropic')
+    expect(parsed[0]?.provider).toBe('claude')
     expect(parsed[0]?.account).toBe('work')
   })
 })

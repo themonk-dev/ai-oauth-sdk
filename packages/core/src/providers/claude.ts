@@ -31,12 +31,12 @@ function parseClaudeCallback(input: string): CallbackParseResult {
  * ignored (RFC 8252), so any port works. `--paste` falls back to the hosted
  * page that displays a code, which is the right answer over SSH.
  *
- * The id stays `anthropic`. It is the storage key for saved credentials and the
- * name consumers pass to `createAuthClient`, so renaming it would sign everyone
- * out and break their code.
+ * The id was `anthropic` before 0.4. `previousIds` carries that, so a stored
+ * credential is found under the old key once and moved to the new one.
  */
-export const anthropic = defineProvider({
-  id: 'anthropic',
+export const claude = defineProvider({
+  id: 'claude',
+  previousIds: ['anthropic'],
   label: 'Claude',
   authorizationUrl: 'https://claude.ai/oauth/authorize',
   tokenUrl: 'https://platform.claude.com/v1/oauth/token',

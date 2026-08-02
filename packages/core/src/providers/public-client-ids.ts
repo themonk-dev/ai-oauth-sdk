@@ -29,13 +29,13 @@ export const publicClientIds = {
   /** OpenAI's Codex CLI. */
   openai: 'app_EMoamEEZ73f0CkXaXp7hrann',
   /** Claude Code. */
-  anthropic: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+  claude: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
   /** The VS Code Copilot extension and GitHub's Copilot CLI. */
   'github-copilot': 'Iv1.b507a08c87ecfe98',
   /** Alibaba's qwen-code. */
   qwen: 'f0304373b74a44d2b584a3fb70ca9e56',
-  /** The gemini-cli client. Pair with {@link publicClientSecrets.google}. */
-  google: '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com',
+  /** The gemini-cli client. Pair with {@link publicClientSecrets.gemini}. */
+  gemini: '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com',
   /**
    * xAI's grok-cli.
    *
@@ -58,22 +58,22 @@ export const publicClientIds = {
  *
  * ```ts
  * createAuthClient({
- *   provider: 'google',
- *   clientId: publicClientIds.google,
- *   clientSecret: publicClientSecrets.google,
+ *   provider: 'gemini',
+ *   clientId: publicClientIds.gemini,
+ *   clientSecret: publicClientSecrets.gemini,
  * })
  * ```
  *
  * Because it is published in a repository, automated secret scanning may report
  * this value upstream and get it rotated. That breaks nothing structurally,
  * pass `clientSecret` explicitly, set `AI_OAUTH_SDK_CLIENT_SECRET`, or use
- * `--client-secret` — but if `login google` starts failing with
+ * `--client-secret` — but if `login gemini` starts failing with
  * `invalid_client`, a rotation is the first thing to check. Registering your own
  * "Desktop app" client in the Google Cloud console avoids the question entirely.
  */
 export const publicClientSecrets = {
-  /** The gemini-cli client, paired with {@link publicClientIds.google}. */
-  google: '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',
+  /** The gemini-cli client, paired with {@link publicClientIds.gemini}. */
+  gemini: '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',
 } as const
 
 export type PublicClientIdProvider = keyof typeof publicClientIds

@@ -9,7 +9,6 @@ export type {
 } from './client.js'
 
 export {
-  anthropic,
   azureAi,
   codexBaseUrl,
   codexClientVersion,
@@ -18,11 +17,10 @@ export {
   exchangeForCopilotToken,
   extractCodexModelSlugs,
   fetchCodexModels,
-  githubCopilot,
   claude,
-  google,
+  gemini,
+  githubCopilot,
   isProviderConfig,
-  microsoft,
   normalizeCodexResponsesBody,
   openai,
   openrouter,
@@ -40,7 +38,6 @@ export type {
   AzureAiProviderOptions,
   BuiltInProviderId,
   CopilotApiToken,
-  MicrosoftProviderOptions,
   ProviderLike,
   PublicClientIdProvider,
 } from './providers/index.js'

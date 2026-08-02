@@ -17,7 +17,7 @@ describe('manualReceiver redirect URI', () => {
   // which is most of them, and exactly what `--paste` is for on a headless box.
   it.each([
     ['openai', 'http://localhost:1455/auth/callback'],
-    ['google', 'http://localhost:1455/oauth2callback'],
+    ['gemini', 'http://localhost:1455/oauth2callback'],
     ['xai', 'http://127.0.0.1:56121/callback'],
     ['openrouter', 'http://localhost:1455/callback'],
   ])('synthesises a loopback URI for %s', async (id, expected) => {
@@ -26,7 +26,7 @@ describe('manualReceiver redirect URI', () => {
   })
 
   it('uses the published URI for a hosted provider', async () => {
-    const started = await start(providers.anthropic)
+    const started = await start(providers.claude)
     expect(started.redirectUri).toBe('https://platform.claude.com/oauth/code/callback')
   })
 
@@ -48,8 +48,8 @@ describe('manualReceiver redirect URI', () => {
     // `loopbackPort: 0` means "bind anything" to a real server. Nothing listens
     // in paste mode, so the value only has to survive into the token request —
     // but it must still be a real port, not a literal 0.
-    expect(providers.google.redirect.loopbackPort).toBe(0)
-    const started = await start(providers.google)
+    expect(providers.gemini.redirect.loopbackPort).toBe(0)
+    const started = await start(providers.gemini)
     expect(started.redirectUri).not.toContain(':0/')
   })
 })
