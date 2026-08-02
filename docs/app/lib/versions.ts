@@ -1,4 +1,4 @@
-import { docsRoute } from './shared'
+import { docsRoute, sdkVersion } from './shared'
 
 export interface DocsVersion {
   /** Matches the collection key in `app/lib/docs-page.tsx`. */
@@ -26,7 +26,7 @@ export interface DocsVersion {
 export const docsVersions: DocsVersion[] = [
   {
     key: 'latest',
-    label: 'latest',
+    label: `latest (${sdkVersion})`,
     description: 'Tracks main, matching the newest published packages',
     href: docsRoute,
     current: true,
