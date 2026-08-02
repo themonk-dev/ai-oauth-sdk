@@ -1,5 +1,51 @@
 # @ai-oauth-sdk/cli
 
+## 1.0.0
+
+### Major Changes
+
+- 380a105: **Breaking.** Providers are named after the product, not the company. Anthropic, Google and
+  Microsoft are companies; Claude, Gemini and Azure AI are what you sign in to.
+
+  | Was                          | Is                           |
+  | ---------------------------- | ---------------------------- |
+  | `provider: 'anthropic'`      | `provider: 'claude'`         |
+  | `provider: 'google'`         | `provider: 'gemini'`         |
+  | `provider: 'microsoft'`      | `provider: 'azure-ai'`       |
+  | `anthropic`                  | `claude`                     |
+  | `google`                     | `gemini`                     |
+  | `microsoft()`                | `azureAi()`                  |
+  | `MicrosoftProviderOptions`   | `AzureAiProviderOptions`     |
+  | `publicClientIds.anthropic`  | `publicClientIds.claude`     |
+  | `publicClientIds.google`     | `publicClientIds.gemini`     |
+  | `publicClientSecrets.google` | `publicClientSecrets.gemini` |
+
+  Labels change with them, so a CLI prompt now says `Claude`, `Gemini` and `Azure AI` rather than
+  `Claude (Anthropic)`, `Gemini (Google)` and `Microsoft (Entra ID)`.
+
+  **Nobody is signed out by this.** Provider ids are the keys stored credentials live under, so the
+  rename would ordinarily orphan every saved token. A new `previousIds` field on `ProviderConfig`
+  carries the old id, and `AuthClient` reads it as a fallback and moves what it finds to the new key.
+  The migration is one-time and silent. It runs per account, so `--account work` sessions come across
+  too.
+
+  To upgrade, replace the identifiers above. Nothing about how a token is obtained, refreshed or
+  stored changes.
+
+### Patch Changes
+
+- 63f7a74: Point every package at the documentation site. Nine of the ten had no `homepage`, so npm showed no
+  Homepage link at all, and the tenth pointed back at the repository README. Each now links to its own
+  page on the docs site, and every package gets a `bugs` URL so npm shows an Issues link too.
+
+  No code changes. The READMEs were also rewritten for readability.
+
+- Updated dependencies [63f7a74]
+- Updated dependencies [380a105]
+- Updated dependencies [380a105]
+  - @ai-oauth-sdk/core@1.0.0
+  - @ai-oauth-sdk/node@1.0.0
+
 ## 0.3.0
 
 ### Patch Changes

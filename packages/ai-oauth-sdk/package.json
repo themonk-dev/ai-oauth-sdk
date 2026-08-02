@@ -1,6 +1,6 @@
 {
   "name": "ai-oauth-sdk",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Minimal, provider-agnostic OAuth for AI CLIs and apps. Sign in with ChatGPT, Claude, Gemini or Grok and get a token back. Works in Node, browsers, React, React Native, and via CDN.",
   "keywords": [
     "oauth",
