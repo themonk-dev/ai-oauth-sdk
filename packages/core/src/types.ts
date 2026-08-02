@@ -168,6 +168,15 @@ export interface CallbackParseResult {
 export interface ProviderConfig {
   /** Stable identifier, e.g. `openai`. */
   id: string
+  /**
+   * Ids this provider used to have, newest first.
+   *
+   * Stored credentials are keyed by `id`, so renaming one orphans every token
+   * saved under the old name and the user looks signed out. `AuthClient` reads
+   * these as a fallback and rewrites what it finds to the current key, so a
+   * rename costs a login only for someone who skips the migrating version.
+   */
+  previousIds?: string[]
   /** Human label for prompts and UI. */
   label: string
   authorizationUrl: string

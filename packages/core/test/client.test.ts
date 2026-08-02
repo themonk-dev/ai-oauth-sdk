@@ -546,10 +546,10 @@ describe('configuration errors', () => {
   // about how to opt into one rather than where to go and register your own.
   it('names the published credential in the error', () => {
     try {
-      createAuthClient({ provider: 'google' })
+      createAuthClient({ provider: 'gemini' })
       expect.unreachable('should have thrown')
     } catch (error) {
-      expect((error as OAuthError).message).toMatch(/publicClientIds\['google'\]/)
+      expect((error as OAuthError).message).toMatch(/publicClientIds\['gemini'\]/)
     }
 
     try {
@@ -567,7 +567,7 @@ describe('configuration errors', () => {
     expect(() => createAuthClient({ provider: 'openai', clientId: 'mine' })).not.toThrow()
     expect(() => createAuthClient({ provider: 'xai', clientId: 'mine' })).not.toThrow()
     expect(() =>
-      createAuthClient({ provider: 'google', clientId: 'mine', clientSecret: 'shh' }),
+      createAuthClient({ provider: 'gemini', clientId: 'mine', clientSecret: 'shh' }),
     ).not.toThrow()
   })
 
@@ -652,11 +652,11 @@ describe('provider-specific token handling', () => {
     })
 
     try {
-      const { anthropic } = await import('../src/providers/anthropic.js')
+      const { claude } = await import('../src/providers/claude.js')
       const client = createAuthClient({
         provider: {
-          ...anthropic,
-          clientId: publicClientIds.anthropic,
+          ...claude,
+          clientId: publicClientIds.claude,
           tokenUrl: `${withAccount.url}/token`,
           authorizationUrl: `${withAccount.url}/authorize`,
         },
@@ -675,11 +675,11 @@ describe('provider-specific token handling', () => {
   })
 
   it('sends form encoding, which Anthropic requires', async () => {
-    const { anthropic } = await import('../src/providers/anthropic.js')
+    const { claude } = await import('../src/providers/claude.js')
     const client = createAuthClient({
       provider: {
-        ...anthropic,
-        clientId: publicClientIds.anthropic,
+        ...claude,
+        clientId: publicClientIds.claude,
         tokenUrl: `${server.url}/token`,
         authorizationUrl: `${server.url}/authorize`,
       },

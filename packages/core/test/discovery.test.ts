@@ -178,10 +178,10 @@ describe('manualReceiver', () => {
     await expect(started.wait()).resolves.toEqual({ code: 'abc', state: 'xyz' })
   })
 
-  it("parses Anthropic's code#state paste", async () => {
-    const { anthropic } = await import('../src/providers/anthropic.js')
+  it("parses Claude's code#state paste", async () => {
+    const { claude } = await import('../src/providers/claude.js')
     const started = await manualReceiver({ prompt: async () => 'thecode#thestate' }).start({
-      provider: anthropic,
+      provider: claude,
     })
 
     await started.present('https://claude.ai/oauth/authorize')

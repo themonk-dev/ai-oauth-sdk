@@ -168,7 +168,7 @@ export class AuthClient {
   }
 
   get #tokenKey(): string {
-    return `${TOKENS_PREFIX}${this.provider.id}${this.#accountKey ? `:${this.#accountKey}` : ''}`
+    return this.#keyFor(this.provider.id)
   }
 
 
@@ -486,8 +486,13 @@ export class AuthClient {
 
 
   /** Reads straight from storage, ignoring the in-memory cache. */
+  #keyFor(providerId: string): string {
+    return `${TOKENS_PREFIX}${providerId}${this.#accountKey ? `:${this.#accountKey}` : ''}`
+  }
+
   async #readStoredTokens(): Promise<TokenSet | undefined> {
-    const stored = await this.#storage.get(this.#tokenKey)
+    const stored =
+      (await this.#storage.get(this.#tokenKey)) ?? (await this.#readRenamedTokens())
 
     if (!stored) {
       return undefined
@@ -498,6 +503,35 @@ export class AuthClient {
     } catch {
       return undefined
     }
+  }
+
+  /**
+   * Finds tokens saved under an id this provider used to have, and moves them
+   * to the current key so the lookup only happens once.
+   *
+   * The move is best-effort: a storage backend that cannot delete, or throws on
+   * write, still hands back the credential it found.
+   */
+  async #readRenamedTokens(): Promise<string | null> {
+    for (const previousId of this.provider.previousIds ?? []) {
+      const key = this.#keyFor(previousId)
+      const stored = await this.#storage.get(key)
+
+      if (!stored) {
+        continue
+      }
+
+      try {
+        await this.#storage.set(this.#tokenKey, stored)
+        await this.#storage.delete(key)
+      } catch {
+        /* the credential is what matters; tidying the old key is not */
+      }
+
+      return stored
+    }
+
+    return null
   }
 
   async getTokens(): Promise<TokenSet | undefined> {

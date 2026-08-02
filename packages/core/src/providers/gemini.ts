@@ -31,8 +31,9 @@ import { defineProvider } from './define.js'
  * app and is refused with `Invalid client type`. Declaring the endpoint would
  * advertise a flow that cannot work here.
  */
-export const google = defineProvider({
-  id: 'google',
+export const gemini = defineProvider({
+  id: 'gemini',
+  previousIds: ['google'],
   label: 'Gemini',
   authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
   tokenUrl: 'https://oauth2.googleapis.com/token',

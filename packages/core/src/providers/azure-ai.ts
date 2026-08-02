@@ -34,15 +34,16 @@ export interface AzureAiProviderOptions {
  * Register the app as a **public client** with a loopback redirect URI; Entra
  * then accepts PKCE without a client secret.
  *
- * The id stays `microsoft`. It is the storage key for saved credentials, so
- * renaming it would sign everyone out.
+ * The id was `microsoft` before 0.4. `previousIds` carries that, so a stored
+ * credential is found under the old key once and moved to the new one.
  */
 export function azureAi(options: AzureAiProviderOptions): ProviderConfig {
   const tenant = options.tenant ?? 'common'
   const base = `https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0`
 
   return defineProvider({
-    id: 'microsoft',
+    id: 'azure-ai',
+    previousIds: ['microsoft'],
     label: 'Azure AI',
     clientId: options.clientId,
     authorizationUrl: `${base}/authorize`,
@@ -64,17 +65,3 @@ export function azureAi(options: AzureAiProviderOptions): ProviderConfig {
     tokenRequest: { style: 'form', includeClientIdInBody: true },
   })
 }
-
-/**
- * Previous name for {@link azureAi}, kept so existing imports keep working.
- *
- * @deprecated Use `azureAi`.
- */
-export const microsoft = azureAi
-
-/**
- * Previous name for {@link AzureAiProviderOptions}.
- *
- * @deprecated Use `AzureAiProviderOptions`.
- */
-export type MicrosoftProviderOptions = AzureAiProviderOptions

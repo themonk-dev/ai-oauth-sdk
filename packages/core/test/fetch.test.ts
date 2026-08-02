@@ -364,8 +364,8 @@ describe('provider API headers', () => {
   })
 
   it('Anthropic opts into the OAuth beta', async () => {
-    const { anthropic } = await import('../src/providers/anthropic.js')
-    const headers = anthropic.apiHeaders!({} as never)
+    const { claude } = await import('../src/providers/claude.js')
+    const headers = claude.apiHeaders!({} as never)
     expect(headers['anthropic-version']).toBe('2023-06-01')
     expect(headers['anthropic-beta']).toBe('oauth-2025-04-20')
   })

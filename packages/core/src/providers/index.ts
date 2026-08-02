@@ -1,18 +1,16 @@
 import { OAuthError } from '../errors.js'
 import type { FetchLike, ProviderConfig, ProviderInput } from '../types.js'
 import { defineProvider } from './define.js'
-import { anthropic } from './anthropic.js'
+import { claude } from './claude.js'
 import { githubCopilot } from './github-copilot.js'
-import { google } from './google.js'
+import { gemini } from './gemini.js'
 import { openai } from './openai.js'
 import { openrouter } from './openrouter.js'
 import { qwen } from './qwen.js'
 import { xai } from './xai.js'
 
 export { defineProvider, parseStandardCallback, readCallback } from './define.js'
-export { anthropic, githubCopilot, google, openai, openrouter, qwen, xai }
-/** Product name for {@link anthropic}. The provider id stays `anthropic`. */
-export { anthropic as claude } from './anthropic.js'
+export { claude, gemini, githubCopilot, openai, openrouter, qwen, xai }
 export { copilotClientHeaders, exchangeForCopilotToken } from './github-copilot.js'
 export type { CopilotApiToken } from './github-copilot.js'
 export {
@@ -22,16 +20,16 @@ export {
   fetchCodexModels,
   normalizeCodexResponsesBody,
 } from './openai.js'
-export { azureAi, microsoft } from './microsoft.js'
+export { azureAi } from './azure-ai.js'
 export { publicClientIds, publicClientSecrets } from './public-client-ids.js'
 export type { PublicClientIdProvider } from './public-client-ids.js'
-export type { AzureAiProviderOptions, MicrosoftProviderOptions } from './microsoft.js'
+export type { AzureAiProviderOptions } from './azure-ai.js'
 
 /** Built-in descriptors, keyed by id. */
 export const providers = {
   openai,
-  anthropic,
-  google,
+  claude,
+  gemini,
   xai,
   'github-copilot': githubCopilot,
   openrouter,

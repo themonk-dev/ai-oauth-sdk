@@ -4,7 +4,7 @@ import { buildAuthorizationUrl } from '../src/authorize.js'
 import { createAuthClient } from '../src/client.js'
 import {
   githubCopilot,
-  microsoft,
+  azureAi,
   openrouter,
   providers,
   publicClientIds,
@@ -152,32 +152,32 @@ describe('Qwen', () => {
 
 describe('Microsoft factory', () => {
   it('scopes the endpoints to the tenant', () => {
-    const provider = microsoft({ clientId: 'app-1', tenant: 'contoso.onmicrosoft.com' })
+    const provider = azureAi({ clientId: 'app-1', tenant: 'contoso.onmicrosoft.com' })
     expect(provider.authorizationUrl).toContain('contoso.onmicrosoft.com')
     expect(provider.tokenUrl).toContain('contoso.onmicrosoft.com')
     expect(provider.clientId).toBe('app-1')
   })
 
   it('defaults to the common (any account) tenant', () => {
-    expect(microsoft({ clientId: 'app-1' }).authorizationUrl).toContain('/common/')
+    expect(azureAi({ clientId: 'app-1' }).authorizationUrl).toContain('/common/')
   })
 
   it('URL-encodes a tenant that needs it', () => {
-    const provider = microsoft({ clientId: 'a', tenant: 'my tenant' })
+    const provider = azureAi({ clientId: 'a', tenant: 'my tenant' })
     expect(provider.authorizationUrl).toContain('my%20tenant')
   })
 
   it('asks for offline_access so a refresh token comes back', () => {
-    expect(microsoft({ clientId: 'a' }).scopes).toContain('offline_access')
+    expect(azureAi({ clientId: 'a' }).scopes).toContain('offline_access')
   })
 })
 
 describe('registry after expansion', () => {
   it('exposes all seven built-ins', () => {
     expect(Object.keys(providers).sort()).toEqual([
-      'anthropic',
+      'claude',
+      'gemini',
       'github-copilot',
-      'google',
       'openai',
       'openrouter',
       'qwen',
@@ -232,7 +232,7 @@ describe('state on the code exchange', () => {
   it('is sent for a provider that asks for it', async () => {
     const { bodies, fetchImpl } = capture()
     await exchangeCode({
-      provider: providers.anthropic,
+      provider: providers.claude,
       clientId: 'c',
       code: 'x',
       state: 'the-state',
