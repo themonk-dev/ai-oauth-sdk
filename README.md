@@ -56,6 +56,10 @@ npx @ai-oauth-sdk/cli login openai
 > [disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer), and use it at your own
 > discretion.
 
+<p align="center">
+  <img alt="npm downloads" src="https://shieldcn.dev/chart/npm/ai-oauth-sdk.svg?days=30&amp;logo=false&amp;width=920&amp;icon=ri%3APiFingerprint" />
+</p>
+
 ## Documentation
 
 Everything is at **[ai-oauth.themonk.dev](https://ai-oauth.themonk.dev/docs)**.
