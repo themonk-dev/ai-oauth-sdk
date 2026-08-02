@@ -54,12 +54,12 @@ lifetime to, so nothing gets torn down early.
 ```ts
 // stores/auth.ts
 import { defineStore } from 'pinia'
-import { useAuth } from '@ai-oauth-sdk/vue'
+import { ProviderId, useAuth } from '@ai-oauth-sdk/vue'
 import { popupReceiver } from '@ai-oauth-sdk/browser'
 
 export const useAuthStore = defineStore('auth', () => {
   return useAuth({
-    provider: 'openai',
+    provider: ProviderId.OpenAI,
     clientId: import.meta.env.VITE_OPENAI_CLIENT_ID,
     receiver: popupReceiver(),
   })
@@ -81,7 +81,7 @@ guard those rather than the composable:
 
 ```ts
 const auth = useAuth({
-  provider: 'openai',
+  provider: ProviderId.OpenAI,
   clientId,
   ...(import.meta.client ? { receiver: popupReceiver() } : {}),
 })

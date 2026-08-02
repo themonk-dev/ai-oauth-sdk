@@ -13,9 +13,9 @@ A second window does the consent, posts the code back to the opener, and closes.
 never navigates, so nothing in memory is lost.
 
 ```ts
-import { loginWithPopup } from '@ai-oauth-sdk/browser'
+import { loginWithPopup, ProviderId } from '@ai-oauth-sdk/browser'
 
-button.onclick = () => loginWithPopup('openai', { clientId, redirectUri })
+button.onclick = () => loginWithPopup(ProviderId.OpenAI, { clientId, redirectUri })
 ```
 
 Two constraints come with it.
@@ -46,13 +46,9 @@ The page navigates to the provider and the provider navigates back. Nothing in m
 the flow spans two page loads and is completed on the second one.
 
 ```ts
-import {
-  createBrowserAuthClient,
-  handleRedirectCallback,
-  startRedirectLogin,
-} from '@ai-oauth-sdk/browser'
+import { createBrowserAuthClient, handleRedirectCallback, ProviderId, startRedirectLogin } from '@ai-oauth-sdk/browser'
 
-const client = createBrowserAuthClient({ provider: 'openai', clientId })
+const client = createBrowserAuthClient({ provider: ProviderId.OpenAI, clientId })
 
 const tokens = await handleRedirectCallback(client) // null when not a callback
 button.onclick = () => startRedirectLogin(client)
@@ -85,7 +81,7 @@ falling back to the redirect when the window fails to open.
 ## Both flows, one client
 
 ```ts
-const client = createBrowserAuthClient({ provider: 'openai', clientId })
+const client = createBrowserAuthClient({ provider: ProviderId.OpenAI, clientId })
 
 async function signIn() {
   try {

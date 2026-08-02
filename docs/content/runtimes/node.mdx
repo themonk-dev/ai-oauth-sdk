@@ -11,9 +11,9 @@ npm install @ai-oauth-sdk/node
 ## One call
 
 ```ts
-import { login, publicClientIds } from '@ai-oauth-sdk/node'
+import { login, ProviderId, publicClientIds } from '@ai-oauth-sdk/node'
 
-const tokens = await login('openai', { clientId: publicClientIds.openai })
+const tokens = await login(ProviderId.OpenAI, { clientId: publicClientIds[ProviderId.OpenAI] })
 console.log(tokens.accessToken)
 ```
 
@@ -38,9 +38,9 @@ const isHeadless = !canOpenBrowser() || isRemote
 Override it whenever you know better:
 
 ```ts
-import { login, loopbackReceiver } from '@ai-oauth-sdk/node'
+import { login, loopbackReceiver, ProviderId } from '@ai-oauth-sdk/node'
 
-await login('openai', {
+await login(ProviderId.OpenAI, {
   clientId,
   receiver: loopbackReceiver({ port: 1455, openBrowser: false }),
 })
@@ -52,11 +52,11 @@ await login('openai', {
 afterwards, build it yourself:
 
 ```ts
-import { createNodeAuthClient, defaultReceiver, publicClientIds } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, defaultReceiver, ProviderId, publicClientIds } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'claude',
-  clientId: publicClientIds.claude,
+  provider: ProviderId.Claude,
+  clientId: publicClientIds[ProviderId.Claude],
 })
 
 if (!(await client.isAuthenticated())) {

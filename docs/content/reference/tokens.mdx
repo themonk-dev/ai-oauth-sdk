@@ -76,8 +76,8 @@ about that behaviour is on the token set itself.
 ## Several accounts
 
 ```ts
-const work = createAuthClient({ provider: 'claude', clientId, accountKey: 'work' })
-const personal = createAuthClient({ provider: 'claude', clientId, accountKey: 'personal' })
+const work = createAuthClient({ provider: ProviderId.Claude, clientId, accountKey: 'work' })
+const personal = createAuthClient({ provider: ProviderId.Claude, clientId, accountKey: 'personal' })
 ```
 
 `accountKey` changes the storage key from `tokens:claude` to `tokens:claude:work`. Nothing

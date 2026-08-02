@@ -8,12 +8,12 @@ Give each user their own client via `accountKey`, and namespace the storage so p
 collide.
 
 ```ts
-import { createAuthClient, prefixedStorage, publicClientIds } from '@ai-oauth-sdk/core'
+import { createAuthClient, prefixedStorage, ProviderId, publicClientIds } from '@ai-oauth-sdk/core'
 
 function clientFor(userId: string) {
   return createAuthClient({
-    provider: 'openai',
-    clientId: publicClientIds.openai,
+    provider: ProviderId.OpenAI,
+    clientId: publicClientIds[ProviderId.OpenAI],
     redirectUri: 'https://yourapp.com/auth/callback',
     accountKey: userId,
     storage: prefixedStorage(sharedStorage, `user:${userId}:`),

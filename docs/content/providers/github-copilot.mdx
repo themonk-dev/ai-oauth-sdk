@@ -5,11 +5,11 @@ icon: RiCopilotFill
 ---
 
 ```ts
-import { createNodeAuthClient, publicClientIds } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'github-copilot',
-  clientId: publicClientIds['github-copilot'],
+  provider: ProviderId.GitHubCopilot,
+  clientId: publicClientIds[ProviderId.GitHubCopilot],
 })
 
 const tokens = await client.deviceLogin({

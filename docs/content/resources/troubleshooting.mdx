@@ -31,7 +31,7 @@ await client.login({ receiver, timeoutMs: 120_000 })
 You did not pass one, and no provider defaults to one. Pass your own, or opt into the published one:
 
 ```ts
-createAuthClient({ provider: 'openai', clientId: publicClientIds.openai })
+createAuthClient({ provider: ProviderId.OpenAI, clientId: publicClientIds[ProviderId.OpenAI] })
 ```
 
 ## `invalid_client` from the provider

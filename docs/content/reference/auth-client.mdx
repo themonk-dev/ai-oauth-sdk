@@ -9,9 +9,9 @@ exchanges the code, and manages the resulting token. Everything else in the libr
 it hands you or a seam it calls into.
 
 ```ts
-import { createAuthClient } from '@ai-oauth-sdk/core'
+import { createAuthClient, ProviderId } from '@ai-oauth-sdk/core'
 
-const client = createAuthClient({ provider: 'openai', clientId })
+const client = createAuthClient({ provider: ProviderId.OpenAI, clientId })
 ```
 
 `createAuthClient` and `new AuthClient` are the same thing. The adapters ship preconfigured

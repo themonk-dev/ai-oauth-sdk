@@ -21,9 +21,9 @@ two ways to arrange that, and they trade off against each other.
 ## Popup
 
 ```ts
-import { loginWithPopup, postCallbackToOpener } from '@ai-oauth-sdk/browser'
+import { loginWithPopup, postCallbackToOpener, ProviderId } from '@ai-oauth-sdk/browser'
 
-button.onclick = () => loginWithPopup('openai', { clientId, redirectUri })
+button.onclick = () => loginWithPopup(ProviderId.OpenAI, { clientId, redirectUri })
 ```
 
 It must be called from a user gesture, or the browser blocks the window.
@@ -58,13 +58,9 @@ The flow now spans two page loads, so nothing can live in a closure. The PKCE ve
 `sessionStorage` on the way out and is read back on the way in.
 
 ```ts
-import {
-  createBrowserAuthClient,
-  handleRedirectCallback,
-  startRedirectLogin,
-} from '@ai-oauth-sdk/browser'
+import { createBrowserAuthClient, handleRedirectCallback, ProviderId, startRedirectLogin } from '@ai-oauth-sdk/browser'
 
-const client = createBrowserAuthClient({ provider: 'openai', clientId })
+const client = createBrowserAuthClient({ provider: ProviderId.OpenAI, clientId })
 
 // At startup. Returns null when the current URL is not a callback,
 // so calling it unconditionally is fine.

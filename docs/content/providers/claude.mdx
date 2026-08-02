@@ -5,11 +5,11 @@ icon: RiClaudeFill
 ---
 
 ```ts
-import { createNodeAuthClient, publicClientIds } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'claude',
-  clientId: publicClientIds.claude,
+  provider: ProviderId.Claude,
+  clientId: publicClientIds[ProviderId.Claude],
 })
 ```
 
@@ -55,11 +55,11 @@ durable organization credentials that outlive the OAuth session. Ask for them ex
 want them:
 
 ```ts
-import { claude, publicClientIds } from '@ai-oauth-sdk/core'
+import { claude, ProviderId, publicClientIds } from '@ai-oauth-sdk/core'
 
 createAuthClient({
-  provider: 'claude',
-  clientId: publicClientIds.claude,
+  provider: ProviderId.Claude,
+  clientId: publicClientIds[ProviderId.Claude],
   scopes: [...claude.scopes, 'org:create_api_key', 'user:file_upload'],
 })
 ```

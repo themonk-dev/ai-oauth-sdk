@@ -5,10 +5,10 @@ icon: OpenRouterIcon
 ---
 
 ```ts
-import { createNodeAuthClient } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, ProviderId } from '@ai-oauth-sdk/node'
 
 // No client id. OpenRouter identifies applications by their callback URL.
-const client = createNodeAuthClient({ provider: 'openrouter' })
+const client = createNodeAuthClient({ provider: ProviderId.OpenRouter })
 ```
 
 | Setting | Value |

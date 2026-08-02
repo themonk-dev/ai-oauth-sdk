@@ -12,26 +12,26 @@ const OUTPUT = [
 ]
 
 const SNIPPETS = {
-  node: `import { login, publicClientIds } from 'ai-oauth-sdk/node'
+  node: `import { login, ProviderId, publicClientIds } from 'ai-oauth-sdk/node'
 
 // Opens a browser, catches the callback on 127.0.0.1,
 // and stores the token under ~/.ai-oauth-sdk.
-const { accessToken } = await login('openai', {
-  clientId: publicClientIds.openai,
+const { accessToken } = await login(ProviderId.OpenAI, {
+  clientId: publicClientIds[ProviderId.OpenAI],
 })`,
-  browser: `import { loginWithPopup } from 'ai-oauth-sdk/browser'
+  browser: `import { loginWithPopup, ProviderId } from 'ai-oauth-sdk/browser'
 
 // From a click handler, or the popup is blocked.
-const tokens = await loginWithPopup('claude', {
+const tokens = await loginWithPopup(ProviderId.Claude, {
   clientId,
   redirectUri,
   scopes: ['user:inference', 'user:profile'],
 })`,
-  react: `import { popupReceiver } from 'ai-oauth-sdk/browser'
+  react: `import { popupReceiver, ProviderId } from 'ai-oauth-sdk/browser'
 import { useAuth } from '@ai-oauth-sdk/react'
 
 const { login, tokens } = useAuth({
-  provider: 'gemini',
+  provider: ProviderId.Gemini,
   clientId,
   receiver: popupReceiver(),
 })`,

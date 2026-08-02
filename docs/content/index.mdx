@@ -22,11 +22,11 @@ npx @ai-oauth-sdk/cli login openai
 ```
 
 ```ts
-import { login, publicClientIds } from 'ai-oauth-sdk/node'
+import { login, ProviderId, publicClientIds } from 'ai-oauth-sdk/node'
 
 // You name the client id, the way Passport does. Nothing presents as a
 // vendor's CLI by accident.
-const { accessToken } = await login('openai', { clientId: publicClientIds.openai })
+const { accessToken } = await login(ProviderId.OpenAI, { clientId: publicClientIds[ProviderId.OpenAI] })
 ```
 
 ## Features

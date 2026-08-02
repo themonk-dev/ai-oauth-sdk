@@ -16,14 +16,14 @@ The framework barely matters. All of these do the same three things.
 
 ```ts
 import { Hono } from 'hono'
-import { createAuthClient, publicClientIds } from '@ai-oauth-sdk/core'
+import { createAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/core'
 
 const client = createAuthClient({
-  provider: 'openai',
-  // You name the credential. publicClientIds.openai is the one OpenAI's own
+  provider: ProviderId.OpenAI,
+  // You name the credential. publicClientIds[ProviderId.OpenAI] is the one OpenAI's own
   // Codex CLI publishes; pass your own registered id instead if you would
   // rather not present as that CLI.
-  clientId: publicClientIds.openai,
+  clientId: publicClientIds[ProviderId.OpenAI],
   redirectUri: 'https://yourapp.com/auth/callback',
   storage: redisStorage(redis),
 })

@@ -12,12 +12,12 @@ Solid 1.8 and up.
 
 ```tsx
 import { Show } from 'solid-js'
-import { createAuth } from '@ai-oauth-sdk/solid'
+import { createAuth, ProviderId } from '@ai-oauth-sdk/solid'
 import { popupReceiver } from '@ai-oauth-sdk/browser'
 
 function SignIn() {
   const auth = createAuth({
-    provider: 'openai',
+    provider: ProviderId.OpenAI,
     clientId,
     receiver: popupReceiver(),
   })
@@ -59,7 +59,7 @@ and is fine to share:
 ```ts
 // src/auth.ts
 export const auth = createAuth({
-  provider: 'openai',
+  provider: ProviderId.OpenAI,
   clientId: import.meta.env.VITE_OPENAI_CLIENT_ID,
   receiver: popupReceiver(),
 })

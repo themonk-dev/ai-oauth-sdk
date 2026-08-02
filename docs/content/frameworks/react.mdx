@@ -14,12 +14,12 @@ Works on React 17 and up. The binding is subscription-based rather than using
 ## useAuth
 
 ```tsx
-import { useAuth } from '@ai-oauth-sdk/react'
+import { ProviderId, useAuth } from '@ai-oauth-sdk/react'
 import { popupReceiver } from '@ai-oauth-sdk/browser'
 
 function SignInButton() {
   const { login, logout, tokens, isLoading, error } = useAuth({
-    provider: 'openai',
+    provider: ProviderId.OpenAI,
     clientId,
     receiver: popupReceiver(),
   })
@@ -92,7 +92,7 @@ that identity. You do not need to memoise them.
 
 ```tsx
 function Models() {
-  const { client, isAuthenticated } = useAuth({ provider: 'openai', clientId })
+  const { client, isAuthenticated } = useAuth({ provider: ProviderId.OpenAI, clientId })
   const [models, setModels] = useState<string[]>([])
 
   useEffect(() => {

@@ -25,13 +25,13 @@ redirect.
 import * as AuthSession from 'expo-auth-session'
 import * as SecureStore from 'expo-secure-store'
 import * as WebBrowser from 'expo-web-browser'
-import { createAuthClient } from '@ai-oauth-sdk/core'
+import { createAuthClient, ProviderId } from '@ai-oauth-sdk/core'
 import { authSessionReceiver, secureStoreAdapter } from '@ai-oauth-sdk/react-native'
 
 const redirectUri = AuthSession.makeRedirectUri({ scheme: 'myapp', path: 'auth/callback' })
 
 const client = createAuthClient({
-  provider: 'openai',
+  provider: ProviderId.OpenAI,
   clientId,
   redirectUri,
   storage: secureStoreAdapter(SecureStore),

@@ -14,10 +14,10 @@ The Vercel AI SDK, the OpenAI SDK and the Claude SDK all accept one.
 ```ts
 import { createOpenAI } from '@ai-sdk/openai'
 import { generateText } from 'ai'
-import { createAuthenticatedFetch } from '@ai-oauth-sdk/core'
+import { createAuthenticatedFetch, ProviderId } from '@ai-oauth-sdk/core'
 import { createNodeAuthClient } from '@ai-oauth-sdk/node'
 
-const client = createNodeAuthClient({ provider: 'openai', clientId })
+const client = createNodeAuthClient({ provider: ProviderId.OpenAI, clientId })
 
 const openai = createOpenAI({
   apiKey: 'unused', // the SDK insists on one; our fetch replaces it

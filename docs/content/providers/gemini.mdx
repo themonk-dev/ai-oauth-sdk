@@ -5,12 +5,12 @@ icon: RiGeminiFill
 ---
 
 ```ts
-import { createNodeAuthClient, publicClientIds, publicClientSecrets } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, ProviderId, publicClientIds, publicClientSecrets } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'gemini',
-  clientId: publicClientIds.gemini,
-  clientSecret: publicClientSecrets.gemini,
+  provider: ProviderId.Gemini,
+  clientId: publicClientIds[ProviderId.Gemini],
+  clientSecret: publicClientSecrets[ProviderId.Gemini],
 })
 ```
 

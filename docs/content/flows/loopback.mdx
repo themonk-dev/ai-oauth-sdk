@@ -9,9 +9,9 @@ the user to the provider with `http://localhost:PORT/callback` as the redirect U
 delivers the code straight back to the process that asked for it.
 
 ```ts
-import { createNodeAuthClient, loopbackReceiver, publicClientIds } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, loopbackReceiver, ProviderId, publicClientIds } from '@ai-oauth-sdk/node'
 
-const client = createNodeAuthClient({ provider: 'openai', clientId: publicClientIds.openai })
+const client = createNodeAuthClient({ provider: ProviderId.OpenAI, clientId: publicClientIds[ProviderId.OpenAI] })
 const tokens = await client.login({ receiver: loopbackReceiver() })
 ```
 

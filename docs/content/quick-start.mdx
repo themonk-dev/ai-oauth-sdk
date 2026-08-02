@@ -44,15 +44,15 @@ ai-oauth-sdk exec openai -- ./deploy.sh   # arrives as $AI_OAUTH_SDK_TOKEN
 <Tab value="Node">
 
 ```ts
-import { login, createNodeAuthClient, publicClientIds } from 'ai-oauth-sdk/node'
+import { createNodeAuthClient, login, ProviderId, publicClientIds } from 'ai-oauth-sdk/node'
 
 // Picks a receiver, opens the browser, catches the callback, and stores the
 // tokens in ~/.ai-oauth-sdk/auth.json with mode 0600.
-await login('claude', { clientId: publicClientIds.claude })
+await login(ProviderId.Claude, { clientId: publicClientIds[ProviderId.Claude] })
 
 const client = createNodeAuthClient({
-  provider: 'claude',
-  clientId: publicClientIds.claude,
+  provider: ProviderId.Claude,
+  clientId: publicClientIds[ProviderId.Claude],
 })
 
 const accessToken = await client.getAccessToken() // refreshes when near expiry
@@ -66,9 +66,9 @@ paste-the-code over SSH or with no `DISPLAY`, where a loopback redirect could ne
 <Tab value="Browser">
 
 ```ts
-import { loginWithPopup, postCallbackToOpener } from 'ai-oauth-sdk/browser'
+import { loginWithPopup, postCallbackToOpener, ProviderId } from 'ai-oauth-sdk/browser'
 
-button.onclick = () => loginWithPopup('openai', { clientId, redirectUri })
+button.onclick = () => loginWithPopup(ProviderId.OpenAI, { clientId, redirectUri })
 ```
 
 On the page at `redirectUri`, call `postCallbackToOpener()` and nothing else. It hands the code
@@ -77,13 +77,9 @@ back to the opener and closes the popup.
 For embedded webviews and aggressive popup blockers, use the full-page redirect instead:
 
 ```ts
-import {
-  createBrowserAuthClient,
-  handleRedirectCallback,
-  startRedirectLogin,
-} from 'ai-oauth-sdk/browser'
+import { createBrowserAuthClient, handleRedirectCallback, ProviderId, startRedirectLogin } from 'ai-oauth-sdk/browser'
 
-const client = createBrowserAuthClient({ provider: 'openai', clientId })
+const client = createBrowserAuthClient({ provider: ProviderId.OpenAI, clientId })
 
 // Safe to call unconditionally at startup. Returns null when this is not a callback.
 const tokens = await handleRedirectCallback(client)
@@ -96,12 +92,12 @@ button.onclick = () => startRedirectLogin(client)
 <Tab value="React">
 
 ```tsx
-import { useAuth } from 'ai-oauth-sdk/react'
+import { ProviderId, useAuth } from 'ai-oauth-sdk/react'
 import { popupReceiver } from 'ai-oauth-sdk/browser'
 
 function SignIn() {
   const { login, logout, tokens, isLoading, error } = useAuth({
-    provider: 'openai',
+    provider: ProviderId.OpenAI,
     clientId,
     receiver: popupReceiver(),
   })
@@ -130,11 +126,11 @@ Vue, Svelte and Solid have the same shape. See [Frameworks](/docs/frameworks).
 ```ts
 import * as SecureStore from 'expo-secure-store'
 import * as WebBrowser from 'expo-web-browser'
-import { createAuthClient } from 'ai-oauth-sdk/core'
+import { createAuthClient, ProviderId } from 'ai-oauth-sdk/core'
 import { authSessionReceiver, secureStoreAdapter } from 'ai-oauth-sdk/react-native'
 
 const client = createAuthClient({
-  provider: 'openai',
+  provider: ProviderId.OpenAI,
   clientId,
   storage: secureStoreAdapter(SecureStore), // Keychain, EncryptedSharedPreferences
 })
@@ -192,13 +188,13 @@ ai-oauth-sdk login github-copilot --device
 No provider defaults to one. You pass it, the way you pass a strategy to Passport.
 
 ```ts
-import { createAuthClient, publicClientIds } from 'ai-oauth-sdk/core'
+import { createAuthClient, ProviderId, publicClientIds } from 'ai-oauth-sdk/core'
 
 // The id OpenAI's own Codex CLI publishes.
-createAuthClient({ provider: 'openai', clientId: publicClientIds.openai })
+createAuthClient({ provider: ProviderId.OpenAI, clientId: publicClientIds[ProviderId.OpenAI] })
 
 // Or one you registered yourself.
-createAuthClient({ provider: 'openai', clientId: 'my-registered-client' })
+createAuthClient({ provider: ProviderId.OpenAI, clientId: 'my-registered-client' })
 ```
 
 <Callout type="warn" title="Using a published id means presenting as that CLI">
@@ -212,9 +208,9 @@ Gemini is the only built-in that also needs a secret, because its installed-app 
 
 ```ts
 createAuthClient({
-  provider: 'gemini',
-  clientId: publicClientIds.gemini,
-  clientSecret: publicClientSecrets.gemini,
+  provider: ProviderId.Gemini,
+  clientId: publicClientIds[ProviderId.Gemini],
+  clientSecret: publicClientSecrets[ProviderId.Gemini],
 })
 ```
 

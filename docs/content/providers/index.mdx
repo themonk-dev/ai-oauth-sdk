@@ -16,8 +16,8 @@ No built-in provider ships with one. You pass it at initialization, the way you 
 Passport.
 
 ```ts
-createAuthClient({ provider: 'openai', clientId: publicClientIds.openai }) // that vendor's CLI
-createAuthClient({ provider: 'openai', clientId: 'my-registered-client' }) // or your own
+createAuthClient({ provider: ProviderId.OpenAI, clientId: publicClientIds[ProviderId.OpenAI] }) // that vendor's CLI
+createAuthClient({ provider: ProviderId.OpenAI, clientId: 'my-registered-client' }) // or your own
 ```
 
 Constructing a client without one throws `configuration_error` with a message naming the option you
@@ -51,8 +51,8 @@ Raw credential values are on the [credentials](/docs/resources/credentials) page
 
 ### Ids by name
 
-Ids are kebab-case strings and always have been. `ProviderId` is the same set under names your
-editor can complete, which also spares you the bracket on the hyphenated ones.
+Ids are kebab-case strings. Examples here use `ProviderId`, which holds that same set under names
+your editor can complete, and spares you the bracket on the hyphenated ones.
 
 ```ts
 import { createAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/core'
@@ -63,8 +63,8 @@ createAuthClient({
 })
 ```
 
-`ProviderId.GitHubCopilot` **is** `'github-copilot'`, so the two are interchangeable and a custom
-provider is still an ordinary string. Azure AI has no entry for the reason above: there is no fixed
+`ProviderId.GitHubCopilot` **is** `'github-copilot'`, so the plain string works the same wherever
+you prefer it, and a custom provider is still an ordinary string. Azure AI has no entry for the reason above: there is no fixed
 id to name.
 
 ## Capabilities

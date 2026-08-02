@@ -11,11 +11,11 @@ icon: RiGrokAiFill
 </Callout>
 
 ```ts
-import { createNodeAuthClient, publicClientIds } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'xai',
-  clientId: publicClientIds.xai,
+  provider: ProviderId.Grok,
+  clientId: publicClientIds[ProviderId.Grok],
 })
 ```
 
@@ -68,12 +68,12 @@ createAuthClient({
 Or rebuild the descriptor from discovery at startup:
 
 ```ts
-import { providerFromDiscovery } from '@ai-oauth-sdk/core'
+import { providerFromDiscovery, ProviderId } from '@ai-oauth-sdk/core'
 
 const provider = await providerFromDiscovery('https://auth.x.ai', {
   id: 'xai',
   label: 'Grok (xAI)',
-  clientId: publicClientIds.xai,
+  clientId: publicClientIds[ProviderId.Grok],
   redirect: { mode: 'loopback', loopbackPort: 56121, loopbackHost: '127.0.0.1' },
 })
 ```

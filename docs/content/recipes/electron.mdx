@@ -10,12 +10,12 @@ across IPC, and hand across as little of it as possible.
 ```ts
 // main.ts
 import { ipcMain, shell } from 'electron'
-import { createAuthenticatedFetch, publicClientIds } from '@ai-oauth-sdk/core'
+import { createAuthenticatedFetch, ProviderId, publicClientIds } from '@ai-oauth-sdk/core'
 import { createNodeAuthClient, loopbackReceiver } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'openai',
-  clientId: publicClientIds.openai,
+  provider: ProviderId.OpenAI,
+  clientId: publicClientIds[ProviderId.OpenAI],
 })
 
 ipcMain.handle('auth:login', async () => {
@@ -66,8 +66,8 @@ import { app } from 'electron'
 import { join } from 'node:path'
 
 const client = createNodeAuthClient({
-  provider: 'openai',
-  clientId: publicClientIds.openai,
+  provider: ProviderId.OpenAI,
+  clientId: publicClientIds[ProviderId.OpenAI],
   authDir: join(app.getPath('userData'), 'credentials'),
 })
 ```
