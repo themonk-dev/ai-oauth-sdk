@@ -84,7 +84,7 @@ Google documents those secrets as non-confidential. Everything is overridable.
 
 Using a vendor's CLI client id means presenting yourself as that CLI. Review the provider's terms
 before shipping it, and read the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer), which covers what this project is
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer), which covers what this project is
 and is not in relation to those vendors.
 
 **The CLI never persists a client secret.** It reads one from `--client-secret` or
@@ -114,4 +114,4 @@ nothing newer, so they will very likely still work, but do not rely on it for an
 about.
 
 The full version of this page, with examples, is at
-[ai-oauth-sdk.themonk.dev/resources/security](https://ai-oauth-sdk.themonk.dev/docs/resources/security).
+[ai-oauth.themonk.dev/resources/security](https://ai-oauth.themonk.dev/docs/resources/security).

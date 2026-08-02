@@ -1,8 +1,8 @@
 # ai-oauth-sdk
 
-**Sign in with ChatGPT, Claude, Gemini or Grok — and get the token back.**
+**Sign in with ChatGPT, Claude, Gemini or Grok, and get the token back.**
 
-**[Documentation](https://ai-oauth-sdk.themonk.dev/docs)**
+**[Documentation](https://ai-oauth.themonk.dev/docs)**
 
 The umbrella package: one install, one subpath per runtime, plus a CDN build.
 
@@ -18,7 +18,7 @@ import { deepLinkReceiver } from 'ai-oauth-sdk/react-native'
 import { createAuthClient } from 'ai-oauth-sdk/core'  // engine only
 ```
 
-Bare `import … from 'ai-oauth-sdk'` resolves per runtime — the Node build under Node, the
+A bare `import ... from 'ai-oauth-sdk'` resolves per runtime: the Node build under Node, the
 browser build in bundlers and browsers, the native build under React Native.
 
 ## CDN
@@ -43,6 +43,6 @@ MIT
 
 <sub>An independent, unofficial project. Not affiliated with or endorsed by OpenAI,
 Anthropic, Google, GitHub, Microsoft, xAI, Alibaba or OpenRouter; all trademarks belong
-to their owners. These OAuth flows are not officially supported by any provider and may
-change without notice — see the
-[disclaimer](https://ai-oauth-sdk.themonk.dev/docs/resources/disclaimer).</sub>
+to their owners. No provider officially supports these OAuth flows, and any of them may
+change without notice. Please read the
+[disclaimer](https://ai-oauth.themonk.dev/docs/resources/disclaimer).</sub>
