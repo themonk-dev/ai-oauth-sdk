@@ -1,6 +1,6 @@
 {
   "name": "@ai-oauth-sdk/react",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "React bindings for ai-oauth-sdk: useAuth hook and provider for ChatGPT/Claude/Gemini/Grok sign-in.",
   "keywords": [
     "oauth",
