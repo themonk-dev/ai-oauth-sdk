@@ -35,6 +35,10 @@ adds `sessionStorage`.
 | `expirySkewMs` | `number` | Renew this far ahead of expiry. Defaults to `60000`. |
 | `extraAuthParams` | `Record<string, string>` | Extra authorize-URL params for every flow from this client. |
 
+`provider` takes the kebab-case id as a plain string. `ProviderId` holds the same set under names
+your editor can complete, and its values *are* those strings, so
+[either spelling works](/docs/providers#ids-by-name).
+
 ## Running a flow
 
 Three methods start a login, and which you want depends on how much of the browser and callback

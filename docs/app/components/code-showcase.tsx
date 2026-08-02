@@ -8,11 +8,14 @@ const OUTPUT = [
   '  Waiting for the redirect',
   '✓ Signed in to ChatGPT (OpenAI)',
   '  token expires in 7h 59m',
+  '  stored in ~/.ai-oauth-sdk/auth.json',
 ]
 
 const SNIPPETS = {
   node: `import { login, publicClientIds } from 'ai-oauth-sdk/node'
 
+// Opens a browser, catches the callback on 127.0.0.1,
+// and stores the token under ~/.ai-oauth-sdk.
 const { accessToken } = await login('openai', {
   clientId: publicClientIds.openai,
 })`,
@@ -22,6 +25,7 @@ const { accessToken } = await login('openai', {
 const tokens = await loginWithPopup('claude', {
   clientId,
   redirectUri,
+  scopes: ['user:inference', 'user:profile'],
 })`,
   react: `import { popupReceiver } from 'ai-oauth-sdk/browser'
 import { useAuth } from '@ai-oauth-sdk/react'
@@ -119,19 +123,19 @@ export function CodeShowcase() {
   const cycle = useTypingCycle(animated && tab === 'terminal')
 
   return (
-    <div className="overflow-hidden rounded-xl border border-neutral-800 bg-lp-panel">
-      <div className="flex border-b border-neutral-800 px-3">
+    <div className="overflow-hidden rounded-xl border border-lp-line bg-lp-surface">
+      <div className="flex border-b border-lp-line px-3">
         {TABS.map((entry) => (
           <button
             key={entry.key}
             type="button"
             onClick={() => setTab(entry.key)}
             data-active={entry.key === tab}
-            className="relative cursor-pointer px-3.5 py-3.5 font-mono text-xs text-neutral-500 transition-colors hover:text-neutral-100 data-[active=true]:text-neutral-100"
+            className="relative cursor-pointer px-3.5 py-3.5 font-mono text-xs text-lp-faint transition-colors hover:text-lp-fg data-[active=true]:text-lp-fg"
           >
             {entry.label}
             {entry.key === tab && (
-              <span className="absolute inset-x-2.5 -bottom-px h-0.5 bg-neutral-200" />
+              <span className="absolute inset-x-2.5 -bottom-px h-0.5 bg-lp-fg" />
             )}
           </button>
         ))}
@@ -145,15 +149,15 @@ export function CodeShowcase() {
           data-active={tab === 'terminal'}
           className={`${PANEL} invisible col-start-1 row-start-1 text-sm leading-loose data-[active=true]:visible`}
         >
-          <div className="whitespace-pre text-neutral-200">
-            <span className="text-neutral-500">$ </span>
+          <div className="whitespace-pre text-lp-fg">
+            <span className="text-lp-faint">$ </span>
             {cycle.command}
             {cycle.caret && (
-              <span className="ml-0.5 inline-block h-4 w-2 -translate-y-px animate-caret bg-neutral-200 align-middle" />
+              <span className="ml-0.5 inline-block h-4 w-2 -translate-y-px animate-caret bg-lp-fg align-middle" />
             )}
           </div>
           {cycle.lines.map((line) => (
-            <div key={line} className="whitespace-pre text-neutral-400">
+            <div key={line} className="whitespace-pre text-lp-muted">
               {line}
             </div>
           ))}
@@ -164,7 +168,7 @@ export function CodeShowcase() {
             key={key}
             aria-hidden={tab !== key}
             data-active={tab === key}
-            className={`${PANEL} invisible col-start-1 row-start-1 text-[13.5px] leading-[1.9] text-neutral-200 data-[active=true]:visible`}
+            className={`${PANEL} invisible col-start-1 row-start-1 text-[13.5px] leading-[1.9] text-lp-fg data-[active=true]:visible`}
           >
             {snippet}
           </pre>

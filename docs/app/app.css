@@ -42,7 +42,6 @@
   --lp-button: #000000;
   --lp-button-hover: #2e2e2e;
   --lp-button-fg: #ffffff;
-  --lp-panel: #0a0a0a;
 }
 
 .dark {
@@ -59,7 +58,6 @@
   --lp-button: #fafafa;
   --lp-button-hover: #d4d4d4;
   --lp-button-fg: #0a0a0a;
-  --lp-panel: #000000;
 }
 
 /*
@@ -92,7 +90,6 @@
   --color-lp-button: var(--lp-button);
   --color-lp-button-hover: var(--lp-button-hover);
   --color-lp-button-fg: var(--lp-button-fg);
-  --color-lp-panel: var(--lp-panel);
 }
 
 /* The diagonal rule filling the margins beside the landing page's content. */

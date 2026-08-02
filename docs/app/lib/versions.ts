@@ -16,12 +16,11 @@ export interface DocsVersion {
 /**
  * Versions are declared here rather than discovered, because `defineDocs` is a
  * macro: a collection has to exist at build time, so an archived version needs
- * a matching entry in `app/lib/source.ts` either way. Adding one is a
- * four-step change, written down in the repository's docs README.
+ * a matching entry in `app/lib/source.ts` either way. Adding one is a four-step
+ * change, written down in the docs README.
  *
- * Slugs carry no dot. `0.3` in a path makes some static hosts read the segment
- * as a filename and answer with a directory listing instead of the page, so the
- * label and the slug are allowed to differ.
+ * The picker renders as a plain label while this list holds one entry, and
+ * becomes a dropdown once it holds more.
  */
 export const docsVersions: DocsVersion[] = [
   {
@@ -30,13 +29,6 @@ export const docsVersions: DocsVersion[] = [
     description: 'Tracks main, matching the newest published packages',
     href: docsRoute,
     current: true,
-  },
-  {
-    key: '0.3',
-    label: '0.3',
-    description: 'Before providers were renamed to claude, gemini and azure-ai',
-    href: `${docsRoute}/v/0-3`,
-    current: false,
   },
 ]
 

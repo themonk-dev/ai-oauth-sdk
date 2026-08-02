@@ -18,12 +18,11 @@ import { icons } from './icons'
 import { baseOptions } from './layout.shared'
 import { pageMeta } from './seo'
 import { appName, gitConfig } from './shared'
-import { docs, docsV03, getPageMarkdownUrl, source, sourceV03 } from './source'
+import { docs, getPageMarkdownUrl, source } from './source'
 
 /** Every documentation collection, keyed by the version it belongs to. */
 const collections = {
   latest: { source, docs },
-  '0.3': { source: sourceV03, docs: docsV03 },
 } as const
 
 export type DocsVersionKey = keyof typeof collections
@@ -57,11 +56,11 @@ export async function loadDocsPage(slugs: string[], version: DocsVersionKey = 'l
  * Points each version at the same page, or at its index when that page does not
  * exist there.
  *
- * The fallback is the whole reason this runs here rather than in the browser:
- * `/docs/providers/claude` has no counterpart in 0.3, where it was called
- * `anthropic`, and a picker that assumed otherwise would send readers to a 404
- * on exactly the pages a rename touched. Every collection is in memory at build
- * time, so the answer is a lookup.
+ * The fallback is the whole reason this runs here rather than in the browser. A
+ * page that was renamed, split or added has no counterpart in every version, and
+ * a picker that assumed otherwise would 404 on exactly the pages a release
+ * changed. Every collection is in memory at build time, so the answer is a
+ * lookup.
  */
 function resolveVersionLinks(slugs: string[], version: DocsVersionKey): VersionLink[] {
   return docsVersions.map((entry) => {
@@ -140,9 +139,9 @@ function Content({
       </DocsTitle>
       <DocsDescription>{page.description}</DocsDescription>
 
-      {/* Only the live docs have a markdown route and a file on the branch behind
-          them. An archived page is a frozen copy, so these controls are hidden
-          rather than pointed at something that would 404. */}
+      {/* Only the current docs have a markdown route and a file on the branch
+          behind them, so an archived page hides these rather than pointing them
+          at something that would 404. */}
       {version === 'latest' && (
         <nav
           aria-label="Page actions"

@@ -120,7 +120,8 @@ export function meta() {
 
 /**
  * The nav links the docs layout does not carry, since the sidebar covers them
- * everywhere else.
+ * everywhere else. Search goes with it: there is nothing on this page to search,
+ * and the docs put their own in the sidebar.
  */
 function landingOptions() {
   const base = baseOptions()
@@ -128,6 +129,7 @@ function landingOptions() {
   return {
     ...base,
     nav: { ...base.nav, url: '/' },
+    searchToggle: { enabled: false },
     links: [
       { text: 'Documentation', url: '/docs', active: 'none' as const },
       { text: 'Providers', url: '/docs/providers', active: 'none' as const },

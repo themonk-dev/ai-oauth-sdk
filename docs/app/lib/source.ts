@@ -31,25 +31,6 @@ export const source = loader({
   icon: resolveIcon,
 })
 
-// Archived versions live outside `content/` so the macro above does not sweep
-// them into the current sidebar. Each is a frozen copy: fix a typo in the live
-// docs and the archive keeps the typo, which is the point of an archive.
-export const docsV03 = defineDocs({
-  dir: 'versions/0-3',
-  docs: {
-    async: true,
-    postprocess: {
-      includeProcessedMarkdown: true,
-    },
-  },
-})
-
-export const sourceV03 = loader({
-  source: docsV03.toFumadocsSource(),
-  baseUrl: `${docsRoute}/v/0-3`,
-  icon: resolveIcon,
-})
-
 export function getPageMarkdownUrl(page: (typeof source)['$inferPage']) {
   const segments = [...page.slugs, 'content.md']
 

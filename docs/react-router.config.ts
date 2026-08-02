@@ -5,9 +5,6 @@ import type { Config } from '@react-router/dev/config'
 
 const getUrl = createGetUrl('/docs')
 
-/** Archived versions, matching the collections in `app/lib/source.ts`. */
-const archived = [{ dir: 'versions/0-3', getUrl: createGetUrl('/docs/v/0-3') }]
-
 /**
  * No SSR: every page is rendered at build time and the result is a directory of
  * static files. A docs site has nothing per-request to compute, and a static
@@ -28,13 +25,6 @@ export default {
       paths.push(getUrl(slugs), `/llms.mdx/${[...slugs, 'content.md'].join('/')}`)
     }
 
-    // Archived pages get an HTML file but no markdown route: `llms.mdx` serves
-    // the current docs, and an agent reading this site wants those.
-    for (const version of archived) {
-      for await (const entry of glob('**/*.mdx', { cwd: version.dir })) {
-        paths.push(version.getUrl(getSlugs(entry)))
-      }
-    }
 
     return paths
   },

@@ -22,13 +22,6 @@ resource underneath. One scope covers both.
 Every other built-in is a constant. This one is a function, because the endpoints contain the tenant
 and there is no public client id to ship. Every Azure app registration is its own client.
 
-<Callout type="warn" title="Renamed in 0.4">
-  This was `microsoft` before 0.4, both as the exported `microsoft()` factory and as the provider
-  id. Both are now `azureAi` and `azure-ai`. A credential stored under the old id is found and moved
-  the first time you sign in, so nobody is signed out by the rename. The
-  [0.3 docs](/docs/v/0-3/providers/microsoft) cover the old names.
-</Callout>
-
 ## Options
 
 | Option | Type | Description |

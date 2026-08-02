@@ -110,8 +110,8 @@ Both are rendered from `og/card.html` and `og/card-dark.html`. To change one, ed
 screenshot it at 1200x630 with any headless browser, writing over the PNG in `public/`. The
 templates are plain HTML with the marks inlined, so nothing needs installing to open them.
 
-`sitemap.xml` is generated in `app/llms/sitemap.ts` from the same loaders that build the sidebar, so
-a new page is listed by existing there. Archived versions are included at a lower priority.
+`sitemap.xml` is generated in `app/llms/sitemap.ts` from the same loader that builds the sidebar, so
+a new page is listed by existing there.
 
 The base path lives in one place, `docsRoute` in `app/lib/shared.ts`. Changing it moves the loader,
 the prerender list and the nav together, but absolute links written in MDX are not derived from it
@@ -196,6 +196,8 @@ otherwise run its own code with them.
 
 The sidebar footer carries a version picker. It renders as a plain label while there is one version
 and becomes a dropdown as soon as a second is archived, so it is never a menu with nothing in it.
+The current version's label is read from `packages/core/package.json` at build time, so it cannot
+drift from what changesets published.
 
 `defineDocs` is a macro, so a collection has to exist at build time. An archived version cannot be
 discovered from the filesystem and needs four changes:
@@ -209,16 +211,16 @@ discovered from the filesystem and needs four changes:
    above `docs/*`, which would otherwise swallow them.
 4. Add the directory to `archived` in `react-router.config.ts`, or nothing prerenders.
 
-Archives live in `versions/`, not under `content/`, because the macro globs `content/**` and would
+Archives belong in `versions/`, not under `content/`, because the macro globs `content/**` and would
 pull an archived copy into the current sidebar.
 
-**Slugs carry no dot.** `0.3` in a path makes some static hosts read the segment as a filename and
-answer with a directory listing rather than the page, so the archive is served from `/docs/v/0-3`
-while the picker still says `0.3`.
+**Slugs carry no dot.** A `.` in a path makes some static hosts read the segment as a filename and
+answer with a directory listing rather than the page, so serve `1-2` and label it `1.2`.
 
 The picker resolves each version's link at build time and falls back to that version's index when
-the current page does not exist there. That matters after a rename: `/docs/providers/claude` has no
-counterpart in 0.3, where the page was `anthropic`.
+the current page does not exist there. That matters whenever a release renames or splits a page:
+without it, the picker 404s on exactly the pages that changed.
 
 The cost is a full copy of the content tree per archived version, so this is worth doing at a
 breaking release rather than at every patch.
+
