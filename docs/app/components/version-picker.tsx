@@ -1,8 +1,8 @@
 import { RiArrowDownSLine, RiPriceTag3Line } from '@remixicon/react'
 import { Popover, PopoverContent, PopoverTrigger } from 'fumadocs-ui/components/ui/popover'
-import { Link, useLocation } from 'react-router'
+import { Link } from 'react-router'
 
-import { currentVersion, docsVersions, versionHrefFor } from '@/lib/versions'
+import type { VersionLink } from '@/lib/versions'
 
 /**
  * The sidebar footer stacks its children with no gap, and this sits directly
@@ -15,17 +15,18 @@ const TRIGGER =
 /**
  * Renders as a label while there is one version, and as a dropdown once a
  * second is archived, so the sidebar does not carry a menu with nothing in it.
+ *
+ * Links arrive resolved: the loader already decided whether this page exists in
+ * each version, and pointed the ones that do not at their index instead.
  */
-export function VersionPicker() {
-  const { pathname } = useLocation()
-  const active =
-    docsVersions.find(
-      (version) =>
-        !version.current &&
-        (pathname === version.href || pathname.startsWith(`${version.href}/`)),
-    ) ?? currentVersion
+export function VersionPicker({ links }: { links: VersionLink[] }) {
+  const active = links.find((link) => link.active) ?? links[0]
 
-  if (docsVersions.length < 2) {
+  if (!active) {
+    return null
+  }
+
+  if (links.length < 2) {
     return (
       <span className={TRIGGER}>
         <RiPriceTag3Line className="size-3.5 shrink-0" />
@@ -42,15 +43,15 @@ export function VersionPicker() {
         <RiArrowDownSLine className="ms-auto size-3.5 shrink-0" />
       </PopoverTrigger>
       <PopoverContent className="flex w-64 flex-col gap-1 p-1">
-        {docsVersions.map((version) => (
+        {links.map((link) => (
           <Link
-            key={version.href}
-            to={versionHrefFor(version, pathname)}
-            data-active={version.href === active.href}
+            key={link.label}
+            to={link.href}
+            data-active={link.active}
             className="rounded-md px-2.5 py-2 text-start transition-colors hover:bg-fd-accent data-[active=true]:bg-fd-accent"
           >
-            <span className="block text-sm font-medium text-fd-foreground">{version.label}</span>
-            <span className="block text-xs text-fd-muted-foreground">{version.description}</span>
+            <span className="block text-sm font-medium text-fd-foreground">{link.label}</span>
+            <span className="block text-xs text-fd-muted-foreground">{link.description}</span>
           </Link>
         ))}
       </PopoverContent>

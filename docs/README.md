@@ -54,17 +54,64 @@ unreleased source. To preview docs for unreleased changes, add a temporary overr
 
 ```
 app/
-  components/     feature and runtime cards, search dialog, logo, MDX registry
+  components/     cards, provider marks and wordmarks, search dialog, MDX registry
   lib/            source loader, shared config, the docs page shell
   llms/           llms.txt, llms-full.txt and the per-page markdown mirrors
-  routes/         index (/), splat (everything else), search
+  routes/         home (/), docs index, splat (everything else), search
 content/          the MDX, with meta.json driving the sidebar
 ```
 
-Docs are served from `/docs`, so `content/index.mdx` is at `/docs` and everything else hangs off it.
-Two routes render a page: one for `/docs` itself, and a splat for everything below it, because React
-Router matches an empty remainder against the layout rather than against a splat. `/` redirects to
-`/docs`, so a deployment at a domain root does not answer with a 404.
+`/` is the landing page and `/docs` is the documentation, both from this one app. Two routes render
+a documentation page: one for `/docs` itself, and a splat for everything below it, because React
+Router matches an empty remainder against the layout rather than against a splat.
+
+## Provider marks
+
+Each provider has two marks, and they are deliberately different things.
+
+The sidebar and the page tree use Remix Icon, named in each page's `icon` frontmatter and resolved
+through `app/lib/icons.ts`. Those render at 16px, where a detailed brand mark turns to mush.
+
+The page title and the providers grid use the provider's own mark, in
+`app/components/provider-logos.tsx`, keyed by provider id. Pages under `content/providers/` are named
+after the id, so `docs-page.tsx` looks the mark up from the filename and needs no extra frontmatter.
+Four providers publish a wordmark that already includes their name
+(`app/components/provider-wordmarks.tsx`); the rest get the mark with the name set beside it.
+
+Marks that are a flat colour are redrawn with `currentColor`, or they would vanish against a dark
+background. Marks with gradients keep them, and their gradient ids are prefixed, since two of these
+can appear on one page.
+
+## The landing page
+
+`/` does not use the docs theme. It has its own palette and typeface, taken from the design, as
+`--lp-*` variables in `app/app.css` and exposed to Tailwind through `@theme inline` so `bg-lp-bg`
+and `text-lp-muted` work like any other colour utility. Light is the design's values verbatim; dark
+mirrors each one across the same neutral ramp it was picked from. Nothing under `/docs` reads them.
+
+`ProviderGrid` renders in both places and takes a `tone` for that reason. The nav is Fumadocs'
+`HomeLayout` rather than the design's own, so search, the theme switch and the mobile menu keep
+working and match the docs.
+
+The docs do borrow one value back: Fumadocs' `solar` theme paints `--color-fd-primary` blue, which
+tinted every link, active sidebar row and icon chip. It is overridden with `--lp-fg`, so the whole
+site is the same monochrome.
+
+## Social cards and SEO
+
+`app/lib/seo.ts` builds the `og:` and `twitter:` tags, the canonical link, and the JSON-LD on the
+home page. Every page gets its own title, description and URL; the card image is shared.
+
+**The card cannot follow the reader's theme.** A crawler fetches `og:image` once and the platform
+caches the result, so there is no request to vary on. `public/og.png` is the light one and ships;
+`public/og-dark.png` exists for the places that *can* choose, such as a `<picture>` in a README.
+
+Both are rendered from `og/card.html` and `og/card-dark.html`. To change one, edit the template and
+screenshot it at 1200x630 with any headless browser, writing over the PNG in `public/`. The
+templates are plain HTML with the marks inlined, so nothing needs installing to open them.
+
+`sitemap.xml` is generated in `app/llms/sitemap.ts` from the same loader that builds the sidebar, so
+a new page is listed by existing there.
 
 The base path lives in one place, `docsRoute` in `app/lib/shared.ts`. Changing it moves the loader,
 the prerender list and the nav together, but absolute links written in MDX are not derived from it
@@ -78,12 +125,14 @@ Every page is MDX with frontmatter:
 ---
 title: Loopback
 description: One sentence. It is the page subtitle and the meta description.
-icon: Server
+icon: RiServerLine
 ---
 ```
 
-`icon` is any name from [Lucide](https://lucide.dev). Note that Lucide 1.x dropped the brand icons,
-so `Github` and `Chrome` no longer resolve.
+`icon` is any name exported from [Remix Icon](https://remixicon.com), plus the handful of marks it
+does not carry in `app/components/brand-icons.tsx`. Both go through the map in `app/lib/icons.ts`,
+which is a named list rather than a namespace import so the bundle carries the fifty icons this site
+uses instead of all three thousand. An icon not in that map silently renders nothing.
 
 Sidebar order and grouping come from the `meta.json` next to the content. A `---Label---` entry in
 the root `meta.json` renders as a section separator.
@@ -147,14 +196,31 @@ otherwise run its own code with them.
 
 The sidebar footer carries a version picker. It renders as a plain label while there is one version
 and becomes a dropdown as soon as a second is archived, so it is never a menu with nothing in it.
+The current version's label is read from `packages/core/package.json` at build time, so it cannot
+drift from what changesets published.
 
 `defineDocs` is a macro, so a collection has to exist at build time. An archived version cannot be
-discovered from the filesystem and needs three changes:
+discovered from the filesystem and needs four changes:
 
-1. Copy `content/` to `content/v/<version>/`.
-2. Add a collection for it in `app/lib/source.ts`, and a loader with
-   `baseUrl: '/docs/v/<version>'`.
-3. Add an entry to `docsVersions` in `app/lib/versions.ts`, and a route for it in `app/routes.ts`.
+1. Copy `content/` to `versions/<slug>/`, then rewrite its internal links:
+   `sed -i 's|](/docs/|](/docs/v/<slug>/|g'`. Without that, every link in the archive drops the
+   reader back into the current docs.
+2. Add a collection and a loader in `app/lib/source.ts`, with `baseUrl: '/docs/v/<slug>'`.
+3. Register it in `collections` in `app/lib/docs-page.tsx`, add an entry to `docsVersions` in
+   `app/lib/versions.ts`, and add two routes in `app/routes.ts`, an index and a splat. Put them
+   above `docs/*`, which would otherwise swallow them.
+4. Add the directory to `archived` in `react-router.config.ts`, or nothing prerenders.
 
-That is the same shape other Fumadocs sites use for this, and the cost is a full copy of the content
-tree per archived version. Worth doing at a major release rather than at every patch.
+Archives belong in `versions/`, not under `content/`, because the macro globs `content/**` and would
+pull an archived copy into the current sidebar.
+
+**Slugs carry no dot.** A `.` in a path makes some static hosts read the segment as a filename and
+answer with a directory listing rather than the page, so serve `1-2` and label it `1.2`.
+
+The picker resolves each version's link at build time and falls back to that version's index when
+the current page does not exist there. That matters whenever a release renames or splits a page:
+without it, the picker 404s on exactly the pages that changed.
+
+The cost is a full copy of the content tree per archived version, so this is worth doing at a
+breaking release rather than at every patch.
+

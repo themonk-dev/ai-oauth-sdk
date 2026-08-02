@@ -8,14 +8,16 @@ A provider is a descriptor: endpoints, scopes, how the redirect works, how the t
 shaped, and a handful of hooks for the ones that leave the spec. Nothing about it is special-cased
 in the flow code.
 
+<ProviderGrid className="my-8 rounded-xl border border-fd-border overflow-hidden" />
+
 ## You name the client id
 
 No built-in provider ships with one. You pass it at initialization, the way you pass a strategy to
 Passport.
 
 ```ts
-createAuthClient({ provider: 'openai', clientId: publicClientIds.openai }) // that vendor's CLI
-createAuthClient({ provider: 'openai', clientId: 'my-registered-client' }) // or your own
+createAuthClient({ provider: ProviderId.OpenAI, clientId: publicClientIds[ProviderId.OpenAI] }) // that vendor's CLI
+createAuthClient({ provider: ProviderId.OpenAI, clientId: 'my-registered-client' }) // or your own
 ```
 
 Constructing a client without one throws `configuration_error` with a message naming the option you
@@ -34,26 +36,44 @@ are missing.
 | Provider | Flow | Client id | Status |
 | --- | --- | --- | --- |
 | [`openai`](/docs/providers/openai) | loopback `:1455`, device | `publicClientIds.openai` | stable |
-| [`anthropic`](/docs/providers/anthropic) | loopback any port, hosted paste | `publicClientIds.anthropic` | stable |
-| [`google`](/docs/providers/google) | loopback any port | id and secret | stable |
+| [`claude`](/docs/providers/claude) | loopback any port, hosted paste | `publicClientIds.claude` | stable |
+| [`gemini`](/docs/providers/gemini) | loopback any port | id and secret | stable |
 | [`github-copilot`](/docs/providers/github-copilot) | device only | `publicClientIds['github-copilot']` | stable |
 | [`openrouter`](/docs/providers/openrouter) | loopback any port | none, identified by callback URL | stable |
 | [`xai`](/docs/providers/xai) | loopback `:56121`, device | `publicClientIds.xai` | experimental |
 | [`qwen`](/docs/providers/qwen) | device only | `publicClientIds.qwen` | experimental |
-| [`microsoft`](/docs/providers/microsoft) | loopback any port | yours | stable |
+| [`azure-ai`](/docs/providers/azure-ai) | loopback any port | yours | stable |
 
-`microsoft` is a factory rather than a constant, because its endpoints are tenant-scoped and every
-Entra app registration is its own client.
+`azure-ai` is a factory rather than a constant, exported as `azureAi()`, because its endpoints are
+tenant-scoped and every Azure app registration is its own client.
 
 Raw credential values are on the [credentials](/docs/resources/credentials) page.
+
+### Ids by name
+
+Ids are kebab-case strings. Examples here use `ProviderId`, which holds that same set under names
+your editor can complete, and spares you the bracket on the hyphenated ones.
+
+```ts
+import { createAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/core'
+
+createAuthClient({
+  provider: ProviderId.GitHubCopilot,
+  clientId: publicClientIds[ProviderId.GitHubCopilot],
+})
+```
+
+`ProviderId.GitHubCopilot` **is** `'github-copilot'`, so the plain string works the same wherever
+you prefer it, and a custom provider is still an ordinary string. Azure AI has no entry for the reason above: there is no fixed
+id to name.
 
 ## Capabilities
 
 | Provider | PKCE | Device flow | Revocation | Userinfo | Echoes `state` |
 | --- | --- | --- | --- | --- | --- |
 | `openai` | yes | yes, not RFC 8628 | no | yes | yes |
-| `anthropic` | yes | no | no | no | yes |
-| `google` | yes | no | yes | yes | yes |
+| `claude` | yes | no | no | no | yes |
+| `gemini` | yes | no | yes | yes | yes |
 | `github-copilot` | no | yes | no | no | not applicable |
 | `openrouter` | yes | no | no | no | **no** |
 | `xai` | yes | yes | yes | yes | yes |

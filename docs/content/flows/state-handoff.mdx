@@ -85,7 +85,7 @@ await client.completeAuthorization({ callbackUrl: req.url })
 ```
 
 is equivalent to pulling out `code` and `state` yourself, except that it uses the provider's parser,
-so it also handles Anthropic's `code#state` string and OpenRouter's stateless callback. Express
+so it also handles Claude's `code#state` string and OpenRouter's stateless callback. Express
 gives you a path-relative URL and Hono gives you an absolute one. Both are fine.
 
 ## Cancelling

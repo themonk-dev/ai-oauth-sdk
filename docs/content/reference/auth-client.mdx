@@ -9,9 +9,9 @@ exchanges the code, and manages the resulting token. Everything else in the libr
 it hands you or a seam it calls into.
 
 ```ts
-import { createAuthClient } from '@ai-oauth-sdk/core'
+import { createAuthClient, ProviderId } from '@ai-oauth-sdk/core'
 
-const client = createAuthClient({ provider: 'openai', clientId })
+const client = createAuthClient({ provider: ProviderId.OpenAI, clientId })
 ```
 
 `createAuthClient` and `new AuthClient` are the same thing. The adapters ship preconfigured
@@ -24,7 +24,7 @@ adds `sessionStorage`.
 | --- | --- | --- |
 | `provider` | `ProviderLike` | **Required.** A built-in id, any string with a matching descriptor, or a ProviderConfig. |
 | `clientId` | `string` | Required unless the descriptor sets requiresClientId: false. |
-| `clientSecret` | `string` | For providers that insist, such as Google. |
+| `clientSecret` | `string` | For providers that insist, such as Gemini. |
 | `scopes` | `string[]` | Replaces the provider's default scopes. |
 | `redirectUri` | `string` | Fixed redirect URI. A receiver that owns its URI takes precedence. |
 | `storage` | `AuthStorage` | Where tokens and pending flows live. Defaults to `memoryStorage()`. |
@@ -34,6 +34,10 @@ adds `sessionStorage`.
 | `stateTtlMs` | `number` | How long a started authorization stays valid. Defaults to `600000`. |
 | `expirySkewMs` | `number` | Renew this far ahead of expiry. Defaults to `60000`. |
 | `extraAuthParams` | `Record<string, string>` | Extra authorize-URL params for every flow from this client. |
+
+`provider` takes the kebab-case id as a plain string. `ProviderId` holds the same set under names
+your editor can complete, and its values *are* those strings, so
+[either spelling works](/docs/providers#ids-by-name).
 
 ## Running a flow
 

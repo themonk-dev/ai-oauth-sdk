@@ -17,7 +17,7 @@ usually means a receiver was chosen explicitly.
 [**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security) first. Without it the verification page refuses the code and the poll runs until
 the code expires.
 
-**Device flow on Entra ID.** Conditional access policies can block the device grant at the tenant
+**Device flow on Azure AI.** Conditional access policies can block the device grant at the tenant
 level, and the refusal happens on the approval page rather than at the endpoint.
 
 Set `timeoutMs` so it fails rather than hanging:
@@ -31,7 +31,7 @@ await client.login({ receiver, timeoutMs: 120_000 })
 You did not pass one, and no provider defaults to one. Pass your own, or opt into the published one:
 
 ```ts
-createAuthClient({ provider: 'openai', clientId: publicClientIds.openai })
+createAuthClient({ provider: ProviderId.OpenAI, clientId: publicClientIds[ProviderId.OpenAI] })
 ```
 
 ## `invalid_client` from the provider
@@ -40,9 +40,9 @@ The client id is not recognised or not allowlisted.
 
 - **xAI** rejects anything it has not allowlisted, and offers no self-service registration for a
   desktop CLI. Use `publicClientIds.xai`.
-- **Google** may have rotated the published secret after a secret-scanning report. Register your own
+- **Gemini** may have rotated the published secret after a secret-scanning report. Register your own
   Desktop app client and pass both values.
-- **A custom provider** where the id is right but the client type is wrong. Google's device endpoint
+- **A custom provider** where the id is right but the client type is wrong. Gemini's device endpoint
   refuses Desktop app clients with `Invalid client type`, for instance.
 
 ## `state_mismatch`
@@ -84,7 +84,7 @@ api.model.read` and no scope in this flow can fix it. That token does open
 `createAuthenticatedFetch` reaches it without configuration. Issue an API key if you want the REST
 API itself, and pass `baseUrl: 'https://api.openai.com/v1'`.
 
-**A missing provider header.** Anthropic OAuth bearers need `anthropic-beta: oauth-2025-04-20`
+**A missing provider header.** Claude OAuth bearers need `anthropic-beta: oauth-2025-04-20`
 alongside `anthropic-version`. `createAuthenticatedFetch` attaches both; a hand-rolled `headers`
 object will not.
 

@@ -1,19 +1,23 @@
 ---
-title: Microsoft Entra ID
-description: For Azure OpenAI. A factory rather than a constant, because the endpoints are tenant-scoped.
-icon: RiMicrosoftFill
+title: Azure AI
+description: Azure AI Foundry and Azure OpenAI, reached with an Entra ID sign-in. A factory, because the endpoints are tenant-scoped.
+icon: AzureAiIcon
 ---
 
 ```ts
-import { createAuthClient, microsoft } from '@ai-oauth-sdk/core'
+import { azureAi, createAuthClient } from '@ai-oauth-sdk/core'
 
-const provider = microsoft({
+const provider = azureAi({
   clientId: 'your-app-registration-id',
   tenant: 'contoso.onmicrosoft.com',
 })
 
 const client = createAuthClient({ provider })
 ```
+
+Entra ID is the login. The token it mints is for the Azure AI Services resource, which is what both
+Azure AI Foundry and the Azure OpenAI data plane accept, since a Foundry resource is an AI Services
+resource underneath. One scope covers both.
 
 Every other built-in is a constant. This one is a function, because the endpoints contain the tenant
 and there is no public client id to ship. Every Azure app registration is its own client.
@@ -41,8 +45,9 @@ For tenant `T`, the endpoints are all under
 | Userinfo | `https://graph.microsoft.com/oidc/userinfo` |
 
 Default scopes are `https://cognitiveservices.azure.com/.default`, `offline_access`, `openid` and
-`profile`. The first is what grants Azure OpenAI access; the `.default` suffix tells Entra to issue
-whatever the app registration has been consented for, rather than asking per-scope.
+`profile`. The first is the Azure AI Services resource, which is what grants access to the models;
+the `.default` suffix tells Entra to issue whatever the app registration has been consented for,
+rather than asking per-scope.
 
 ## Registering the app
 
@@ -52,8 +57,8 @@ In **Entra ID > App registrations > New registration**. Then:
    `http://localhost`. Entra ignores the port for loopback URIs, which is why `loopbackPort: 0`
    works.
 2. Under **Authentication > Advanced settings**, set **Allow public client flows** to yes. That is what lets PKCE work without a client secret.
-3. Under **API permissions > Add a permission**, add the Azure OpenAI (Cognitive Services)
-   delegated permission your app needs, then grant consent.
+3. Under **API permissions > Add a permission**, add the Azure AI Services delegated permission
+   your app needs, then grant consent. It may be listed under its older name, Cognitive Services.
 
 Do not add a client secret. A public client with PKCE is the correct shape for a desktop or CLI
 application, and a secret shipped in one is not a secret.
@@ -74,13 +79,14 @@ the approval page refuses rather than the endpoint. That looks like a login that
 
 ## Multi-tenant
 
-`tenant: 'common'` accepts both work and personal Microsoft accounts. `organizations` restricts to
+`tenant: 'common'` accepts both work and personal accounts. `organizations` restricts to
 work accounts, `consumers` to personal ones. A specific GUID or domain restricts to that directory,
 which is usually what you want for an internal tool.
 
-## Calling Azure OpenAI
+## Calling the API
 
-The base URL is your own resource, so set it yourself rather than relying on the descriptor:
+The base URL is your own resource, so set it yourself rather than relying on the descriptor. There
+is no `apiBaseUrl` on this descriptor for that reason:
 
 ```ts
 const api = createAuthenticatedFetch(client, {
@@ -94,5 +100,8 @@ const response = await api('/deployments/gpt-5/chat/completions?api-version=2024
 })
 ```
 
-Azure OpenAI accepts the bearer token in place of the `api-key` header when the resource is
-configured for Entra authentication.
+The bearer token is accepted in place of the `api-key` header when the resource is configured for
+Entra authentication.
+
+The path above is the classic Azure OpenAI shape. A resource provisioned through Foundry may serve
+a different one, so take the endpoint from your resource in the portal rather than assuming.

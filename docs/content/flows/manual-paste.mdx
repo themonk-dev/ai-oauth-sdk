@@ -17,7 +17,7 @@ const tokens = await client.login({ receiver: promptReceiver() })
 ```
 
 ```bash
-ai-oauth-sdk login anthropic --paste
+ai-oauth-sdk login claude --paste
 ```
 
 ## What the user pastes
@@ -31,7 +31,7 @@ abc123#xyz789
 abc123
 ```
 
-Anthropic's hosted page hands back `code#state` as one opaque string rather than a URL, which is
+Claude's hosted page hands back `code#state` as one opaque string rather than a URL, which is
 why the parsing is per-provider rather than a single regex.
 
 A bare code with no `state` is accepted only from providers that documented they do not echo it.

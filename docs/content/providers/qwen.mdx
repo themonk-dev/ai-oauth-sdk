@@ -11,11 +11,11 @@ icon: RiQwenAiFill
 </Callout>
 
 ```ts
-import { createNodeAuthClient, publicClientIds } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'qwen',
-  clientId: publicClientIds.qwen,
+  provider: ProviderId.Qwen,
+  clientId: publicClientIds[ProviderId.Qwen],
 })
 
 const tokens = await client.deviceLogin({

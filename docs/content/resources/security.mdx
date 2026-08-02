@@ -92,11 +92,11 @@ endpoint and are read only for convenience fields. Do not pass a third-party tok
 
 ## Client credentials
 
-The ids shipped for OpenAI, Anthropic, GitHub Copilot, Qwen, Google and xAI are public,
+The ids shipped for ChatGPT, Claude, GitHub Copilot, Qwen, Gemini and Grok are public,
 PKCE-protected values published by those vendors' own CLIs. They are not secrets.
 
-One client secret is embedded, Google's, because its token endpoint refuses an installed-app
-exchange without one and Google documents those secrets as non-confidential. Everything is
+One client secret is embedded, Gemini's, because its token endpoint refuses an installed-app
+exchange without one and those secrets are documented as non-confidential. Everything is
 overridable. See [credentials](/docs/resources/credentials).
 
 The CLI never persists a client secret. It reads one from `--client-secret` or

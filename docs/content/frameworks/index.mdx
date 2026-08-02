@@ -43,9 +43,9 @@ The bindings supply no receiver of their own, because the right one depends on y
 your framework. In a browser that means one of the two from `@ai-oauth-sdk/browser`:
 
 ```ts
-import { popupReceiver } from '@ai-oauth-sdk/browser'
+import { popupReceiver, ProviderId } from '@ai-oauth-sdk/browser'
 
-useAuth({ provider: 'openai', clientId, receiver: popupReceiver() })
+useAuth({ provider: ProviderId.OpenAI, clientId, receiver: popupReceiver() })
 ```
 
 A full-page redirect does not fit `login()` at all, because the page unloads before anything can

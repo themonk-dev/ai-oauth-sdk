@@ -5,11 +5,11 @@ icon: RiOpenaiFill
 ---
 
 ```ts
-import { createNodeAuthClient, publicClientIds } from '@ai-oauth-sdk/node'
+import { createNodeAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/node'
 
 const client = createNodeAuthClient({
-  provider: 'openai',
-  clientId: publicClientIds.openai,
+  provider: ProviderId.OpenAI,
+  clientId: publicClientIds[ProviderId.OpenAI],
 })
 ```
 

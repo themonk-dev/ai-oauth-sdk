@@ -1,6 +1,8 @@
-import { docsRoute } from './shared'
+import { docsRoute, sdkVersion } from './shared'
 
 export interface DocsVersion {
+  /** Matches the collection key in `app/lib/docs-page.tsx`. */
+  key: string
   /** Shown in the picker. */
   label: string
   /** One line of context, shown under the label. */
@@ -14,12 +16,16 @@ export interface DocsVersion {
 /**
  * Versions are declared here rather than discovered, because `defineDocs` is a
  * macro: a collection has to exist at build time, so an archived version needs
- * a matching entry in `app/lib/source.ts` either way. Adding one is a
- * three-step change, written down in the repository's docs README.
+ * a matching entry in `app/lib/source.ts` either way. Adding one is a four-step
+ * change, written down in the docs README.
+ *
+ * The picker renders as a plain label while this list holds one entry, and
+ * becomes a dropdown once it holds more.
  */
 export const docsVersions: DocsVersion[] = [
   {
-    label: 'latest',
+    key: 'latest',
+    label: `latest (${sdkVersion})`,
     description: 'Tracks main, matching the newest published packages',
     href: docsRoute,
     current: true,
@@ -29,22 +35,10 @@ export const docsVersions: DocsVersion[] = [
 export const currentVersion =
   docsVersions.find((version) => version.current) ?? (docsVersions[0] as DocsVersion)
 
-/**
- * Maps a path in the version being read to the same page in another version, so
- * switching keeps the reader where they were rather than dropping them at the
- * index.
- */
-export function versionHrefFor(target: DocsVersion, pathname: string): string {
-  const base = versionBaseFor(pathname)
-  const rest = pathname.slice(base.length).replace(/^\//, '')
-
-  return rest ? `${target.href}/${rest}` : target.href
-}
-
-function versionBaseFor(pathname: string): string {
-  const match = docsVersions
-    .filter((version) => !version.current)
-    .find((version) => pathname === version.href || pathname.startsWith(`${version.href}/`))
-
-  return match ? match.href : currentVersion.href
+/** A version as the picker renders it, with the link already resolved. */
+export interface VersionLink {
+  label: string
+  description: string
+  href: string
+  active: boolean
 }

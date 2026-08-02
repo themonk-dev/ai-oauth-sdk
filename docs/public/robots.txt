@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+# The whole site is public and static. These two are written for agents rather
+# than browsers, and are cheaper to read than crawling every page.
+# llms.txt: https://ai-oauth.themonk.dev/llms.txt
+# llms-full.txt: https://ai-oauth.themonk.dev/llms-full.txt
+
+Sitemap: https://ai-oauth.themonk.dev/sitemap.xml

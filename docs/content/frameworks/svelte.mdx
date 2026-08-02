@@ -46,11 +46,11 @@ answer and it avoids the two-clients problem:
 
 ```ts
 // src/lib/auth.ts
-import { createAuth } from '@ai-oauth-sdk/svelte'
+import { createAuth, ProviderId } from '@ai-oauth-sdk/svelte'
 import { popupReceiver } from '@ai-oauth-sdk/browser'
 
 export const auth = createAuth({
-  provider: 'openai',
+  provider: ProviderId.OpenAI,
   clientId: import.meta.env.VITE_OPENAI_CLIENT_ID,
   receiver: popupReceiver(),
 })
@@ -64,11 +64,11 @@ constructing it is safe. Storage is the thing to guard:
 
 ```ts
 import { browser } from '$app/environment'
-import { memoryStorage } from '@ai-oauth-sdk/core'
+import { memoryStorage, ProviderId } from '@ai-oauth-sdk/core'
 import { sessionStorageAdapter } from '@ai-oauth-sdk/browser'
 
 export const auth = createAuth({
-  provider: 'openai',
+  provider: ProviderId.OpenAI,
   clientId,
   receiver: popupReceiver(),
   storage: browser ? sessionStorageAdapter() : memoryStorage(),

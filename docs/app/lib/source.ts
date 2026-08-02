@@ -5,6 +5,16 @@ import { createElement } from 'react'
 import { icons } from './icons'
 import { docsContentRoute, docsRoute } from './shared'
 
+function resolveIcon(name?: string) {
+  if (!name) {
+    return undefined
+  }
+
+  const Icon = icons[name]
+
+  return Icon ? createElement(Icon) : undefined
+}
+
 export const docs = defineDocs({
   dir: 'content',
   docs: {
@@ -18,19 +28,7 @@ export const docs = defineDocs({
 export const source = loader({
   source: docs.toFumadocsSource(),
   baseUrl: docsRoute,
-  icon(name) {
-    if (!name) {
-      return undefined
-    }
-
-    const Icon = icons[name]
-
-    if (!Icon) {
-      return undefined
-    }
-
-    return createElement(Icon)
-  },
+  icon: resolveIcon,
 })
 
 export function getPageMarkdownUrl(page: (typeof source)['$inferPage']) {

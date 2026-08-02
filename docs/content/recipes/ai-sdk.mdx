@@ -9,15 +9,15 @@ Signing in is the easy half. This is what to do with what comes back.
 ## Short answer
 
 Pass `createAuthenticatedFetch(client)` as the `fetch` option of whatever client you already use.
-The Vercel AI SDK, the OpenAI SDK and the Anthropic SDK all accept one.
+The Vercel AI SDK, the OpenAI SDK and the Claude SDK all accept one.
 
 ```ts
 import { createOpenAI } from '@ai-sdk/openai'
 import { generateText } from 'ai'
-import { createAuthenticatedFetch } from '@ai-oauth-sdk/core'
+import { createAuthenticatedFetch, ProviderId } from '@ai-oauth-sdk/core'
 import { createNodeAuthClient } from '@ai-oauth-sdk/node'
 
-const client = createNodeAuthClient({ provider: 'openai', clientId })
+const client = createNodeAuthClient({ provider: ProviderId.OpenAI, clientId })
 
 const openai = createOpenAI({
   apiKey: 'unused', // the SDK insists on one; our fetch replaces it
@@ -61,7 +61,7 @@ after twenty minutes is not something you want captured in a closure.
 | `fetch` | `FetchLike` | Underlying fetch. Defaults to `globalThis.fetch`. |
 | `retryOnUnauthorized` | `boolean` | Force a refresh and retry once when the API answers 401. Defaults to `true`. |
 | `baseUrl` | `string` | Prefix for relative URLs. Wins over both the provider's `apiBaseUrl` and any host a credential exchange names. |
-| `headers` | `Record<string, string>` | Merged into every request. Since `0.3.0` it beats anything the provider supplies, so this is where you override a default like Copilot's `Editor-Version`. A header set on the request itself still wins over both. |
+| `headers` | `Record<string, string>` | Merged into every request, beating anything the provider supplies, so this is where you override a default like Copilot's `Editor-Version`. A header set on the request itself still wins over both. |
 | `respectCallerAuthorization` | `boolean` | Let a caller-set Authorization header survive. Defaults to `false`. |
 
 The 401 retry matters more than it looks. A token can be revoked, or rotated by another process,
@@ -92,7 +92,7 @@ re-runs it on a 401. It also names an editor, which Copilot requires. Pass
 `headers: { 'Editor-Version': 'my-cli/1.0' }` to identify as yourself. The exchanged token lives
 about 25 minutes, which is the other reason a captured token will not do.
 
-**Anthropic.** OAuth bearers need `anthropic-beta: oauth-2025-04-20` alongside `anthropic-version`.
+**Claude.** OAuth bearers need `anthropic-beta: oauth-2025-04-20` alongside `anthropic-version`.
 The descriptor emits both through `apiHeaders`, and `createAuthenticatedFetch` attaches them. A
 hand-rolled `headers` object will not.
 

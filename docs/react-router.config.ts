@@ -25,6 +25,7 @@ export default {
       paths.push(getUrl(slugs), `/llms.mdx/${[...slugs, 'content.md'].join('/')}`)
     }
 
+
     return paths
   },
 } satisfies Config

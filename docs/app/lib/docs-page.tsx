@@ -11,19 +11,30 @@ import {
 import { use } from 'react'
 
 import { useMDXComponents } from '@/components/mdx'
+import { providerLogos } from '@/components/provider-logos'
 import { VersionPicker } from '@/components/version-picker'
+import { docsVersions, type VersionLink } from './versions'
 import { icons } from './icons'
 import { baseOptions } from './layout.shared'
-import { gitConfig } from './shared'
+import { pageMeta } from './seo'
+import { appName, gitConfig } from './shared'
 import { docs, getPageMarkdownUrl, source } from './source'
+
+/** Every documentation collection, keyed by the version it belongs to. */
+const collections = {
+  latest: { source, docs },
+} as const
+
+export type DocsVersionKey = keyof typeof collections
 
 /**
  * Two routes render a documentation page: an index route for `/`, and a splat
  * for everything below it. React Router matches an empty remainder against the
  * root layout rather than the splat, so one route cannot serve both.
  */
-export async function loadDocsPage(slugs: string[]) {
-  const page = source.getPage(slugs)
+export async function loadDocsPage(slugs: string[], version: DocsVersionKey = 'latest') {
+  const collection = collections[version]
+  const page = collection.source.getPage(slugs)
 
   if (!page) {
     throw new Response('Not found', { status: 404 })
@@ -31,28 +42,75 @@ export async function loadDocsPage(slugs: string[]) {
 
   return {
     path: page.path,
+    url: page.url,
+    version,
     title: page.data.title,
     description: page.data.description ?? '',
-    markdownUrl: getPageMarkdownUrl(page).url,
-    pageTree: await source.serializePageTree(source.getPageTree()),
+    markdownUrl: version === 'latest' ? getPageMarkdownUrl(page).url : '',
+    versionLinks: resolveVersionLinks(slugs, version),
+    pageTree: await collection.source.serializePageTree(collection.source.getPageTree()),
   }
+}
+
+/**
+ * Points each version at the same page, or at its index when that page does not
+ * exist there.
+ *
+ * The fallback is the whole reason this runs here rather than in the browser. A
+ * page that was renamed, split or added has no counterpart in every version, and
+ * a picker that assumed otherwise would 404 on exactly the pages a release
+ * changed. Every collection is in memory at build time, so the answer is a
+ * lookup.
+ */
+function resolveVersionLinks(slugs: string[], version: DocsVersionKey): VersionLink[] {
+  return docsVersions.map((entry) => {
+    const target = collections[entry.key as DocsVersionKey]
+    const exists = Boolean(target?.source.getPage(slugs))
+
+    return {
+      label: entry.label,
+      description: entry.description,
+      href: exists ? [entry.href, ...slugs].join('/') : entry.href,
+      active: entry.key === version,
+    }
+  })
 }
 
 export type DocsPageData = Awaited<ReturnType<typeof loadDocsPage>>
 
-export function docsPageMeta(data: DocsPageData | undefined) {
-  if (!data) {
-    return [{ title: 'AI OAuth SDK' }]
-  }
+/**
+ * Every page under `providers/` is named after the provider id, so its brand
+ * mark is a lookup. The sidebar keeps its Remix icon either way: these marks
+ * carry too much detail to read at 16px.
+ */
+function providerIdFor(path: string) {
+  const match = /^providers\/(.+)\.mdx$/.exec(path)
 
-  return [
-    { title: `${data.title} | AI OAuth SDK` },
-    { name: 'description', content: data.description },
-  ]
+  return match?.[1]
 }
 
-function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
-  const page = docs.getPage(path)
+export function docsPageMeta(data: DocsPageData | undefined) {
+  if (!data) {
+    return [{ title: appName }]
+  }
+
+  return pageMeta({
+    title: `${data.title} | ${appName}`,
+    description: data.description,
+    path: data.url,
+  })
+}
+
+function Content({
+  path,
+  markdownUrl,
+  version,
+}: {
+  path: string
+  markdownUrl: string
+  version: DocsVersionKey
+}) {
+  const page = collections[version].docs.getPage(path)
 
   if (!page) {
     throw new Error(`unknown page: ${path}`)
@@ -60,30 +118,42 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
 
   const { toc } = use(page.load())
   const Mdx = page.body
+  const Logo = providerLogos[providerIdFor(path) ?? '']
   const Icon = typeof page.icon === 'string' ? icons[page.icon] : undefined
 
   return (
     <DocsPage toc={toc} tableOfContent={{ style: 'clerk' }}>
       <DocsTitle className="flex items-center gap-3">
-        {Icon && (
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
-            <Icon className="size-5" />
+        {Logo ? (
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-fd-border bg-fd-card">
+            <Logo className="size-5" />
           </span>
+        ) : (
+          Icon && (
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
+              <Icon className="size-5" />
+            </span>
+          )
         )}
         {page.title}
       </DocsTitle>
       <DocsDescription>{page.description}</DocsDescription>
 
-      <nav
-        aria-label="Page actions"
-        className="-mt-4 flex flex-row items-center gap-2 border-b pb-6"
-      >
-        <MarkdownCopyButton markdownUrl={markdownUrl} />
-        <ViewOptionsPopover
-          markdownUrl={markdownUrl}
-          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/${path}`}
-        />
-      </nav>
+      {/* Only the current docs have a markdown route and a file on the branch
+          behind them, so an archived page hides these rather than pointing them
+          at something that would 404. */}
+      {version === 'latest' && (
+        <nav
+          aria-label="Page actions"
+          className="-mt-4 flex flex-row items-center gap-2 border-b pb-6"
+        >
+          <MarkdownCopyButton markdownUrl={markdownUrl} />
+          <ViewOptionsPopover
+            markdownUrl={markdownUrl}
+            githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/${path}`}
+          />
+        </nav>
+      )}
 
       <DocsBody>
         <Mdx components={useMDXComponents()} />
@@ -92,16 +162,15 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
   )
 }
 
-const sidebar: DocsLayoutProps['sidebar'] = {
-  footer: <VersionPicker />,
-}
-
 export function DocsPageView({ loaderData }: { loaderData: DocsPageData }) {
   const { pageTree, path, markdownUrl } = useFumadocsLoader(loaderData)
+  const sidebar: DocsLayoutProps['sidebar'] = {
+    footer: <VersionPicker links={loaderData.versionLinks} />,
+  }
 
   return (
     <DocsLayout {...baseOptions()} tree={pageTree} sidebar={sidebar}>
-      <Content path={path} markdownUrl={markdownUrl} />
+      <Content path={path} markdownUrl={markdownUrl} version={loaderData.version} />
     </DocsLayout>
   )
 }
