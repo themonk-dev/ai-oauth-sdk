@@ -19,7 +19,7 @@
     "sign-in-with-chatgpt"
   ],
   "license": "MIT",
-  "homepage": "https://ai-oauth.themonk.dev/docs",
+  "homepage": "https://ai-oauth.themonk.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/themonk-dev/ai-oauth-sdk.git",
