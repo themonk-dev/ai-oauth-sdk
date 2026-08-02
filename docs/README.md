@@ -54,17 +54,44 @@ unreleased source. To preview docs for unreleased changes, add a temporary overr
 
 ```
 app/
-  components/     feature and runtime cards, search dialog, logo, MDX registry
+  components/     cards, provider marks and wordmarks, search dialog, MDX registry
   lib/            source loader, shared config, the docs page shell
   llms/           llms.txt, llms-full.txt and the per-page markdown mirrors
-  routes/         index (/), splat (everything else), search
+  routes/         home (/), docs index, splat (everything else), search
 content/          the MDX, with meta.json driving the sidebar
 ```
 
-Docs are served from `/docs`, so `content/index.mdx` is at `/docs` and everything else hangs off it.
-Two routes render a page: one for `/docs` itself, and a splat for everything below it, because React
-Router matches an empty remainder against the layout rather than against a splat. `/` redirects to
-`/docs`, so a deployment at a domain root does not answer with a 404.
+`/` is the landing page and `/docs` is the documentation, both from this one app. Two routes render
+a documentation page: one for `/docs` itself, and a splat for everything below it, because React
+Router matches an empty remainder against the layout rather than against a splat.
+
+## Provider marks
+
+Each provider has two marks, and they are deliberately different things.
+
+The sidebar and the page tree use Remix Icon, named in each page's `icon` frontmatter and resolved
+through `app/lib/icons.ts`. Those render at 16px, where a detailed brand mark turns to mush.
+
+The page title and the providers grid use the provider's own mark, in
+`app/components/provider-logos.tsx`, keyed by provider id. Pages under `content/providers/` are named
+after the id, so `docs-page.tsx` looks the mark up from the filename and needs no extra frontmatter.
+Four providers publish a wordmark that already includes their name
+(`app/components/provider-wordmarks.tsx`); the rest get the mark with the name set beside it.
+
+Marks that are a flat colour are redrawn with `currentColor`, or they would vanish against a dark
+background. Marks with gradients keep them, and their gradient ids are prefixed, since two of these
+can appear on one page.
+
+## The landing page
+
+`/` does not use the docs theme. It has its own palette and typeface, taken from the design, as
+`--lp-*` variables in `app/app.css` and exposed to Tailwind through `@theme inline` so `bg-lp-bg`
+and `text-lp-muted` work like any other colour utility. Light is the design's values verbatim; dark
+mirrors each one across the same neutral ramp it was picked from. Nothing under `/docs` reads them.
+
+`ProviderGrid` renders in both places and takes a `tone` for that reason. The nav is Fumadocs'
+`HomeLayout` rather than the design's own, so search, the theme switch and the mobile menu keep
+working and match the docs.
 
 The base path lives in one place, `docsRoute` in `app/lib/shared.ts`. Changing it moves the loader,
 the prerender list and the nav together, but absolute links written in MDX are not derived from it
@@ -78,12 +105,14 @@ Every page is MDX with frontmatter:
 ---
 title: Loopback
 description: One sentence. It is the page subtitle and the meta description.
-icon: Server
+icon: RiServerLine
 ---
 ```
 
-`icon` is any name from [Lucide](https://lucide.dev). Note that Lucide 1.x dropped the brand icons,
-so `Github` and `Chrome` no longer resolve.
+`icon` is any name exported from [Remix Icon](https://remixicon.com), plus the handful of marks it
+does not carry in `app/components/brand-icons.tsx`. Both go through the map in `app/lib/icons.ts`,
+which is a named list rather than a namespace import so the bundle carries the fifty icons this site
+uses instead of all three thousand. An icon not in that map silently renders nothing.
 
 Sidebar order and grouping come from the `meta.json` next to the content. A `---Label---` entry in
 the root `meta.json` renders as a section separator.

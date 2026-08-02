@@ -5,6 +5,7 @@ import defaultMdxComponents from 'fumadocs-ui/mdx'
 
 import { FeatureCards } from './feature-cards'
 import { Mermaid } from './mermaid'
+import { ProviderGrid } from './provider-grid'
 import { RuntimeCards } from './runtime-cards'
 
 import type { MDXComponents } from 'mdx/types'
@@ -16,6 +17,7 @@ export function getMDXComponents(components?: MDXComponents) {
     Accordions,
     FeatureCards,
     Mermaid,
+    ProviderGrid,
     RuntimeCards,
     Step,
     Steps,

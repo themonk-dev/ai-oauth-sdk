@@ -6,6 +6,85 @@
   --fd-layout-width: 1600px;
 }
 
+/* Geist Mono is already fetched in the document head; this is what binds it. */
+@theme {
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --animate-caret: caret-blink 1s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/*
+ * The landing page has its own palette and type, taken from the design rather
+ * than from the docs theme. Light is the design's values verbatim; dark mirrors
+ * each one across the same neutral ramp it was picked from.
+ */
+:root {
+  --lp-bg: #ffffff;
+  --lp-fg: #0a0a0a;
+  --lp-muted: #525252;
+  --lp-dim: #737373;
+  --lp-faint: #a3a3a3;
+  --lp-line: #e5e5e5;
+  --lp-hatch: #f0f0f0;
+  --lp-surface: #fafafa;
+  --lp-hover: #f5f5f5;
+  --lp-tick: #d4d4d4;
+  --lp-button: #000000;
+  --lp-button-hover: #2e2e2e;
+  --lp-button-fg: #ffffff;
+  --lp-panel: #0a0a0a;
+}
+
+.dark {
+  --lp-bg: #0a0a0a;
+  --lp-fg: #fafafa;
+  --lp-muted: #a3a3a3;
+  --lp-dim: #a3a3a3;
+  --lp-faint: #737373;
+  --lp-line: #262626;
+  --lp-hatch: #1f1f1f;
+  --lp-surface: #171717;
+  --lp-hover: #262626;
+  --lp-tick: #404040;
+  --lp-button: #fafafa;
+  --lp-button-hover: #d4d4d4;
+  --lp-button-fg: #0a0a0a;
+  --lp-panel: #000000;
+}
+
+@theme inline {
+  --font-landing: 'Noto Sans', ui-sans-serif, system-ui, sans-serif;
+
+  --color-lp-bg: var(--lp-bg);
+  --color-lp-fg: var(--lp-fg);
+  --color-lp-muted: var(--lp-muted);
+  --color-lp-dim: var(--lp-dim);
+  --color-lp-faint: var(--lp-faint);
+  --color-lp-line: var(--lp-line);
+  --color-lp-surface: var(--lp-surface);
+  --color-lp-hover: var(--lp-hover);
+  --color-lp-tick: var(--lp-tick);
+  --color-lp-button: var(--lp-button);
+  --color-lp-button-hover: var(--lp-button-hover);
+  --color-lp-button-fg: var(--lp-button-fg);
+  --color-lp-panel: var(--lp-panel);
+}
+
+/* The diagonal rule filling the margins beside the landing page's content. */
+@utility hatched {
+  background-image: repeating-linear-gradient(-45deg, var(--lp-hatch) 0 1px, transparent 1px 9px);
+}
+
 html {
   scrollbar-gutter: stable;
 }

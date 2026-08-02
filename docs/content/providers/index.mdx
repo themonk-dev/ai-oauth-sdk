@@ -8,6 +8,8 @@ A provider is a descriptor: endpoints, scopes, how the redirect works, how the t
 shaped, and a handful of hooks for the ones that leave the spec. Nothing about it is special-cased
 in the flow code.
 
+<ProviderGrid className="my-8 rounded-xl border border-fd-border overflow-hidden" />
+
 ## You name the client id
 
 No built-in provider ships with one. You pass it at initialization, the way you pass a strategy to
@@ -46,6 +48,24 @@ are missing.
 tenant-scoped and every Azure app registration is its own client.
 
 Raw credential values are on the [credentials](/docs/resources/credentials) page.
+
+### Ids by name
+
+Ids are kebab-case strings and always have been. `ProviderId` is the same set under names your
+editor can complete, which also spares you the bracket on the hyphenated ones.
+
+```ts
+import { createAuthClient, ProviderId, publicClientIds } from '@ai-oauth-sdk/core'
+
+createAuthClient({
+  provider: ProviderId.GitHubCopilot,
+  clientId: publicClientIds[ProviderId.GitHubCopilot],
+})
+```
+
+`ProviderId.GitHubCopilot` **is** `'github-copilot'`, so the two are interchangeable and a custom
+provider is still an ordinary string. Azure AI has no entry for the reason above: there is no fixed
+id to name.
 
 ## Capabilities
 

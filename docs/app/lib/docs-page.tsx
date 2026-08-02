@@ -11,6 +11,7 @@ import {
 import { use } from 'react'
 
 import { useMDXComponents } from '@/components/mdx'
+import { providerLogos } from '@/components/provider-logos'
 import { VersionPicker } from '@/components/version-picker'
 import { docsVersions, type VersionLink } from './versions'
 import { icons } from './icons'
@@ -76,6 +77,17 @@ function resolveVersionLinks(slugs: string[], version: DocsVersionKey): VersionL
 
 export type DocsPageData = Awaited<ReturnType<typeof loadDocsPage>>
 
+/**
+ * Every page under `providers/` is named after the provider id, so its brand
+ * mark is a lookup. The sidebar keeps its Remix icon either way: these marks
+ * carry too much detail to read at 16px.
+ */
+function providerIdFor(path: string) {
+  const match = /^providers\/(.+)\.mdx$/.exec(path)
+
+  return match?.[1]
+}
+
 export function docsPageMeta(data: DocsPageData | undefined) {
   if (!data) {
     return [{ title: 'AI OAuth SDK' }]
@@ -104,15 +116,22 @@ function Content({
 
   const { toc } = use(page.load())
   const Mdx = page.body
+  const Logo = providerLogos[providerIdFor(path) ?? '']
   const Icon = typeof page.icon === 'string' ? icons[page.icon] : undefined
 
   return (
     <DocsPage toc={toc} tableOfContent={{ style: 'clerk' }}>
       <DocsTitle className="flex items-center gap-3">
-        {Icon && (
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
-            <Icon className="size-5" />
+        {Logo ? (
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-fd-border bg-fd-card">
+            <Logo className="size-5" />
           </span>
+        ) : (
+          Icon && (
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
+              <Icon className="size-5" />
+            </span>
+          )
         )}
         {page.title}
       </DocsTitle>
