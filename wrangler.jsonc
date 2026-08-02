@@ -1,15 +1,13 @@
 {
-  // At the repository root rather than beside the site in docs/, because that is
-  // where the deploy runs. With no config here, wrangler finds the SDK's pnpm
-  // workspace and refuses to guess which application it is meant to ship.
+  // At the repository root because that is where the deploy runs. Without it,
+  // wrangler will not guess which project in the pnpm workspace to ship.
   "name": "ai-oauth-sdk-docs",
   "compatibility_date": "2026-08-01",
   "assets": {
     "directory": "./docs/build/client",
     "html_handling": "auto-trailing-slash",
-    // Not `single-page-application`. Every page is prerendered to its own HTML,
-    // and that setting would answer an unknown URL with the HTML built for `/`,
-    // which carries that route's data and hydrates against the wrong one.
+    // Not `single-page-application`: pages are prerendered, and that would
+    // answer an unknown URL with `/`'s HTML, hydrating the wrong route.
     "not_found_handling": "none"
   }
 }
