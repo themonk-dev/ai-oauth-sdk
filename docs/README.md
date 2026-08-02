@@ -110,36 +110,34 @@ nested lockfile is picked up automatically.
 
 ### Cloudflare
 
-`wrangler.jsonc` in this directory is the deploy config: a Worker with nothing but static assets,
-since `ssr: false` means there is no server to run. The asset settings that matter are commented
-there.
+`wrangler.jsonc` at the **repository root** is the deploy config: a Worker with nothing but static
+assets, since `ssr: false` means there is no server to run. It sits up there rather than beside the
+site because that is where the deploy runs, and the asset settings that matter are commented in it.
 
-Workers Builds keeps the rest in its dashboard. Either of these works:
+Workers Builds keeps two settings in its dashboard, and both are its defaults:
 
-| Setting | From the repository root | From this directory |
-| --- | --- | --- |
-| Root directory | *(repository root)* | `docs` |
-| Build command | `pnpm docs:build` | `pnpm build` |
-| Deploy command | `pnpm docs:deploy` | `npx wrangler deploy` |
+| Setting | Value |
+| --- | --- |
+| Root directory | *(repository root)* |
+| Build command | `pnpm docs:build` |
+| Deploy command | `npx wrangler deploy` |
 
-The second is tidier: `wrangler.jsonc`, `pnpm-lock.yaml` and `.nvmrc` are all found without being
-named, and the platform caches dependencies and detects the Node version on its own.
-
-The first works because both scripts do the directory changing themselves, and both need to. Run
-from the repository root, neither the build nor the deploy can be the plain command:
+Everything else is in the repository. The two commands each had to earn that, because run from the
+repository root neither of them works as written by default:
 
 - A root install skips this directory by design. `pnpm-workspace.yaml` here declares no packages,
   which is exactly what keeps Vite and the MDX toolchain out of the root lockfile that `pnpm audit`
   reads. So `docs:build` installs first, or the build reaches `react-router build` with no
   `node_modules` beside it and stops at `react-router: not found`, which reads like a missing
   dependency and is not one.
-- `wrangler deploy` at the repository root finds the SDK's pnpm workspace and refuses to guess which
-  project it is meant to ship, saying so as *"application detection logic has been run in the root
-  of a workspace"*. So `docs:deploy` changes into this directory first, where the config sits.
+- `wrangler deploy` with no config beside it finds the SDK's pnpm workspace and refuses to guess
+  which project it is meant to ship, saying so as *"application detection logic has been run in the
+  root of a workspace"*. The root `wrangler.jsonc` answers that, which is the whole reason it lives
+  there instead of here.
 
-`docs:deploy` uploads whatever is in `build/client` and does not build it, which is why the build
+The deploy uploads whatever is in `docs/build/client` and does not build it, which is why the build
 command runs first. On its own with nothing built it stops on the missing assets directory, and
-names it.
+names it. `pnpm docs:deploy` is the same command under a name that matches `docs:build`.
 
 Nothing in the build reads a secret, so the project needs no environment variables. If that ever
 changes, turn off builds for non-production branches first, because a fork's pull request would

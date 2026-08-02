@@ -1,17 +1,22 @@
 {
-  // Cloudflare Workers Builds deploys this site. The config lives here rather
-  // than only in the dashboard so the deploy is reviewable, and so the asset
-  // settings below cannot be changed by accident.
+  // Deploy config for the documentation site, which Cloudflare Workers Builds
+  // ships. It sits at the repository root rather than beside the site in
+  // `docs/` for one reason: that is where the deploy runs.
   //
-  // There is no `main`: this is a static site, so the Worker is nothing but its
-  // assets. The build command, the root directory and the Node version are
-  // dashboard settings, and `docs/README.md` records what they need to be.
+  // Without a config here, `wrangler deploy` finds the SDK's pnpm workspace,
+  // decides it is being asked to ship a workspace rather than an application,
+  // and refuses: "application detection logic has been run in the root of a
+  // workspace". A config in this directory answers that question, so the
+  // default deploy command works with nothing configured in the dashboard.
+  //
+  // There is no `main`: the site is built with `ssr: false`, so the Worker is
+  // nothing but its assets.
   "name": "ai-oauth-sdk-docs",
   "compatibility_date": "2026-08-01",
   "assets": {
-    // `pnpm build` prerenders every page into here. `build/server` is not
-    // deployed: the site is built with `ssr: false`, so there is nothing to run.
-    "directory": "./build/client",
+    // `pnpm docs:build` prerenders every page into here. `docs/build/server` is
+    // not deployed, since there is nothing to run.
+    "directory": "./docs/build/client",
 
     // Serves `/docs/quick-start/index.html` for `/docs/quick-start`, which is
     // the layout the prerender writes.
