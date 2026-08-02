@@ -11,6 +11,7 @@ import {
   gemini,
   openai,
   parseStandardCallback,
+  ProviderId,
   providers,
   readCallback,
   resolveProvider,
@@ -23,6 +24,17 @@ describe('built-in provider descriptors', () => {
     expect(Object.keys(providers)).toContain('claude')
     expect(Object.keys(providers)).toContain('gemini')
     expect(Object.keys(providers)).toContain('xai')
+  })
+
+  // `satisfies` already rejects a name pointing at an id that does not exist.
+  // The gap it cannot catch is a new built-in that nobody named.
+  it('names every built-in id', () => {
+    expect(Object.values(ProviderId).sort()).toEqual(Object.keys(providers).sort())
+  })
+
+  it('resolves a provider named through ProviderId', () => {
+    expect(resolveProvider(ProviderId.GitHubCopilot).id).toBe('github-copilot')
+    expect(resolveProvider(ProviderId.Grok).id).toBe('xai')
   })
 
   it('uses S256 wherever PKCE applies', () => {

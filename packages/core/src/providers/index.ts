@@ -38,6 +38,31 @@ export const providers = {
 
 export type BuiltInProviderId = keyof typeof providers
 
+/**
+ * The same ids, under names you can autocomplete. Every value is the plain
+ * kebab-case string, so `ProviderId.GitHubCopilot` and `'github-copilot'` are
+ * interchangeable and a custom id is still just a string.
+ *
+ * ```ts
+ * createAuthClient({
+ *   provider: ProviderId.Claude,
+ *   clientId: publicClientIds[ProviderId.Claude],
+ * })
+ * ```
+ *
+ * Azure AI is absent because it has no fixed id to name: its endpoints are
+ * tenant-scoped, so you build the descriptor with `azureAi({ tenant })`.
+ */
+export const ProviderId = {
+  OpenAI: 'openai',
+  Claude: 'claude',
+  Gemini: 'gemini',
+  Grok: 'xai',
+  GitHubCopilot: 'github-copilot',
+  OpenRouter: 'openrouter',
+  Qwen: 'qwen',
+} as const satisfies Record<string, BuiltInProviderId>
+
 /** Anything accepted where a provider is expected. */
 export type ProviderLike = BuiltInProviderId | (string & {}) | ProviderConfig
 
