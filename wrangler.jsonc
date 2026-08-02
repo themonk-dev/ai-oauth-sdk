@@ -1,0 +1,13 @@
+{
+  // At the repository root because that is where the deploy runs. Without it,
+  // wrangler will not guess which project in the pnpm workspace to ship.
+  "name": "ai-oauth-sdk-docs",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "./docs/build/client",
+    "html_handling": "auto-trailing-slash",
+    // Not `single-page-application`: pages are prerendered, and that would
+    // answer an unknown URL with `/`'s HTML, hydrating the wrong route.
+    "not_found_handling": "none"
+  }
+}
