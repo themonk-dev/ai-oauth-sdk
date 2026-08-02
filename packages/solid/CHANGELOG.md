@@ -1,5 +1,20 @@
 # @ai-oauth-sdk/solid
 
+## 1.0.0
+
+### Patch Changes
+
+- 63f7a74: Point every package at the documentation site. Nine of the ten had no `homepage`, so npm showed no
+  Homepage link at all, and the tenth pointed back at the repository README. Each now links to its own
+  page on the docs site, and every package gets a `bugs` URL so npm shows an Issues link too.
+
+  No code changes. The READMEs were also rewritten for readability.
+
+- Updated dependencies [63f7a74]
+- Updated dependencies [380a105]
+- Updated dependencies [380a105]
+  - @ai-oauth-sdk/core@1.0.0
+
 ## 0.3.0
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@ai-oauth-sdk/solid",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "SolidJS primitive for ai-oauth-sdk. Sign in with ChatGPT, Claude, Gemini or Grok.",
   "keywords": [
     "oauth",
