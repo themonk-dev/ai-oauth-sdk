@@ -12,13 +12,17 @@ ${bold('COMMANDS')}
   login <provider>      Sign in and store the token
   token <provider>      Print a valid access token (refreshes if needed)
   whoami <provider>     Show the signed-in account
-  list                  List all stored sessions
+  list, ls              List all stored sessions
   refresh <provider>    Force a token refresh
   logout <provider>     Forget the stored token
   providers             List supported providers
   exec <provider> -- …  Run a command with the token in its environment
+  version               Print the installed version
+  help                  Print this text
 
 ${bold('OPTIONS')}
+  -v, --version         Print the installed version
+  -h, --help            Print this text
   --json                Machine-readable output
   --account <name>      Use a named account slot (for multiple logins)
   --client-id <id>      Override the client id. Defaults to the one that
@@ -65,8 +69,8 @@ ${bold('EXAMPLES')}
   ai-oauth-sdk login github-copilot --device
 
   ${dim('# Two accounts side by side')}
-  ai-oauth-sdk login anthropic --account work
-  ai-oauth-sdk token anthropic --account work
+  ai-oauth-sdk login claude --account work
+  ai-oauth-sdk token claude --account work
 
   ${dim('# Any OAuth 2.0 provider, not just the built-ins')}
   ai-oauth-sdk login acme --client-id my-client \\

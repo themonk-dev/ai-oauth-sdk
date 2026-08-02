@@ -58,14 +58,46 @@ describe('help and version', () => {
     expect(err()).toContain('USAGE')
   })
 
-  it('prints a version', async () => {
-    expect(await run(['version'])).toBe(0)
+  // Every spelling, because the exit code alone cannot tell these apart: help
+  // and version both exit 0, so only the output distinguishes them. `-v` used
+  // to print help, since the help branch matched on "no command" first.
+  it.each([['version'], ['-v'], ['--version']])('prints a version for %s', async (flag) => {
+    expect(await run([flag])).toBe(0)
+    expect(err().trim()).toMatch(/^\d+\.\d+\.\d+/)
+    expect(err()).not.toContain('COMMANDS')
+  })
+
+  it('prints a version when a command is also present', async () => {
+    expect(await run(['login', '--version'])).toBe(0)
     expect(err().trim()).toMatch(/^\d+\.\d+\.\d+/)
   })
 
   it('rejects an unknown command', async () => {
     expect(await run(['frobnicate'])).toBe(1)
     expect(err()).toContain('Unknown command')
+  })
+
+  it('rejects an unknown option given without a command', async () => {
+    expect(await run(['--nope'])).toBe(1)
+    expect(err()).toContain('Unknown option')
+  })
+
+  it('reports an unknown command ahead of an unknown option', async () => {
+    expect(await run(['frobnicate', '--nope'])).toBe(1)
+    expect(err()).toContain('Unknown command')
+  })
+
+  it('exits 1 for a known flag with no command to apply it to', async () => {
+    expect(await run(['--json'])).toBe(1)
+    expect(err()).toContain('COMMANDS')
+  })
+
+  it('names every documented command in the help text', async () => {
+    await run(['help'])
+
+    for (const command of ['login', 'token', 'whoami', 'list', 'refresh', 'logout', 'providers', 'exec', 'version']) {
+      expect(err(), command).toContain(command)
+    }
   })
 })
 
