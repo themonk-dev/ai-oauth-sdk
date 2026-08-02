@@ -120,17 +120,26 @@ Workers Builds keeps the rest in its dashboard. Either of these works:
 | --- | --- | --- |
 | Root directory | *(repository root)* | `docs` |
 | Build command | `pnpm docs:build` | `pnpm build` |
-| Deploy command | `npx wrangler deploy --config docs/wrangler.jsonc` | `npx wrangler deploy` |
+| Deploy command | `pnpm docs:deploy` | `npx wrangler deploy` |
 
 The second is tidier: `wrangler.jsonc`, `pnpm-lock.yaml` and `.nvmrc` are all found without being
 named, and the platform caches dependencies and detects the Node version on its own.
 
-The first works because `docs:build` installs before it builds, and it needs to. A host that builds
-from the repository root installs there, and a root install skips this directory by design:
-`pnpm-workspace.yaml` here declares no packages, which is exactly what keeps Vite and the MDX
-toolchain out of the root lockfile that `pnpm audit` reads. Without its own install, the build
-reaches `react-router build` with no `node_modules` beside it and stops at `react-router: not
-found`, which reads like a missing dependency and is not one.
+The first works because both scripts do the directory changing themselves, and both need to. Run
+from the repository root, neither the build nor the deploy can be the plain command:
+
+- A root install skips this directory by design. `pnpm-workspace.yaml` here declares no packages,
+  which is exactly what keeps Vite and the MDX toolchain out of the root lockfile that `pnpm audit`
+  reads. So `docs:build` installs first, or the build reaches `react-router build` with no
+  `node_modules` beside it and stops at `react-router: not found`, which reads like a missing
+  dependency and is not one.
+- `wrangler deploy` at the repository root finds the SDK's pnpm workspace and refuses to guess which
+  project it is meant to ship, saying so as *"application detection logic has been run in the root
+  of a workspace"*. So `docs:deploy` changes into this directory first, where the config sits.
+
+`docs:deploy` uploads whatever is in `build/client` and does not build it, which is why the build
+command runs first. On its own with nothing built it stops on the missing assets directory, and
+names it.
 
 Nothing in the build reads a secret, so the project needs no environment variables. If that ever
 changes, turn off builds for non-production branches first, because a fork's pull request would
