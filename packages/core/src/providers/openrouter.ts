@@ -27,7 +27,17 @@ export const openrouter = defineProvider({
   scopes: [],
   redirect: { mode: 'loopback', loopbackPort: 0, loopbackPath: '/callback' },
   echoesState: false,
-  tokenRequest: { style: 'json', includeClientIdInBody: false },
+  /**
+   * The key endpoint wants the PKCE *method* echoed back on the exchange, not
+   * just the verifier — omit it and it answers `400 Invalid code_challenge_method`.
+   * A standard token endpoint infers the method from the stored challenge; this
+   * one does not. Always S256, matching `buildAuthParams`.
+   */
+  tokenRequest: {
+    style: 'json',
+    includeClientIdInBody: false,
+    extraParams: { code_challenge_method: 'S256' },
+  },
   buildAuthParams(params) {
     const next: Record<string, string> = { callback_url: params['redirect_uri'] ?? '' }
 
