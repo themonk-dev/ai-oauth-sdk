@@ -1,6 +1,6 @@
 {
   "name": "@ai-oauth-sdk/core",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Framework-agnostic OAuth 2.0 + PKCE core for AI provider sign-in (ChatGPT, Claude, Gemini, Grok). Zero dependencies, runs anywhere.",
   "keywords": [
     "oauth",

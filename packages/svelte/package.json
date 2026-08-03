@@ -1,6 +1,6 @@
 {
   "name": "@ai-oauth-sdk/svelte",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Svelte store for ai-oauth-sdk. Sign in with ChatGPT, Claude, Gemini or Grok.",
   "keywords": [
     "oauth",
