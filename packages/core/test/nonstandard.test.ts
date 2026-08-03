@@ -95,6 +95,9 @@ describe('OpenRouter — a provider that breaks the spec', () => {
     // Parsed as JSON by the fake endpoint; a form body would not have.
     expect(target.requests[0]).toMatchObject({ code: 'or-code-1' })
     expect(target.requests[0]?.['code_verifier']).toBe(authorization.codeVerifier)
+    // The key endpoint wants the PKCE method echoed on the exchange too, or it
+    // answers `400 Invalid code_challenge_method`.
+    expect(target.requests[0]?.['code_challenge_method']).toBe('S256')
   })
 
   it('still rejects a stateless callback for providers that do echo state', async () => {
