@@ -71,12 +71,15 @@ limited-input client and describe it with `defineProvider`.
 
 ## In a browser
 
-The published gemini-cli client is confined to loopback. The same experiment that found Claude's
-client permissive — `https://accounts.google.com/o/oauth2/v2/auth` opened in a signed-in browser,
-with the published gemini-cli client id and an HTTPS `redirect_uri` — came back `Error 400:
-redirect_uri_mismatch`, minutes after the identical attempt against Claude succeeded from the same
-browser and account. Consistent with Google confining installed-app (Desktop) clients to loopback
-redirects only.
+The published gemini-cli client is confined to loopback, and says so immediately:
+`https://accounts.google.com/o/oauth2/v2/auth` opened in a signed-in browser, with the published
+gemini-cli client id and an HTTPS `redirect_uri`, comes back `Error 400: redirect_uri_mismatch`
+before a consent screen is ever drawn. Consistent with Google confining installed-app (Desktop)
+clients to loopback redirects only.
+
+Claude refuses the same thing later rather than differently — its authorize endpoint renders the
+consent screen and the grant then fails on the redirect URI. Neither client will complete one, so
+both fall back to pasting on a deployed origin; the difference is only *when* you find out.
 
 That means a browser app deployed to an HTTPS origin cannot get a popup here, even though the
 identical code gets one when served from `http://localhost:PORT`. There is also no device flow to

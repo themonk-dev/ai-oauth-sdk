@@ -117,9 +117,9 @@ you want the session to outlive the tab, knowing that any XSS on your origin can
 Popup and full-page redirect both assume the provider will redirect back to your origin at all.
 Whether it will depends on the provider's registered client and on whether your page is served from
 a loopback origin or a deployed HTTPS one — the same provider can answer differently between the
-two. `claude`'s and `openrouter`'s registered clients accept an arbitrary HTTPS redirect, so a
-deployed app still gets a popup. `gemini`'s does not, so a deployed app falls back to manual paste
-even though the identical code works as a popup from `localhost`. `openai`, `xai`, `github-copilot`
+two. `openrouter`'s registered client accepts an arbitrary HTTPS redirect, so a
+deployed app still gets a popup. `claude`'s and `gemini`'s do not, so a deployed app falls back to
+manual paste even though the identical code works as a popup from `localhost`. `openai`, `xai`, `github-copilot`
 and `qwen` resolve to the device flow regardless of origin, since none of them offers a redirect this
 library can construct for a browser page. See [browser selection](/docs/flows/browser-selection) for
 the full matrix and why the origin matters.

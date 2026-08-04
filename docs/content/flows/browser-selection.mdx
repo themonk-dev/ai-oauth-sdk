@@ -42,10 +42,16 @@ For the seven built-in providers, on a page served from a loopback origin
 | `openrouter` | any port | accepted (no fixed client to reject it) | no | popup | popup |
 | `claude` | any port | refused in practice | no | popup | paste |
 | `gemini` | any port | rejected — verified live | no | popup | paste |
-| `openai` | port `1455` fixed | untested, moot | yes, not RFC 8628 | device | device |
-| `xai` | port `56121`, host `127.0.0.1` | untested, moot | yes | device | device |
+| `openai` | port `1455` fixed | untested, moot | yes, not RFC 8628 | device¹ | device |
+| `xai` | port `56121`, host `127.0.0.1` | untested, moot | yes | device¹ | device |
 | `github-copilot` | none registered | not applicable | yes | device | device |
 | `qwen` | none registered | not applicable | yes | device | device |
+
+¹ On *most* loopback origins. A fixed loopback port is still a registered redirect when the page
+happens to be served from exactly it — `http://localhost:1455` for `openai`, `http://127.0.0.1:56121`
+for `xai` — and question 1 then answers `popup` before the device flow is ever considered. The rule
+handles that without a special case, which is why it is stated as "a URI the client accepts" rather
+than "any loopback origin".
 
 "Untested, moot" means the provider supports a device flow, so question 2 answers it before question
 1's HTTPS case is ever reached — whether the client would also accept an arbitrary HTTPS redirect was
@@ -84,8 +90,7 @@ Nothing above is a limitation of the protocol or of this library. It is a fact a
 provider's specific registered client was configured to accept when it was created. A CLI client
 registered for loopback redirects rejects an HTTPS one no matter which library sends the request —
 the descriptor's `mode: 'loopback'` plus an optional `hostedUri` fallback is what this SDK ships for
-each provider, and for Claude that shape actually understates what the client permits, since the
-extra HTTPS grant is real but was never documented anywhere this library could read it from.
+each provider.
 
 That is also why the matrix above cannot be extended to a provider that is not listed here just by
 reasoning about OAuth in general. A custom provider's browser behavior depends on how its own client
