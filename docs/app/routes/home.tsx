@@ -147,7 +147,7 @@ function landingOptions() {
  */
 function Band({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className="grid grid-cols-[1fr_minmax(0,1100px)_1fr] border-b border-lp-line">
+    <div className="grid grid-cols-[1fr_minmax(0,var(--lp-column))_1fr] border-b border-lp-line">
       <div className="hatched" />
       <div className={`border-x border-lp-line ${className ?? ''}`}>{children}</div>
       <div className="hatched" />
@@ -250,7 +250,7 @@ export default function Home() {
     <HomeLayout {...landingOptions()}>
       {/* The docs theme puts -0.25px on every element; the design does not, and
           each heading below sets its own tracking anyway. */}
-      <div className="w-full bg-lp-bg font-landing tracking-normal text-lp-fg">
+      <div className="w-full bg-lp-bg font-landing tracking-normal text-lp-fg" data-landing>
         <Band className="relative px-6 py-16 sm:px-14 sm:pt-22 sm:pb-18">
           <CornerTicks />
           <Eyebrow>Provider-agnostic OAuth 2.0 · zero dependencies</Eyebrow>
