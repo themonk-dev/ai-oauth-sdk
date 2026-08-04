@@ -19,7 +19,7 @@ const client = createNodeAuthClient({
 | Token | `https://platform.claude.com/v1/oauth/token` |
 | Redirect | loopback, any port, path `/callback` |
 | Hosted callback | `https://platform.claude.com/oauth/code/callback` |
-| Browser redirect | also accepts an arbitrary HTTPS redirect — verified live, undocumented |
+| Browser redirect | loopback only; an HTTPS redirect reaches consent but fails the exchange |
 | Popup opener | severed by an enforced `Cross-Origin-Opener-Policy: same-origin` |
 | Scopes | `user:inference`, `user:profile`, `user:sessions:claude_code` |
 | API base | `https://api.anthropic.com/v1` |
@@ -99,12 +99,17 @@ paste is the path, and it works because the user can open that URL on any device
 
 ## In a browser
 
-The descriptor's shape — `mode: 'loopback'` plus a hosted paste fallback — understates what the
-registered client actually accepts. `https://claude.ai/oauth/authorize` opened in a signed-in
-browser, with the published Claude Code client id and `redirect_uri=https://chat.themonk.dev/callback`,
-rendered the consent screen rather than a `redirect_uri_mismatch`. That means a browser app deployed
-to an HTTPS origin still gets a popup rather than falling back to paste, which is not true of every
-built-in — see [browser selection](/docs/flows/browser-selection) for the full comparison.
+A page served from `http://localhost:PORT` is itself a registered redirect for this client, since it
+declares `loopbackPort: 0` and RFC 8252 has the port ignored when matching. So a browser app gets a
+popup in local development and falls back to pasting once deployed — see
+[browser selection](/docs/flows/browser-selection) for the full comparison.
+
+An HTTPS redirect is worth a warning, because it fails late rather than early. Unlike Google, which
+answers `redirect_uri_mismatch` before drawing anything, `https://claude.ai/oauth/authorize` renders
+the consent screen for an `https://` redirect on an unrelated domain — and the grant then fails on
+the redirect URI anyway. The authorize endpoint accepting a redirect is not evidence the flow
+completes, so this SDK treats the client as loopback-only and does not offer a popup on an HTTPS
+origin. A consumer with their own client id, registered for their own origin, can say so per call.
 
 The popup itself carries a separate hazard. `claude.ai` serves its authorization page with an
 enforced `Cross-Origin-Opener-Policy: same-origin`, which detaches the popup from its opener the

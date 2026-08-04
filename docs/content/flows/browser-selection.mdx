@@ -40,7 +40,7 @@ For the seven built-in providers, on a page served from a loopback origin
 | Provider | Loopback redirect | HTTPS redirect | Device flow | Loopback origin | HTTPS origin |
 | --- | --- | --- | --- | --- | --- |
 | `openrouter` | any port | accepted (no fixed client to reject it) | no | popup | popup |
-| `claude` | any port | accepted — verified live | no | popup | popup |
+| `claude` | any port | refused in practice | no | popup | paste |
 | `gemini` | any port | rejected — verified live | no | popup | paste |
 | `openai` | port `1455` fixed | untested, moot | yes, not RFC 8628 | device | device |
 | `xai` | port `56121`, host `127.0.0.1` | untested, moot | yes | device | device |
@@ -52,13 +52,18 @@ For the seven built-in providers, on a page served from a loopback origin
 never worth finding out. `github-copilot` and `qwen` have no redirect-based flow registered at all;
 question 1 has nothing to evaluate for either origin.
 
-Two of those cells are not read off a descriptor. **Claude's** registered client accepts an
-arbitrary HTTPS redirect: `https://claude.ai/oauth/authorize` opened in a signed-in browser, with the
-published Claude Code client id and `redirect_uri=https://chat.themonk.dev/callback`, rendered the
-consent screen rather than a `redirect_uri_mismatch`. **Gemini's** does not: the same experiment,
-same browser, same signed-in account, minutes apart, with the published gemini-cli client id, came
-back `Error 400: redirect_uri_mismatch`. Consistent with Google confining installed-app clients to
-loopback. One browser, one account, opposite answers — that contrast is what makes both conclusive.
+Neither published CLI client will complete a grant against an HTTPS redirect, and the two say so at
+different points, which is worth knowing before you go looking.
+
+**Gemini** refuses immediately: the published gemini-cli client id with an `https://` redirect on an
+unrelated domain is answered `Error 400: redirect_uri_mismatch` before a consent screen is ever
+drawn. Consistent with Google confining installed-app clients to loopback.
+
+**Claude** does not refuse there. The same request against `https://claude.ai/oauth/authorize` with
+the published Claude Code client id renders the consent screen, and a grant carried past it fails on
+the redirect URI regardless. So the authorize endpoint letting a redirect through says nothing about
+whether the flow completes — the useful test is the exchange, not the screen, and a flow that
+collects a user's approval before breaking is worse than one that never offered.
 
 ## Why the origin changes the answer at all
 
