@@ -86,3 +86,46 @@ That is also why the matrix above cannot be extended to a provider that is not l
 reasoning about OAuth in general. A custom provider's browser behavior depends on how its own client
 was registered, and finding out means asking it the same way the two facts above were found: by
 trying a redirect and reading what comes back.
+
+## Asking the SDK instead
+
+The three questions above are what `resolveBrowserFlow` answers, given a provider and an origin:
+
+```ts
+import { resolveBrowserFlow } from '@ai-oauth-sdk/browser'
+
+const resolution = resolveBrowserFlow(client.provider, window.location)
+
+switch (resolution.flow) {
+  case 'popup':
+    return <SignInButton redirectUri={resolution.redirectUri} />
+  case 'device':
+    return <DeviceCodePanel prerequisite={resolution.devicePrerequisite} />
+  case 'paste':
+    return <PastePrompt hint={resolution.hint} />
+}
+```
+
+It is a pure function of the descriptor and the origin, so a custom provider built with
+`defineProvider()` is resolved by the same rule rather than falling off a list. Resolve it before
+rendering: the three flows need genuinely different interfaces, and finding out by calling `login()`
+means finding out by failing.
+
+`devicePrerequisite` is worth rendering wherever it appears. OpenAI's is a setting the user has to
+switch on before a code can be approved at all, so a panel that hides it shows a code that will
+never work.
+
+To act on the answer rather than render it, `autoLogin` resolves the flow and calls the right entry
+point — `login()` for popup and paste, `deviceLogin()` for a device grant — returning a `TokenSet`
+either way:
+
+```ts
+import { autoLogin } from '@ai-oauth-sdk/browser'
+
+const tokens = await autoLogin(client, { onCode: (device) => showCode(device) })
+```
+
+`autoReceiver()` is the receiver-shaped half, for a caller already inside `login()`. It covers popup
+and paste only: the device grant is a different method on the client, and no `CallbackReceiver` can
+turn one into the other, so it refuses a device provider rather than opening a popup onto a page
+with no code on it. In React, `useAuth()` returns the same resolution as `flow`.
