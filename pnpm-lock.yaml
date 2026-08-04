@@ -151,6 +151,9 @@ importers:
 
   packages/react:
     dependencies:
+      '@ai-oauth-sdk/browser':
+        specifier: workspace:^
+        version: link:../browser
       '@ai-oauth-sdk/core':
         specifier: workspace:^
         version: link:../core

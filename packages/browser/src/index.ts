@@ -9,6 +9,12 @@ import {
 import { popupReceiver } from './popup.js'
 import { sessionStorageAdapter } from './storage.js'
 
+export { autoReceiver, currentBrowserOrigin } from './auto.js'
+export type { AutoReceiverOptions } from './auto.js'
+export { resolveBrowserFlow } from './flow.js'
+export type { BrowserFlowResolution, BrowserOrigin, PasteHint } from './flow.js'
+export { autoLogin } from './login.js'
+export type { AutoLoginOptions } from './login.js'
 export { announceCallback, popupReceiver, postCallbackToOpener } from './popup.js'
 export type { PopupReceiverOptions } from './popup.js'
 export { handleRedirectCallback, redirectReceiver, startRedirectLogin } from './redirect.js'

@@ -43,7 +43,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
-    "@ai-oauth-sdk/core": "workspace:^"
+    "@ai-oauth-sdk/core": "workspace:^",
+    "@ai-oauth-sdk/browser": "workspace:^"
   },
   "peerDependencies": {
     "react": ">=17"

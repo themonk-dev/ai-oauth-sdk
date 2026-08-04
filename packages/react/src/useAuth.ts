@@ -10,6 +10,13 @@ import {
   type TokenSet,
 } from '@ai-oauth-sdk/core'
 
+import {
+  currentBrowserOrigin,
+  resolveBrowserFlow,
+  type BrowserFlowResolution,
+  type BrowserOrigin,
+} from '@ai-oauth-sdk/browser'
+
 export interface UseAuthOptions extends AuthClientOptions {
   /** Receiver used by {@link UseAuthResult.login}. */
   receiver?: CallbackReceiver
@@ -17,10 +24,40 @@ export interface UseAuthOptions extends AuthClientOptions {
   restoreOnMount?: boolean
   onSuccess?: (tokens: TokenSet) => void
   onError?: (error: unknown) => void
+  /**
+   * Origin {@link UseAuthResult.flow} resolves against. Defaults to
+   * `window.location`, read only after mount so the server and the first
+   * client render agree (see `flow` below). Pass this when the deploy origin
+   * is already known ahead of time — it makes `flow` available on the very
+   * first render, server included — or to pin an origin in a test without
+   * mocking `window.location`.
+   */
+  origin?: BrowserOrigin
 }
 
 export interface UseAuthResult extends AuthState {
   client: AuthClient
+  /**
+   * The browser sign-in flow `resolveBrowserFlow` (from `@ai-oauth-sdk/browser`)
+   * picks for this provider on this origin — `popup`, `device`, or `paste`.
+   * `undefined` on the server and for one render after mount on the client,
+   * since there is no origin to resolve against before `window` exists (or
+   * before `options.origin` is read).
+   *
+   * This is the *automatic* choice — what `autoReceiver()`/`autoLogin()` from
+   * `@ai-oauth-sdk/browser` would run. `login()` below never consults it: it
+   * always calls the `receiver` given to this hook, or to `login()` itself.
+   * Supplying a custom `receiver` does not change `flow` — `resolveBrowserFlow`
+   * only looks at the provider and the origin, not at what a receiver does —
+   * so treat `flow` as guidance for which UI to render before `login()` runs
+   * (a popup button, a device-code panel, a paste form), not as a description
+   * of what a custom receiver will actually do.
+   *
+   * A `flow` of `'device'` cannot be driven by `login()` — see the comment
+   * above it. Call `client.deviceLogin()` directly, or `autoLogin()` for the
+   * full dispatch.
+   */
+  flow: BrowserFlowResolution | undefined
   login: (overrides?: { receiver?: CallbackReceiver; scopes?: string[] }) => Promise<TokenSet | undefined>
   logout: (options?: { revoke?: boolean }) => Promise<void>
   refresh: () => Promise<TokenSet | undefined>
@@ -44,7 +81,7 @@ export interface UseAuthResult extends AuthState {
  * state after a remount.
  */
 export function useAuth(options: UseAuthOptions): UseAuthResult {
-  const { receiver, restoreOnMount = true, onSuccess, onError, ...clientOptions } = options
+  const { receiver, restoreOnMount = true, onSuccess, onError, origin, ...clientOptions } = options
 
   const clientKey = JSON.stringify({
     provider:
@@ -85,6 +122,24 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
     }
   }, [store, restoreOnMount])
 
+  // `window.location` only stands in for `origin` once mounted — reading it
+  // during render would give the server and the first client render
+  // different output for the same markup, which React reports as a
+  // hydration mismatch. An explicit `origin` carries none of that risk (it
+  // is the same plain value on both sides), so it resolves synchronously
+  // below instead of waiting for this effect.
+  const [autoFlow, setAutoFlow] = useState<BrowserFlowResolution | undefined>(undefined)
+
+  useEffect(() => {
+    if (origin || typeof window === 'undefined') {
+      return
+    }
+
+    setAutoFlow(resolveBrowserFlow(store.client.provider, currentBrowserOrigin()))
+  }, [store, origin])
+
+  const flow = origin ? resolveBrowserFlow(store.client.provider, origin) : autoFlow
+
   const login = useCallback(
     (overrides?: { receiver?: CallbackReceiver; scopes?: string[] }) =>
       store.login({ ...(latest.current.receiver ? { receiver: latest.current.receiver } : {}), ...overrides }),
@@ -95,5 +150,5 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
   const getAccessToken = useCallback(() => store.getAccessToken(), [store])
   const cancel = useCallback(() => store.cancel(), [store])
 
-  return { ...state, client: store.client, login, logout, refresh, getAccessToken, cancel }
+  return { ...state, client: store.client, flow, login, logout, refresh, getAccessToken, cancel }
 }
