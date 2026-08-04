@@ -1,5 +1,15 @@
 # @ai-oauth-sdk/react
 
+## 1.1.0
+
+### Patch Changes
+
+- Updated dependencies [a13a33d]
+- Updated dependencies [a13a33d]
+- Updated dependencies [7c6d33b]
+  - @ai-oauth-sdk/browser@1.1.0
+  - @ai-oauth-sdk/core@1.1.0
+
 ## 1.0.2
 
 ### Patch Changes
