@@ -70,6 +70,13 @@ import { localStorageAdapter, sessionStorageAdapter } from '@ai-oauth-sdk/browse
 `sessionStorage` is the default in `createBrowserAuthClient`. It survives the redirect round-trip
 but not the tab, which is the safer choice for a bearer token in a page.
 
+Both adapters fall back to memory where the browser throws on access — Safari private mode,
+sandboxed iframes — and in a Web Worker, which has no web storage but is still one user's browser.
+Where there is no browser at all, which in practice means server-side rendering, constructing one
+stays harmless but reading or writing through it rejects: an in-memory store on a server is a single
+`Map` shared by every request it serves. Ask for `memoryStorage()` explicitly if that is genuinely
+what you want there.
+
 ### React Native
 
 ```ts

@@ -14,13 +14,18 @@ npm i @ai-oauth-sdk/browser
 Keeps your page alive. No navigation, no state to rehydrate.
 
 ```ts
-import { loginWithPopup, postCallbackToOpener } from '@ai-oauth-sdk/browser'
+import { announceCallback, loginWithPopup, postCallbackToOpener } from '@ai-oauth-sdk/browser'
 
 // On your page (must run from a user gesture, or the popup is blocked):
 const tokens = await loginWithPopup('openai', { clientId, redirectUri })
 
-// On your redirect page:
-postCallbackToOpener()
+// On your redirect page. No opener means either nothing opened this page, or
+// the authorization page severed the link — claude.ai does, and the popup is
+// still there waiting. announceCallback() broadcasts on your origin instead,
+// and resolves true once that popup acknowledges.
+if (!postCallbackToOpener()) {
+  await announceCallback()
+}
 ```
 
 ## Full-page redirect
@@ -43,12 +48,14 @@ the tab. Swap in `localStorageAdapter()` if you want the session to outlive the 
 
 ## Exports
 
-`popupReceiver`, `postCallbackToOpener`, `redirectReceiver`, `startRedirectLogin`,
-`handleRedirectCallback`, `createBrowserAuthClient`, `loginWithPopup`, `sessionStorageAdapter` and
-`localStorageAdapter`, plus everything from [`@ai-oauth-sdk/core`](../core).
+`popupReceiver`, `postCallbackToOpener`, `announceCallback`, `redirectReceiver`,
+`startRedirectLogin`, `handleRedirectCallback`, `createBrowserAuthClient`, `loginWithPopup`,
+`sessionStorageAdapter` and `localStorageAdapter`, plus everything from
+[`@ai-oauth-sdk/core`](../core).
 
 Storage adapters degrade to in-memory when the browser throws on access (Safari
-private mode, cross-origin iframes) rather than breaking sign-in.
+private mode, cross-origin iframes) rather than breaking sign-in. On a server they
+refuse instead, because an in-memory store there is one `Map` shared by every request.
 
 ## License
 

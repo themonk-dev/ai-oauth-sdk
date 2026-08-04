@@ -25,7 +25,18 @@ export const openrouter = defineProvider({
   tokenUrl: 'https://openrouter.ai/api/v1/auth/keys',
   apiBaseUrl: 'https://openrouter.ai/api/v1',
   scopes: [],
-  redirect: { mode: 'loopback', loopbackPort: 0, loopbackPath: '/callback' },
+  redirect: {
+    mode: 'loopback',
+    loopbackPort: 0,
+    loopbackPath: '/callback',
+    /**
+     * Established by the flow itself, not a live probe: the key endpoint takes
+     * the callback as a `callback_url` parameter (see `buildAuthParams` below)
+     * and accepts any URL there, since the app is identified by that URL alone
+     * rather than by a registered client id.
+     */
+    acceptsHttpsRedirect: true,
+  },
   echoesState: false,
   /**
    * The key endpoint wants the PKCE *method* echoed back on the exchange, not

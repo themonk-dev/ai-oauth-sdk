@@ -9,7 +9,7 @@ import {
 import { popupReceiver } from './popup.js'
 import { sessionStorageAdapter } from './storage.js'
 
-export { popupReceiver, postCallbackToOpener } from './popup.js'
+export { announceCallback, popupReceiver, postCallbackToOpener } from './popup.js'
 export type { PopupReceiverOptions } from './popup.js'
 export { handleRedirectCallback, redirectReceiver, startRedirectLogin } from './redirect.js'
 export type { HandleRedirectCallbackOptions, RedirectReceiverOptions } from './redirect.js'

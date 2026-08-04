@@ -46,6 +46,15 @@ the callback URL carries the authorization code in its query string.
 **Popup callbacks are origin-checked** before being trusted, and `postCallbackToOpener` posts to its
 own origin rather than to `*`.
 
+**`announceCallback` broadcasts on your own origin, to everything listening on it.** A
+`BroadcastChannel` cannot be opened from another origin, so the code does not leave yours — but it
+does not reach one window the way `postMessage` does. Every same-origin context is in the audience,
+your other tabs and your own iframes included. `popupReceiver` compares `state` and ignores a
+callback minted for a different attempt, and the client compares it again before exchanging, so a
+callback taken by the wrong tab fails rather than completing. Use it on redirect pages that need it
+— an authorization page that severs `window.opener` leaves no alternative — and prefer
+`postCallbackToOpener` wherever the opener survived.
+
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis, but that body is not ours and a misconfigured
 gateway echoing the request back would put a live refresh token straight into your logs. Snippets

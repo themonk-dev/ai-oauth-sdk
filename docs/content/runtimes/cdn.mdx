@@ -38,14 +38,20 @@ no bundler, no module loader.
 </script>
 ```
 
-And at `/auth/callback.html`, one line:
+And at `/auth/callback.html`, both halves of the handshake:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/ai-oauth-sdk/dist/ai-oauth-sdk.global.js"></script>
 <script>
-  AIOAuth.postCallbackToOpener()
+  if (!AIOAuth.postCallbackToOpener()) {
+    AIOAuth.announceCallback()
+  }
 </script>
 ```
+
+`postCallbackToOpener()` returns `false` when this page has no opener to post to, which is what an
+authorization page that severed the link leaves behind — `claude.ai` does. `announceCallback()`
+broadcasts across your origin instead, where the popup is still waiting.
 
 ## Redirect
 

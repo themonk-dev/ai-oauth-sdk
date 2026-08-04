@@ -1,0 +1,7 @@
+{
+  // The entry points are re-export files with nothing to test but what they
+  // re-export, so the tests import them the way a consumer would and check the
+  // names are there. Same program as src/, plus test/.
+  "extends": "./tsconfig.json",
+  "include": ["src", "test"]
+}
