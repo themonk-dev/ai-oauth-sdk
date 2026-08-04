@@ -42,6 +42,14 @@ component may be long gone.
 Cancelling a login resolves to `undefined` rather than surfacing an error. A closed popup is a user
 action, not a fault.
 
+`useAuth` also returns `flow` — which browser sign-in flow (`popup`, `device`, or `paste`) the
+provider actually gets on the current origin, resolved via `resolveBrowserFlow` from
+`@ai-oauth-sdk/browser`. Read it before calling `login()` to decide what to render: a popup button,
+a device-code panel, or a paste-back form. It reports the *automatic* choice regardless of whether
+you supplied your own `receiver` — see the JSDoc on `UseAuthResult.flow` for what that means for
+you. It is `undefined` on the server and for one render after mount, since there is no origin to
+resolve against until then; pass `origin` to resolve it synchronously instead.
+
 Works with React 17+. `react` is a peer dependency.
 
 ## License
