@@ -42,18 +42,33 @@ and the receiver ignores messages from anywhere else.
 A closed popup is the only signal the browser gives that the user gave up, so the receiver polls
 for it every 400ms by default and rejects when it disappears.
 
-**Unless the authorization page severs the opener.** `claude.ai` sends an enforced
-`Cross-Origin-Opener-Policy: same-origin`, which moves the popup into its own browsing-context
-group: `window.opener` inside it is `null` for good, even after it comes back to your origin, and
-your handle to it reports `closed === true` while it is still on screen. `postCallbackToOpener()`
-returns `false` there, and the poll would fail the sign-in a second after the popup opened, so it is
-skipped for any provider whose descriptor declares `authPage.seversOpener`.
+## The COOP hazard
 
-`announceCallback()` is what completes the login instead. It broadcasts the callback across your
-origin — never touching the opener — and resolves `true` once the waiting receiver acknowledges,
-`false` when the timeout passes with nothing listening. That is also the only way the redirect page
-can tell a severed popup from a page someone opened by hand, which is why it is worth calling even
-though the popup is the usual answer.
+Some providers serve their authorization page with `Cross-Origin-Opener-Policy: same-origin`,
+enforced rather than the `-report-only` variant. `claude.ai` sends the enforced header;
+`accounts.google.com` sends only `-report-only`, which severs nothing. The moment the popup
+navigates to an enforcing origin, the browser moves it into its own browsing-context group.
+`window.opener` inside the popup becomes `null` permanently, including after it returns to your own
+origin on the redirect. The part that actually bites: the *opener's* handle on the window now reports
+`closed === true` for a window that is still on screen.
+
+<Callout type="warn" title="A receiver that polls closed reports a working sign-in as cancelled">
+  Against a COOP-enforcing provider that poll fails a perfectly good sign-in about a second after
+  the popup opens, and the failure looks identical to the user having closed the window themselves.
+</Callout>
+
+The obvious workarounds do not exist. The popup's `location` is cross-origin and unreadable for as
+long as it sits on the provider's page, and `postMessage` addressed through `opener` is the very
+channel COOP severed — reaching for either just spends time discovering that COOP already closed it.
+What survives is anything that does not depend on the opener relationship at all: a
+`BroadcastChannel`, posted from your redirect page once it lands there. That page is same-origin
+with the opener by construction, so the channel works whether or not `window.opener` still resolves.
+
+`popupReceiver` skips the poll for any provider whose descriptor declares `authPage.seversOpener`,
+and `announceCallback()` completes the login in the opener's place. It broadcasts the callback
+across your origin and resolves `true` once the waiting receiver acknowledges, `false` when the
+timeout passes with nothing listening — which is also the only way the redirect page can tell a
+severed popup from a page someone opened by hand.
 
 The trade is that nothing detects a user closing that popup. Give `login()` a `timeoutMs` for such a
 provider, or the promise waits as long as the page does.

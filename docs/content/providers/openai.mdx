@@ -28,6 +28,17 @@ OpenAI registered `http://localhost:1455/auth/callback` and matches it exactly, 
 port will not work. If something else on the machine holds 1455, the login fails at bind time
 rather than silently.
 
+## In a browser
+
+A browser page cannot bind port `1455`, and there is no evidence the registered client accepts
+anything else — no arbitrary HTTPS redirect, and no other loopback port. The device flow below is
+therefore the only option for a browser app, on any origin. `devicePrerequisite` is a real
+precondition here, not a formality: "Enable device code authorization for Codex" has to be turned on
+in [**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security) before the flow is
+attempted, or the verification page refuses the code and the poll runs until it expires waiting for
+an approval that can never arrive. See [browser selection](/docs/flows/browser-selection) for how
+this compares across the other built-ins.
+
 ## Three extra authorization parameters
 
 The descriptor sends `id_token_add_organizations=true` and `codex_cli_simplified_flow=true`. The

@@ -19,6 +19,8 @@ const client = createNodeAuthClient({
 | Token | `https://platform.claude.com/v1/oauth/token` |
 | Redirect | loopback, any port, path `/callback` |
 | Hosted callback | `https://platform.claude.com/oauth/code/callback` |
+| Browser redirect | also accepts an arbitrary HTTPS redirect — verified live, undocumented |
+| Popup opener | severed by an enforced `Cross-Origin-Opener-Policy: same-origin` |
 | Scopes | `user:inference`, `user:profile`, `user:sessions:claude_code` |
 | API base | `https://api.anthropic.com/v1` |
 
@@ -94,3 +96,18 @@ A hand-rolled `headers` object will not carry the beta flag, and the request wil
 
 Claude does not offer one. On a machine with no browser at all, the hosted callback page plus
 paste is the path, and it works because the user can open that URL on any device.
+
+## In a browser
+
+The descriptor's shape — `mode: 'loopback'` plus a hosted paste fallback — understates what the
+registered client actually accepts. `https://claude.ai/oauth/authorize` opened in a signed-in
+browser, with the published Claude Code client id and `redirect_uri=https://chat.themonk.dev/callback`,
+rendered the consent screen rather than a `redirect_uri_mismatch`. That means a browser app deployed
+to an HTTPS origin still gets a popup rather than falling back to paste, which is not true of every
+built-in — see [browser selection](/docs/flows/browser-selection) for the full comparison.
+
+The popup itself carries a separate hazard. `claude.ai` serves its authorization page with an
+enforced `Cross-Origin-Opener-Policy: same-origin`, which detaches the popup from its opener the
+moment it navigates there. A receiver that polls the popup's `closed` property to detect
+cancellation — the default in this library — reports a working sign-in as cancelled about a second
+after the popup opens. See [the COOP hazard](/docs/flows/popup-and-redirect#the-coop-hazard).

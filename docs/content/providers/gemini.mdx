@@ -21,6 +21,7 @@ const client = createNodeAuthClient({
 | Revocation | `https://oauth2.googleapis.com/revoke` |
 | Userinfo | `https://openidconnect.googleapis.com/v1/userinfo` |
 | Redirect | loopback, any port, path `/oauth2callback` |
+| Browser redirect | rejected — verified live, confined to loopback |
 | API base | `https://cloudcode-pa.googleapis.com` |
 
 ## Why there is a secret
@@ -67,6 +68,20 @@ not.
 
 On a headless machine, use manual paste with a redirect URI you control, or register your own
 limited-input client and describe it with `defineProvider`.
+
+## In a browser
+
+The published gemini-cli client is confined to loopback. The same experiment that found Claude's
+client permissive — `https://accounts.google.com/o/oauth2/v2/auth` opened in a signed-in browser,
+with the published gemini-cli client id and an HTTPS `redirect_uri` — came back `Error 400:
+redirect_uri_mismatch`, minutes after the identical attempt against Claude succeeded from the same
+browser and account. Consistent with Google confining installed-app (Desktop) clients to loopback
+redirects only.
+
+That means a browser app deployed to an HTTPS origin cannot get a popup here, even though the
+identical code gets one when served from `http://localhost:PORT`. There is also no device flow to
+fall back to, so a deployed app's only option is manual paste with a redirect URI you control. See
+[browser selection](/docs/flows/browser-selection) for how that compares across the other built-ins.
 
 ## Revocation
 
