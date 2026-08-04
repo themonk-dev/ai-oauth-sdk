@@ -4,6 +4,41 @@
 
 :root {
   --fd-layout-width: 1600px;
+
+  /**
+   * The landing page's content column, and the one number that decides it.
+   *
+   * Every band on that page draws its rules on this column, and the header
+   * above them has to meet those rules at the same two x positions or the
+   * whole ruled-column look falls apart. The header is not ours to lay out —
+   * fumadocs' home layout sizes it with `*:max-w-(--fd-layout-width)` — so
+   * the only way the two can agree is for one value to feed both.
+   *
+   * They did not agree before this existed: `1100px` was written into the
+   * band component and `--fd-layout-width` was left at its docs-wide
+   * `1600px`, which look identical below 1100px of viewport and visibly
+   * disagree above it.
+   */
+  --lp-column: 1100px;
+}
+
+/**
+ * Narrow the header to the landing column, on the landing page alone.
+ *
+ * It has to be this selector, and the reason is worth writing down because
+ * the obvious one silently does nothing. `HomeLayout` sets
+ * `[--fd-layout-width:1400px]` on its own `<main>`, and the header it renders
+ * is *inside* that element — so the variable is already redefined below
+ * `:root` by the time the header reads it, and overriding it at `:root` (or
+ * on the page's own wrapper, which is the header's sibling) changes nothing
+ * at all. Matching the same `<main>` is what puts this in the cascade where
+ * it can win, and `main:has(…)` outranks the utility class that set it.
+ *
+ * The docs pages keep the wider layout: there is no ruled column there for
+ * the header to line up with.
+ */
+main:has([data-landing]) {
+  --fd-layout-width: var(--lp-column);
 }
 
 /* Geist Mono is already fetched in the document head; this is what binds it. */

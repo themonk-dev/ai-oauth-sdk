@@ -1,0 +1,141 @@
+---
+title: Browser selection
+description: Which flow a browser page actually gets for a given provider, and why the same provider can answer differently depending on where the page is served from.
+icon: RiRouterLine
+---
+
+Every other page in this section describes a mechanism: loopback, popup, device code, paste. None of
+them says which one a given provider will hand you on a given origin. Today that gets discovered by
+trying, and the two facts below each cost a live probe to pin down.
+
+## The question, in order
+
+Ask these three, in this order, and stop at the first yes.
+
+**1. Can this origin produce a redirect URI the provider's registered client accepts?** If so, the
+answer is [popup](/docs/flows/popup-and-redirect), with that URI.
+
+- The origin is loopback and the provider's redirect spec is `loopbackPort: 0` — "any free port" —
+  or it names a fixed port and host that the origin happens to match.
+- The origin is HTTPS (or anything non-loopback) and the provider's registered client accepts an
+  arbitrary HTTPS redirect rather than confining itself to loopback.
+
+**2. Does the provider support a device flow?** If so, the answer is
+[device code](/docs/flows/device-code), regardless of what the origin is. A device flow needs
+nothing redirected anywhere, so the origin question never even applies. Check both
+`deviceAuthorizationUrl` and `deviceFlow` — OpenAI has only the latter, because its device flow
+predates and does not follow RFC 8628.
+
+**3. Otherwise, [paste](/docs/flows/manual-paste).** What the reader copies depends on what the
+redirect would have done: a provider with a hosted callback page (`redirect.hostedUri`) shows a code
+on its own page, and that is what gets copied. A provider with only a loopback redirect sends the
+browser to a `localhost` URL that fails to load, and the code exists nowhere but that dead address
+bar — which is why the tab must not be closed before it is copied out.
+
+## The matrix
+
+For the seven built-in providers, on a page served from a loopback origin
+(`http://localhost:PORT`) versus one served over HTTPS:
+
+| Provider | Loopback redirect | HTTPS redirect | Device flow | Loopback origin | HTTPS origin |
+| --- | --- | --- | --- | --- | --- |
+| `openrouter` | any port | accepted (no fixed client to reject it) | no | popup | popup |
+| `claude` | any port | refused in practice | no | popup | paste |
+| `gemini` | any port | rejected — verified live | no | popup | paste |
+| `openai` | port `1455` fixed | untested, moot | yes, not RFC 8628 | device¹ | device |
+| `xai` | port `56121`, host `127.0.0.1` | untested, moot | yes | device¹ | device |
+| `github-copilot` | none registered | not applicable | yes | device | device |
+| `qwen` | none registered | not applicable | yes | device | device |
+
+¹ On *most* loopback origins. A fixed loopback port is still a registered redirect when the page
+happens to be served from exactly it — `http://localhost:1455` for `openai`, `http://127.0.0.1:56121`
+for `xai` — and question 1 then answers `popup` before the device flow is ever considered. The rule
+handles that without a special case, which is why it is stated as "a URI the client accepts" rather
+than "any loopback origin".
+
+"Untested, moot" means the provider supports a device flow, so question 2 answers it before question
+1's HTTPS case is ever reached — whether the client would also accept an arbitrary HTTPS redirect was
+never worth finding out. `github-copilot` and `qwen` have no redirect-based flow registered at all;
+question 1 has nothing to evaluate for either origin.
+
+Neither published CLI client will complete a grant against an HTTPS redirect, and the two say so at
+different points, which is worth knowing before you go looking.
+
+**Gemini** refuses immediately: the published gemini-cli client id with an `https://` redirect on an
+unrelated domain is answered `Error 400: redirect_uri_mismatch` before a consent screen is ever
+drawn. Consistent with Google confining installed-app clients to loopback.
+
+**Claude** does not refuse there. The same request against `https://claude.ai/oauth/authorize` with
+the published Claude Code client id renders the consent screen, and a grant carried past it fails on
+the redirect URI regardless. So the authorize endpoint letting a redirect through says nothing about
+whether the flow completes — the useful test is the exchange, not the screen, and a flow that
+collects a user's approval before breaking is worse than one that never offered.
+
+## Why the origin changes the answer at all
+
+RFC 8252 says an authorization server should ignore the port when matching a registered loopback
+redirect URI, precisely so a native app can bind an ephemeral one. A page served from
+`http://localhost:PORT` *is* such a URI for a client registered with `loopbackPort: 0` — the popup's
+redirect target is a page the app itself already controls, on the app's own origin, and
+`postMessage` back to the opener works the same way it does for a desktop CLI's loopback server.
+
+Deploy that same app to `https://your-app.example`, and the loopback match is gone. Whether the
+popup still works now depends entirely on whether the provider's registered client also accepts an
+arbitrary HTTPS redirect — a second, independent grant that has nothing to do with loopback and that
+most providers never had a reason to document, because their own CLI never asks for it.
+
+## A property of the client, not of OAuth
+
+Nothing above is a limitation of the protocol or of this library. It is a fact about what each
+provider's specific registered client was configured to accept when it was created. A CLI client
+registered for loopback redirects rejects an HTTPS one no matter which library sends the request —
+the descriptor's `mode: 'loopback'` plus an optional `hostedUri` fallback is what this SDK ships for
+each provider.
+
+That is also why the matrix above cannot be extended to a provider that is not listed here just by
+reasoning about OAuth in general. A custom provider's browser behavior depends on how its own client
+was registered, and finding out means asking it the same way the two facts above were found: by
+trying a redirect and reading what comes back.
+
+## Asking the SDK instead
+
+The three questions above are what `resolveBrowserFlow` answers, given a provider and an origin:
+
+```ts
+import { resolveBrowserFlow } from '@ai-oauth-sdk/browser'
+
+const resolution = resolveBrowserFlow(client.provider, window.location)
+
+switch (resolution.flow) {
+  case 'popup':
+    return <SignInButton redirectUri={resolution.redirectUri} />
+  case 'device':
+    return <DeviceCodePanel prerequisite={resolution.devicePrerequisite} />
+  case 'paste':
+    return <PastePrompt hint={resolution.hint} />
+}
+```
+
+It is a pure function of the descriptor and the origin, so a custom provider built with
+`defineProvider()` is resolved by the same rule rather than falling off a list. Resolve it before
+rendering: the three flows need genuinely different interfaces, and finding out by calling `login()`
+means finding out by failing.
+
+`devicePrerequisite` is worth rendering wherever it appears. OpenAI's is a setting the user has to
+switch on before a code can be approved at all, so a panel that hides it shows a code that will
+never work.
+
+To act on the answer rather than render it, `autoLogin` resolves the flow and calls the right entry
+point — `login()` for popup and paste, `deviceLogin()` for a device grant — returning a `TokenSet`
+either way:
+
+```ts
+import { autoLogin } from '@ai-oauth-sdk/browser'
+
+const tokens = await autoLogin(client, { onCode: (device) => showCode(device) })
+```
+
+`autoReceiver()` is the receiver-shaped half, for a caller already inside `login()`. It covers popup
+and paste only: the device grant is a different method on the client, and no `CallbackReceiver` can
+turn one into the other, so it refuses a device provider rather than opening a popup onto a page
+with no code on it. In React, `useAuth()` returns the same resolution as `flow`.

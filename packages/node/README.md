@@ -10,9 +10,9 @@ npm i @ai-oauth-sdk/node
 ```
 
 ```ts
-import { login } from '@ai-oauth-sdk/node'
+import { login, publicClientIds } from '@ai-oauth-sdk/node'
 
-const tokens = await login('openai')
+const tokens = await login('openai', { clientId: publicClientIds.openai })
 ```
 
 That single call mints a PKCE pair, binds a local HTTP server, opens the browser,
@@ -27,7 +27,8 @@ catches the redirect, exchanges the code, and writes the tokens to
 | `createNodeAuthClient(options)` | A client preconfigured with file storage. Use `getAccessToken()` for transparent refresh. |
 | `loopbackReceiver(options?)` | Binds `127.0.0.1`, serves one callback and a styled success page, then shuts down. Reports port collisions clearly. |
 | `promptReceiver(options?)` | Prints the URL and reads the pasted result from stdin. The right choice over SSH. |
-| `defaultReceiver(provider)` | Picks between the two based on `DISPLAY`, `SSH_TTY` and the provider's redirect mode. |
+| `hybridReceiver(options?)` | Races the loopback server against a paste prompt; whichever completes first wins. Not chosen by `defaultReceiver` — opt in explicitly. |
+| `defaultReceiver(provider)` | Picks between the first two based on `DISPLAY`, `SSH_TTY` and the provider's redirect mode. |
 | `fileStorage(options?)` | Atomic `0600` JSON storage, serialised against concurrent writes. Honours `AI_OAUTH_SDK_HOME`. |
 | `openBrowser(url)`, `canOpenBrowser()` | Dependency-free browser launching. |
 

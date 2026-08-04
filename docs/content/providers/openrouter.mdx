@@ -16,6 +16,7 @@ const client = createNodeAuthClient({ provider: ProviderId.OpenRouter })
 | Authorization | `https://openrouter.ai/auth` |
 | Token | `https://openrouter.ai/api/v1/auth/keys` |
 | Redirect | loopback, any port, path `/callback` |
+| Browser redirect | accepted — any callback URL, since none is registered against a client |
 | Client id | none |
 | API base | `https://openrouter.ai/api/v1` |
 
@@ -30,6 +31,13 @@ const client = createNodeAuthClient({ provider: ProviderId.OpenRouter })
 None of that is special-cased in the flow code. The descriptor supplies `buildAuthParams` to rewrite
 the authorization query and `parseTokenResponse` to normalise the token body, which are the two
 escape hatches every provider has available.
+
+Because `buildAuthParams` sends whatever `callback_url` it is given rather than matching it against
+a registered value, this is the one built-in where a browser app deployed to HTTPS is known to get a
+popup without needing to check live against the provider first — there is no client registration for
+an arbitrary redirect to be rejected by. That is inferred from how the callback is built, not
+something that had to be probed the way Claude's and Gemini's client behavior did. See
+[browser selection](/docs/flows/browser-selection) for the comparison.
 
 ## No state means no CSRF guard
 

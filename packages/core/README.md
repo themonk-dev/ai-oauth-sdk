@@ -13,11 +13,12 @@ npm i @ai-oauth-sdk/core
 ```
 
 ```ts
-import { createAuthClient } from '@ai-oauth-sdk/core'
+import { createAuthClient, publicClientIds } from '@ai-oauth-sdk/core'
 
 const client = createAuthClient({
   provider: 'openai',
-  redirectUri: 'https://yourapp.com/callback',
+  clientId: publicClientIds.openai,
+  redirectUri: 'http://localhost:1455/auth/callback',
 })
 
 const { url, state } = await client.createAuthorization()
@@ -27,8 +28,9 @@ const tokens = await client.completeAuthorization({ code, state })
 
 ## What's in here
 
-**Providers.** Descriptors for `openai`, `claude`, `gemini` and `xai`, plus
-`defineProvider()` and `providerFromDiscovery()` for your own.
+**Providers.** Descriptors for `openai`, `claude`, `gemini`, `xai`,
+`github-copilot`, `openrouter` and `qwen`, plus the `azureAi({ tenant })`
+factory, and `defineProvider()` / `providerFromDiscovery()` for your own.
 
 **PKCE.** `createPkce()`, with a pure-JS SHA-256 fallback for runtimes without
 `crypto.subtle` such as React Native. Secure randomness is required, never faked.

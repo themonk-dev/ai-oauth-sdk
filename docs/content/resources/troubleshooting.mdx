@@ -100,6 +100,15 @@ you are on a version before `0.1.2`, where a caller-set `Authorization` header w
 that header from its own `apiKey` even when `apiKey` is empty. Upgrade, or pass
 `respectCallerAuthorization: false` explicitly.
 
+## My popup sign-in reports the window was closed, but it wasn't
+
+The provider's authorization page sent an enforced `Cross-Origin-Opener-Policy: same-origin` header
+(`claude.ai` does; `accounts.google.com` sends only the `-report-only` variant, which does not
+trigger this). That severs `window.opener` and makes the opener's handle on the popup report
+`closed === true` while the window is still open on screen, which is exactly what the default
+receiver polls to detect a cancelled login. See [the COOP hazard](/docs/flows/popup-and-redirect#the-coop-hazard)
+for why, and why `postMessage` through `opener` cannot be the fix either.
+
 ## Popup blocked
 
 `loginWithPopup` must be called synchronously from a user gesture. An `await` before it yields to

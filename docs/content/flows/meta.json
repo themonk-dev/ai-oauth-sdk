@@ -4,6 +4,7 @@
   "icon": "RiNodeTree",
   "pages": [
     "index",
+    "browser-selection",
     "loopback",
     "popup-and-redirect",
     "device-code",

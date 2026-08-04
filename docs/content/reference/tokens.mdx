@@ -104,8 +104,11 @@ on the token set when they are populated.
 
 ## Ending a session
 
-Only `gemini`, `xai` and `azure-ai` declare an RFC 7009 revocation endpoint among the built-ins.
-For every other provider, clearing the local copy is all anyone can do from here.
+Three built-ins declare a `revocationUrl`, and only two of them are RFC 7009 revocation endpoints:
+`gemini` and `xai`. `azure-ai` points at Entra's end-session endpoint, which ends the sign-in session
+rather than revoking the token itself — `revoke()` will call it, but do not read a successful call as
+the token having been withdrawn. For every other provider, clearing the local copy is all anyone can
+do from here.
 [`revoke()` and `logout()`](/docs/reference/auth-client#session) are the methods.
 
 ## Inspecting a JWT

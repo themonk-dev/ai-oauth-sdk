@@ -112,9 +112,28 @@ you want the session to outlive the tab, knowing that any XSS on your origin can
   for public clients with PKCE rather than for anything holding a secret.
 </Callout>
 
+## Which flow you actually get
+
+Popup and full-page redirect both assume the provider will redirect back to your origin at all.
+Whether it will depends on the provider's registered client and on whether your page is served from
+a loopback origin or a deployed HTTPS one — the same provider can answer differently between the
+two. `openrouter`'s registered client accepts an arbitrary HTTPS redirect, so a
+deployed app still gets a popup. `claude`'s and `gemini`'s do not, so a deployed app falls back to
+manual paste even though the identical code works as a popup from `localhost`. `openai`, `xai`, `github-copilot`
+and `qwen` resolve to the device flow regardless of origin, since none of them offers a redirect this
+library can construct for a browser page. See [browser selection](/docs/flows/browser-selection) for
+the full matrix and why the origin matters.
+
 ## CORS
 
 The token exchange is a request from your page to the provider's token endpoint. Providers that
 were designed for desktop CLIs do not always send permissive CORS headers, and no client library
 can add them. If the exchange fails with a CORS error, run that half on your own server and use the
 [callback route recipe](/docs/recipes/server-callback) instead.
+
+<Callout type="warn" title="A CORS failure looks like a TypeError with no status">
+  The browser refuses to let your page read the response at all, so `fetch` rejects with a bare
+  `TypeError` and no status code — there is nothing to inspect. If you get a real status code back,
+  even a 4xx or 5xx, the request reached the provider and CORS is not the problem; look at the body
+  instead.
+</Callout>

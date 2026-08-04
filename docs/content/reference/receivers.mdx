@@ -44,7 +44,9 @@ Claude's `code#state` all work.
 ## From @ai-oauth-sdk/node
 
 Three receivers, covering the desktop case, the headless case, and the case where you cannot tell
-which you are in. `defaultReceiver()` picks between them for you.
+which you are in. `defaultReceiver()` picks between the first two for you — `hybridReceiver` is
+opt-in, since choosing it is a decision about your own environment that a heuristic should not make
+on your behalf.
 
 ### loopbackReceiver(options)
 

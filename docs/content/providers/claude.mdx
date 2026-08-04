@@ -19,6 +19,8 @@ const client = createNodeAuthClient({
 | Token | `https://platform.claude.com/v1/oauth/token` |
 | Redirect | loopback, any port, path `/callback` |
 | Hosted callback | `https://platform.claude.com/oauth/code/callback` |
+| Browser redirect | loopback only; an HTTPS redirect reaches consent but fails the exchange |
+| Popup opener | severed by an enforced `Cross-Origin-Opener-Policy: same-origin` |
 | Scopes | `user:inference`, `user:profile`, `user:sessions:claude_code` |
 | API base | `https://api.anthropic.com/v1` |
 
@@ -94,3 +96,23 @@ A hand-rolled `headers` object will not carry the beta flag, and the request wil
 
 Claude does not offer one. On a machine with no browser at all, the hosted callback page plus
 paste is the path, and it works because the user can open that URL on any device.
+
+## In a browser
+
+A page served from `http://localhost:PORT` is itself a registered redirect for this client, since it
+declares `loopbackPort: 0` and RFC 8252 has the port ignored when matching. So a browser app gets a
+popup in local development and falls back to pasting once deployed — see
+[browser selection](/docs/flows/browser-selection) for the full comparison.
+
+An HTTPS redirect is worth a warning, because it fails late rather than early. Unlike Google, which
+answers `redirect_uri_mismatch` before drawing anything, `https://claude.ai/oauth/authorize` renders
+the consent screen for an `https://` redirect on an unrelated domain — and the grant then fails on
+the redirect URI anyway. The authorize endpoint accepting a redirect is not evidence the flow
+completes, so this SDK treats the client as loopback-only and does not offer a popup on an HTTPS
+origin. A consumer with their own client id, registered for their own origin, can say so per call.
+
+The popup itself carries a separate hazard. `claude.ai` serves its authorization page with an
+enforced `Cross-Origin-Opener-Policy: same-origin`, which detaches the popup from its opener the
+moment it navigates there. A receiver that polls the popup's `closed` property to detect
+cancellation — the default in this library — reports a working sign-in as cancelled about a second
+after the popup opens. See [the COOP hazard](/docs/flows/popup-and-redirect#the-coop-hazard).
