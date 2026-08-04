@@ -10,6 +10,7 @@ import {
   defineProvider,
   gemini,
   openai,
+  openrouter,
   parseStandardCallback,
   ProviderId,
   providers,
@@ -95,6 +96,36 @@ describe('built-in provider descriptors', () => {
     expect(gemini.redirect.loopbackPort).toBe(0)
     // Port 0 means "pick one at bind time", so there is no static default URI.
     expect(defaultRedirectUri(gemini)).toBeUndefined()
+  })
+
+  // These pin facts a browser consumer's flow selection depends on — a
+  // descriptor edit that silently flips one should fail a test, not surface
+  // as a runtime redirect_uri_mismatch or a popup that never resolves.
+  it('records which providers accept an arbitrary HTTPS redirect', () => {
+    // Reaching Anthropic's consent screen with an https redirect_uri does not
+    // mean the grant completes — carried to the end it fails on the redirect
+    // URI, so from a browser this client behaves like one that refuses.
+    expect(claude.redirect.acceptsHttpsRedirect).toBe(false)
+    // Verified live: the published gemini-cli client id was refused with
+    // redirect_uri_mismatch for the same https redirect_uri.
+    expect(gemini.redirect.acceptsHttpsRedirect).toBe(false)
+    // Established by the flow itself: the key endpoint accepts any
+    // callback_url, since it identifies the app by that URL alone.
+    expect(openrouter.redirect.acceptsHttpsRedirect).toBe(true)
+    // Never established for these — the browser story is the device flow, and
+    // guessing here would be worse than leaving it absent.
+    expect(openai.redirect.acceptsHttpsRedirect).toBeUndefined()
+    expect(xai.redirect.acceptsHttpsRedirect).toBeUndefined()
+  })
+
+  it("records that Claude's authorization page severs the popup opener", () => {
+    // claude.ai enforces Cross-Origin-Opener-Policy: same-origin, which moves
+    // a popup into its own browsing-context group — window.opener and
+    // window.closed both become unreliable for the rest of that popup's life.
+    expect(claude.authPage?.seversOpener).toBe(true)
+    // Not established for these — nothing probed their COOP header.
+    expect(gemini.authPage?.seversOpener).toBeUndefined()
+    expect(openrouter.authPage?.seversOpener).toBeUndefined()
   })
 
   it('marks xAI experimental and withholds a client id', () => {

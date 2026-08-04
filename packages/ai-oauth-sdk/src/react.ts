@@ -1,5 +1,6 @@
 export * from '@ai-oauth-sdk/react'
 export {
+  announceCallback,
   handleRedirectCallback,
   localStorageAdapter,
   loginWithPopup,

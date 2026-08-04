@@ -94,16 +94,38 @@ off against each other rather than one being better; see
 
 | Option | Type | Description |
 | --- | --- | --- |
-| `redirectUri` | `string` | A page on your origin that calls postCallbackToOpener(). Defaults to `the current URL without its fragment`. |
+| `redirectUri` | `string` | A page on your origin that runs postCallbackToOpener() and announceCallback(). Defaults to `the current URL without its fragment`. |
 | `width` | `number` |  |
 | `height` | `number` |  |
 | `windowName` | `string` |  |
-| `pollIntervalMs` | `number` | Defaults to `400`. |
+| `pollIntervalMs` | `number` | Defaults to `400`. Not used for a provider whose authorization page severs the opener, where the handle reports a window still on screen as closed. |
 
 ### postCallbackToOpener(payload?)
 
-Call this on your redirect page. Returns `true` when it found a callback to post. Defaults to
-reading `window.location.search`.
+Call this on your redirect page. Returns `true` when it posted to an opener and closed the window,
+`false` when there was no opener to post to. Defaults to reading `window.location.search`.
+
+### announceCallback(payload?, timeoutMs?)
+
+The other half, for when `postCallbackToOpener()` returns `false`:
+
+```html
+<script type="module">
+  import { postCallbackToOpener, announceCallback } from 'https://esm.sh/@ai-oauth-sdk/browser'
+  if (!postCallbackToOpener()) {
+    await announceCallback()
+  }
+</script>
+```
+
+Broadcasts the callback across your origin on a `BroadcastChannel`, which does not go through the
+opener and so survives an authorization page that severed it (`claude.ai` does). Resolves `true`
+once a waiting `popupReceiver` acknowledges, and closes this window; `false` after `timeoutMs`
+(default 1500) with nothing acknowledging, which usually means nobody was waiting.
+
+A broadcast reaches every context on your origin, so `popupReceiver` compares `state` and ignores a
+callback minted for a different attempt. A provider that does not echo `state` leaves nothing to
+compare.
 
 ### redirectReceiver(options)
 

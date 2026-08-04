@@ -21,36 +21,50 @@ two ways to arrange that, and they trade off against each other.
 ## Popup
 
 ```ts
-import { loginWithPopup, postCallbackToOpener, ProviderId } from '@ai-oauth-sdk/browser'
+import { loginWithPopup, ProviderId } from '@ai-oauth-sdk/browser'
 
 button.onclick = () => loginWithPopup(ProviderId.OpenAI, { clientId, redirectUri })
 ```
 
 It must be called from a user gesture, or the browser blocks the window.
 
-Your `redirectUri` points at a page on your own origin whose only job is one line:
+Your `redirectUri` points at a page on your own origin whose only job is to hand the callback back:
 
 ```html
 <!-- /auth/callback.html -->
 <script type="module">
-  import { postCallbackToOpener } from 'https://esm.sh/@ai-oauth-sdk/browser'
-  postCallbackToOpener()
+  import { postCallbackToOpener, announceCallback } from 'https://esm.sh/@ai-oauth-sdk/browser'
+  if (!postCallbackToOpener()) {
+    await announceCallback()
+  }
 </script>
 ```
 
 By the time that page runs, the popup is same-origin with the opener, so it can hand the code back
 over `postMessage`. Messages from any other origin are ignored.
 
+`postCallbackToOpener()` returns `false` when the page has no opener, and cannot tell you which of
+its two causes applies: nobody opened this page, or the authorization page severed the link. Some
+do — `claude.ai` serves an enforced `Cross-Origin-Opener-Policy: same-origin`, which moves the popup
+into its own browsing-context group, and `window.opener` is `null` from then on even after the popup
+returns to your origin. `announceCallback()` broadcasts the callback across your origin instead,
+which never involves the opener, and resolves `true` once the waiting `popupReceiver` acknowledges.
+That acknowledgement is what tells a severed popup from a page someone opened by hand.
+
+Against such a provider, a closed popup leaves no trace either, so `login()` cannot notice a user
+giving up. Pass `timeoutMs` when you sign in with one.
+
 | Option | Type | Description |
 | --- | --- | --- |
-| `redirectUri` | `string` | A page on your origin that calls postCallbackToOpener(). Defaults to `the current URL without its fragment`. |
+| `redirectUri` | `string` | A page on your origin that runs postCallbackToOpener() and announceCallback(). Defaults to `the current URL without its fragment`. |
 | `width` | `number` | Popup width. |
 | `height` | `number` | Popup height. |
 | `windowName` | `string` | Popup window name. |
 | `pollIntervalMs` | `number` | How often to check whether the user closed the popup. Defaults to `400`. |
 
 The popup is polled because a closed window is the only signal the browser gives that the user gave
-up on the flow.
+up on the flow. The poll is skipped for a provider that severs the opener, where the handle reports
+a window still on screen as closed and polling it would fail a working sign-in.
 
 ## Full-page redirect
 

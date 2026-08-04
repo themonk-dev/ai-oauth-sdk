@@ -108,7 +108,13 @@ describe.skipIf(!hasWebStorage)('with web storage available', () => {
 })
 
 describe('without web storage', () => {
-  /** Removes the global entirely, as an embedder or locked-down runtime would. */
+  /**
+   * Removes the global entirely. This is the condition the adapters actually
+   * branch on (`typeof localStorage === 'undefined'`), so it stands in for
+   * both an embedder that never installed the global and, more importantly,
+   * server-side rendering, where the same `typeof` check comes back
+   * `'undefined'` for the same reason: there is no browser here.
+   */
   function hide(name: 'localStorage' | 'sessionStorage') {
     const original = Object.getOwnPropertyDescriptor(globalThis, name)
     Object.defineProperty(globalThis, name, { value: undefined, configurable: true })
@@ -122,44 +128,109 @@ describe('without web storage', () => {
     }
   }
 
-  it('localStorageAdapter still works, backed by memory', async () => {
+  /**
+   * Stands in for a Web Worker scope: no web storage and no `window`, exactly
+   * as on a server, and told apart from one only by `WorkerGlobalScope` — which
+   * is why the adapters look for that rather than for the storage global.
+   */
+  function pretendWorker() {
+    Object.defineProperty(globalThis, 'WorkerGlobalScope', {
+      value: class WorkerGlobalScope {},
+      configurable: true,
+    })
+
+    return () => Reflect.deleteProperty(globalThis, 'WorkerGlobalScope')
+  }
+
+  it('localStorageAdapter does not throw on construction', () => {
+    // Hooks and factories call this directly from a render body
+    // (`useAuth({ storage: localStorageAdapter() })`), and SSR runs that body
+    // too. Merely constructing the adapter must never take down a server
+    // render that never goes on to use it.
+    const restore = hide('localStorage')
+
+    try {
+      expect(() => localStorageAdapter()).not.toThrow()
+    } finally {
+      restore()
+    }
+  })
+
+  it('sessionStorageAdapter does not throw on construction', () => {
+    const restore = hide('sessionStorage')
+
+    try {
+      expect(() => sessionStorageAdapter()).not.toThrow()
+    } finally {
+      restore()
+    }
+  })
+
+  it('localStorageAdapter refuses every operation, naming the shared-store risk', async () => {
     const restore = hide('localStorage')
 
     try {
       const storage = localStorageAdapter()
-      await storage.set('k', 'v')
-      expect(await storage.get('k')).toBe('v')
-      await storage.delete('k')
-      expect(await storage.get('k')).toBeNull()
+
+      await expect(storage.get('k')).rejects.toThrow(/shared/i)
+      await expect(storage.set('k', 'v')).rejects.toThrow(/shared/i)
+      await expect(storage.delete('k')).rejects.toThrow(/shared/i)
+      await expect(storage.keys?.()).rejects.toThrow(/shared/i)
     } finally {
       restore()
     }
   })
 
-  it('sessionStorageAdapter still works, backed by memory', async () => {
+  it('sessionStorageAdapter refuses every operation too', async () => {
     const restore = hide('sessionStorage')
 
     try {
       const storage = sessionStorageAdapter()
-      await storage.set('k', 'v')
-      expect(await storage.get('k')).toBe('v')
+
+      await expect(storage.get('k')).rejects.toThrow(/shared/i)
+      await expect(storage.set('k', 'v')).rejects.toThrow(/shared/i)
+      await expect(storage.delete('k')).rejects.toThrow(/shared/i)
+      await expect(storage.keys?.()).rejects.toThrow(/shared/i)
     } finally {
       restore()
     }
   })
 
-  it('two adapters do not share the memory fallback', async () => {
+  it('refuses with a code, like every other failure the SDK raises', async () => {
+    // A caller branching on `error.code` should not have to string-match this
+    // one refusal out of all of them.
     const restore = hide('localStorage')
 
     try {
-      // Each call gets its own store, so a page holding two clients does not
-      // have one silently overwrite the other's tokens.
-      const first = localStorageAdapter()
-      const second = localStorageAdapter()
-      await first.set('k', 'from-first')
-      expect(await second.get('k')).toBeNull()
+      await expect(localStorageAdapter().get('k')).rejects.toMatchObject({
+        code: 'unsupported_runtime',
+      })
     } finally {
       restore()
+    }
+  })
+
+  it('degrades to memory in a Web Worker, which is one browser and one user', async () => {
+    // A worker reaches the same branch SSR does — no web storage, no window —
+    // but nothing there is shared between users, so refusing would break a
+    // sign-in driven from a worker for nothing.
+    const restoreLocal = hide('localStorage')
+    const restoreSession = hide('sessionStorage')
+    const restoreWorker = pretendWorker()
+
+    try {
+      const local = localStorageAdapter()
+      const session = sessionStorageAdapter()
+
+      await local.set('k', 'local')
+      await session.set('k', 'session')
+
+      expect(await local.get('k')).toBe('local')
+      expect(await session.get('k')).toBe('session')
+    } finally {
+      restoreWorker()
+      restoreSession()
+      restoreLocal()
     }
   })
 })

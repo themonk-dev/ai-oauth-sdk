@@ -45,7 +45,20 @@ export const gemini = defineProvider({
     'https://www.googleapis.com/auth/userinfo.email',
     'https://www.googleapis.com/auth/userinfo.profile',
   ],
-  redirect: { mode: 'loopback', loopbackPort: 0, loopbackPath: '/oauth2callback' },
+  redirect: {
+    mode: 'loopback',
+    loopbackPort: 0,
+    loopbackPath: '/oauth2callback',
+    /**
+     * Verified live: the published gemini-cli client id with
+     * `redirect_uri=https://chat.themonk.dev/callback` came back
+     * `Error 400: redirect_uri_mismatch` — "Access blocked: This app's request
+     * is invalid" — same browser and signed-in account as the equivalent
+     * Claude probe, minutes apart. Consistent with Google confining
+     * installed-app (Desktop) clients to loopback redirects.
+     */
+    acceptsHttpsRedirect: false,
+  },
   /** `access_type: offline` is required for a refresh token to be returned at all. */
   extraAuthParams: {
     access_type: 'offline',

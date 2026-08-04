@@ -67,6 +67,26 @@ export const claude = defineProvider({
     hostedUri: 'https://platform.claude.com/oauth/code/callback',
     loopbackPort: 0,
     loopbackPath: '/callback',
+    /**
+     * The consent screen is not the whole flow, and this field is the record
+     * of learning that the expensive way.
+     *
+     * `https://claude.ai/oauth/authorize`, with the published Claude Code
+     * client id and an `https://` redirect on an unrelated domain, renders the
+     * consent screen in a signed-in browser rather than the
+     * `redirect_uri_mismatch` Google answers the equivalent probe with. That
+     * looks conclusive and is not: it establishes only that the *authorize*
+     * endpoint let the request through. Carrying such a grant to the end fails
+     * on the redirect URI anyway, so the browser flow a reader would get from
+     * a `true` here is one that reaches consent, takes the user's approval,
+     * and then breaks — worse than never offering it.
+     *
+     * `false` is therefore what this client behaves like from a browser, which
+     * is what the field is for. A consumer holding a client id of their own,
+     * registered for their own origin, can say so per call rather than
+     * inheriting a default written for the published CLI client.
+     */
+    acceptsHttpsRedirect: false,
   },
   /**
    * Asks for an authorization code rather than a redirect-fragment token.
@@ -108,4 +128,14 @@ export const claude = defineProvider({
       'anthropic-beta': 'oauth-2025-04-20',
     }
   },
+  /**
+   * `claude.ai` sends `Cross-Origin-Opener-Policy: same-origin`, enforced
+   * rather than report-only. A popup opened to the authorization page is
+   * therefore moved into its own browsing-context group: `window.opener` on
+   * the popup is null from then on, even after it navigates back to the app's
+   * own origin, and the opener's handle to the popup reports `closed === true`
+   * while the popup is still open. A popup-based flow needs another way to
+   * notice completion.
+   */
+  authPage: { seversOpener: true },
 })

@@ -17,9 +17,18 @@
 <script>
   // The provider redirected here with ?code=…&state=…. This page is same-origin
   // with the opener, so it can hand the callback back and close itself.
+  //
+  // No opener means one of two things: nothing opened this page, or the
+  // authorization page severed the link (claude.ai does). announceCallback()
+  // broadcasts on the origin instead and resolves true once the waiting popup
+  // acknowledges — which is what tells the two apart.
   if (!AIOAuth.postCallbackToOpener()) {
-    document.body.textContent =
-      'This page was not opened by a sign-in popup. You can close it.'
+    AIOAuth.announceCallback().then((delivered) => {
+      if (!delivered) {
+        document.body.textContent =
+          'This page was not opened by a sign-in popup. You can close it.'
+      }
+    })
   }
 </script>
 

@@ -88,6 +88,18 @@ export interface RedirectSpec {
   loopbackHost?: string
   /** Fixed redirect URI for `hosted` mode. */
   hostedUri?: string
+  /**
+   * Whether the provider's *registered client* accepts an arbitrary HTTPS
+   * redirect URI, as opposed to confining it to loopback or a provider-hosted
+   * callback page.
+   *
+   * This is a fact about what the client id is permitted to redirect to, not
+   * about what OAuth 2.0 itself allows — the protocol has no opinion here, and
+   * a provider that publishes a "Desktop app" or CLI client is free to reject
+   * anything but loopback regardless of what the spec permits. Absent means
+   * this has not been established either way; do not infer `false` from it.
+   */
+  acceptsHttpsRedirect?: boolean
 }
 
 export interface TokenRequestSpec {
@@ -309,6 +321,35 @@ export interface ProviderConfig {
   experimental?: boolean
   /** Free-form note surfaced in errors and docs. */
   note?: string
+  /**
+   * Facts about the authorization page itself, as opposed to the token
+   * exchange — kept as its own object so related facts (framing, embeddability)
+   * have somewhere to live without another top-level field each time.
+   */
+  authPage?: {
+    /**
+     * The authorization page serves an enforced `Cross-Origin-Opener-Policy:
+     * same-origin` (not `-report-only`), so a popup opened to it is moved into
+     * its own browsing-context group by the browser. That is permanent for the
+     * life of the popup: `window.opener` on the popup is null from that point
+     * on, including after it navigates back to the app's own origin, and the
+     * opener's handle to the popup reports `closed === true` while the popup is
+     * still on screen.
+     *
+     * Neither signal is recoverable, and the obvious workarounds are the ones
+     * the swap forecloses: the popup's `location` is cross-origin and unreadable
+     * throughout, and `postMessage` through `opener` is the very channel that
+     * was severed. What still works is anything that does not depend on the
+     * opener relationship — a `BroadcastChannel`, which is same-origin by
+     * construction, posted from the redirect page the app already controls.
+     *
+     * The cost is that a popup flow against such a provider cannot tell that
+     * the user gave up: `closed` says nothing, and a window the user closed
+     * announces nothing. Give a popup login against one a `timeoutMs` or a
+     * `signal`, or it waits as long as the page does.
+     */
+    seversOpener?: boolean
+  }
 }
 
 /** Everything except the fields that carry sensible defaults. */

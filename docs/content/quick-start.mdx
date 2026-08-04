@@ -66,13 +66,23 @@ paste-the-code over SSH or with no `DISPLAY`, where a loopback redirect could ne
 <Tab value="Browser">
 
 ```ts
-import { loginWithPopup, postCallbackToOpener, ProviderId } from 'ai-oauth-sdk/browser'
+import { announceCallback, loginWithPopup, postCallbackToOpener, ProviderId } from 'ai-oauth-sdk/browser'
 
 button.onclick = () => loginWithPopup(ProviderId.OpenAI, { clientId, redirectUri })
 ```
 
-On the page at `redirectUri`, call `postCallbackToOpener()` and nothing else. It hands the code
-back to the opener and closes the popup.
+The page at `redirectUri` runs both halves of the handshake:
+
+```ts
+if (!postCallbackToOpener()) {
+  await announceCallback()
+}
+```
+
+`postCallbackToOpener()` hands the code back to the opener and closes the popup. It returns `false`
+when there is no opener to hand it to — either nothing opened this page, or the authorization page
+severed the link, which `claude.ai` does. `announceCallback()` broadcasts on your origin instead,
+where the popup is still listening.
 
 For embedded webviews and aggressive popup blockers, use the full-page redirect instead:
 
