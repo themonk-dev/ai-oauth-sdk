@@ -220,11 +220,17 @@ export async function providerFromDiscovery(
   // explicitly passed `authorizationUrl`/`tokenUrl` is the integrator's own
   // config and is left alone, exactly as `defineProvider` would leave it. Only
   // the branch where the `??` fell through to the document is validated.
-  if (input.authorizationUrl === undefined) {
+  //
+  // `== null` rather than `=== undefined`, to match what `??` above actually
+  // does. A JS caller — or a JSON config file with an unset optional key —
+  // yields `null`, which falls through to the document just as `undefined`
+  // does. Testing only for `undefined` would let that document value through
+  // unchecked, which is the whole case this guard exists for.
+  if (input.authorizationUrl == null) {
     assertSecureDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url)
   }
 
-  if (input.tokenUrl === undefined) {
+  if (input.tokenUrl == null) {
     assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url)
   }
 

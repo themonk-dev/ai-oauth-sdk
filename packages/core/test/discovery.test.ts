@@ -213,6 +213,27 @@ describe('providerFromDiscovery', () => {
     })
     expect(provider.tokenUrl).toBe('http://internal-gateway.acme.test/token')
   })
+
+  it('still checks the document when an endpoint is passed as null', async () => {
+    // `??` falls through on `null` as well as `undefined`, so the document's
+    // value wins here. A guard testing only for `undefined` would skip the
+    // check on exactly the value it is meant to cover. TypeScript rejects
+    // `null`, but a JS consumer — or a JSON config with an unset optional key
+    // — produces it.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'http://attacker.test/token',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, {
+        id: 'acme',
+        label: 'Acme',
+        tokenUrl: null as unknown as undefined,
+        redirect: { mode: 'loopback' },
+      }),
+    ).rejects.toMatchObject({ code: 'configuration_error' })
+  })
 })
 
 describe('manualReceiver', () => {

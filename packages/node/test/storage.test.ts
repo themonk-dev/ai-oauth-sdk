@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, rm, stat, readFile, symlink, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fileStorage } from '../src/storage.js'
 
@@ -58,6 +58,36 @@ describe('fileStorage', () => {
     expect(JSON.parse(await readFile(join(store, 'auth.json'), 'utf8'))).toEqual({
       'tokens:openai': '{"accessToken":"secret"}',
     })
+  })
+
+  it('refuses the write even when the temp name is predicted', async () => {
+    // The test above passes on the random name alone: the planted symlink sits
+    // where the old code would have written, which the new name never touches.
+    // That leaves `O_EXCL` — the half that actually has to hold — uncovered, so
+    // pin the suffix to a known value and let the attacker win the guess.
+    const store = join(dir, 'store')
+    const decoy = join(dir, 'decoy')
+    await mkdir(store, { recursive: true })
+    await writeFile(decoy, 'attacker owned')
+
+    vi.resetModules()
+    vi.doMock('node:crypto', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('node:crypto')>()),
+      randomBytes: () => Buffer.from('deadbeefcafebabe', 'hex'),
+    }))
+
+    try {
+      const { fileStorage: withPinnedSuffix } = await import('../src/storage.js')
+      await symlink(decoy, join(store, 'auth.json.deadbeefcafebabe.tmp'))
+
+      await expect(
+        withPinnedSuffix({ dir: store }).set('tokens:openai', '{"accessToken":"secret"}'),
+      ).rejects.toThrow(/Refusing to overwrite/)
+      expect(await readFile(decoy, 'utf8')).toBe('attacker owned')
+    } finally {
+      vi.doUnmock('node:crypto')
+      vi.resetModules()
+    }
   })
 
   it('keeps several keys in one file', async () => {
