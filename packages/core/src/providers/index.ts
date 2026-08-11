@@ -124,6 +124,58 @@ interface DiscoveryDocument {
 }
 
 /**
+ * Hosts that RFC 8252 treats as loopback. Traffic to them never leaves the
+ * machine, so cleartext there is not a wire risk — and a local development
+ * authorization server on `http://127.0.0.1:<port>` is the normal case.
+ */
+const loopbackHosts = new Set(['127.0.0.1', '[::1]', 'localhost'])
+
+/**
+ * Endpoints lifted out of a discovery document come from a *remote* party, so
+ * they get a check that `defineProvider` deliberately does not apply to
+ * hand-written config: there, an `http` URL is something the integrator typed
+ * themselves and chose to live with.
+ *
+ * Here the same value is attacker-reachable. An `https` issuer — TLS-verified,
+ * and the only thing the integrator actually vouched for — whose document names
+ * an `http` `token_endpoint` would have us POST refresh tokens and the client
+ * secret in cleartext for the entire life of the descriptor, silently. And the
+ * `authorization_endpoint` is the only remotely-supplied string that reaches the
+ * platform browser launcher, where a `%VAR%` in it is expanded by cmd.exe on
+ * Windows.
+ *
+ * The message names the field and the offending value, because the failure
+ * surfaces at client construction time far from whoever runs the discovery
+ * endpoint.
+ */
+function assertSecureDiscoveredEndpoint(field: string, value: string, source: string): void {
+  let parsed: URL
+
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new OAuthError(
+      'configuration_error',
+      `Discovery document at ${source} has a ${field} that is not a valid URL: "${value}".`,
+    )
+  }
+
+  if (parsed.protocol === 'https:') {
+    return
+  }
+
+  if (parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname)) {
+    return
+  }
+
+  throw new OAuthError(
+    'configuration_error',
+    `Discovery document at ${source} names an insecure ${field}: "${value}". ` +
+      'Endpoints taken from a discovery document must use https, except on loopback.',
+  )
+}
+
+/**
  * Builds a descriptor from an OIDC discovery document, so providers that move
  * their endpoints (or ones this library has never heard of) work without a
  * release. Pass the issuer URL, not the `.well-known` path.
@@ -161,6 +213,28 @@ export async function providerFromDiscovery(
     throw new OAuthError(
       'configuration_error',
       `Discovery document at ${url} is missing authorization_endpoint or token_endpoint.`,
+    )
+  }
+
+  // Guarded on `input.*` being absent rather than on the resolved value: an
+  // explicitly passed `authorizationUrl`/`tokenUrl` is the integrator's own
+  // config and is left alone, exactly as `defineProvider` would leave it. Only
+  // the branch where the `??` fell through to the document is validated.
+  if (input.authorizationUrl === undefined) {
+    assertSecureDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url)
+  }
+
+  if (input.tokenUrl === undefined) {
+    assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url)
+  }
+
+  // The document's device endpoint always wins over `input.deviceAuthorizationUrl`
+  // below, so it is always document-sourced when present.
+  if (document.device_authorization_endpoint) {
+    assertSecureDiscoveredEndpoint(
+      'device_authorization_endpoint',
+      document.device_authorization_endpoint,
+      url,
     )
   }
 
