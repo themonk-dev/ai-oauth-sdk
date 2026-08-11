@@ -81,6 +81,12 @@ Pluggable, and defaults to memory.
 | `secureStoreAdapter()`, Expo | Keychain, EncryptedSharedPreferences |
 | `asyncStorageAdapter()`, React Native | **Not encrypted at rest** |
 
+`fileStorage()` creates its directory `0700` and writes the temp file with `O_EXCL`, so a symlink
+planted at the temp path is refused rather than followed. It cannot do more than that. A directory
+that already exists keeps the permissions it already had, so if you point `dir` at a location other
+local users can write to, they can still replace the credential file itself. Keep the credential
+directory owned by, and writable only by, the user running the CLI.
+
 Prefer `secureStoreAdapter` for refresh tokens on mobile. In a browser, any XSS on your origin can
 read whatever web storage you chose. On a server, encrypt at rest.
 
