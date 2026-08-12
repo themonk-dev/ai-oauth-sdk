@@ -131,6 +131,32 @@ interface DiscoveryDocument {
 const loopbackHosts = new Set(['127.0.0.1', '[::1]', 'localhost'])
 
 /**
+ * The one rule, shared by every URL in a discovery exchange. It returns a
+ * verdict rather than throwing so each caller can name its own value: what is
+ * wrong with an `http` `token_endpoint` and what is wrong with an `http` issuer
+ * are different sentences, and the reader only ever sees one of them.
+ */
+function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' {
+  let parsed: URL
+
+  try {
+    parsed = new URL(value)
+  } catch {
+    return 'unparseable'
+  }
+
+  if (parsed.protocol === 'https:') {
+    return 'ok'
+  }
+
+  if (parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname)) {
+    return 'ok'
+  }
+
+  return 'insecure'
+}
+
+/**
  * Endpoints lifted out of a discovery document come from a *remote* party, so
  * they get a check that `defineProvider` deliberately does not apply to
  * hand-written config: there, an `http` URL is something the integrator typed
@@ -149,36 +175,71 @@ const loopbackHosts = new Set(['127.0.0.1', '[::1]', 'localhost'])
  * endpoint.
  */
 function assertSecureDiscoveredEndpoint(field: string, value: string, source: string): void {
-  let parsed: URL
+  const verdict = classifyDiscoveryUrl(value)
 
-  try {
-    parsed = new URL(value)
-  } catch {
+  if (verdict === 'unparseable') {
     throw new OAuthError(
       'configuration_error',
       `Discovery document at ${source} has a ${field} that is not a valid URL: "${value}".`,
     )
   }
 
-  if (parsed.protocol === 'https:') {
-    return
+  if (verdict === 'insecure') {
+    throw new OAuthError(
+      'configuration_error',
+      `Discovery document at ${source} names an insecure ${field}: "${value}". ` +
+        'Endpoints taken from a discovery document must use https, except on loopback.',
+    )
+  }
+}
+
+/**
+ * The issuer gets the same rule as the values its document carries, and it has
+ * to, because it is the transport that delivers them. Checking only the
+ * document's endpoints leaves the strictly worse case open: a cleartext issuer
+ * lets whoever is on the network path write the document, and endpoints they
+ * choose pass the `https` check above — which then reads as a stamp of
+ * validation on values that were never the issuer's. The descriptor carries
+ * them for its whole life, so every later code exchange and refresh POSTs the
+ * authorization code, the PKCE verifier and the client secret to that party.
+ *
+ * This is what the reasoning above already assumed ("an `https` issuer —
+ * TLS-verified, and the only thing the integrator actually vouched for"); it
+ * was simply never enforced.
+ *
+ * Same loopback exemption, so a local authorization server on
+ * `http://127.0.0.1:<port>` keeps working. An integrator with a genuinely
+ * plaintext internal IDP still has the documented escape hatch: pass
+ * `authorizationUrl`/`tokenUrl` explicitly and they are left alone — but then
+ * the endpoints are theirs, not a remote party's.
+ */
+function assertSecureIssuer(issuer: string): void {
+  const verdict = classifyDiscoveryUrl(issuer)
+
+  if (verdict === 'unparseable') {
+    throw new OAuthError(
+      'configuration_error',
+      `Discovery issuer is not a valid URL: "${issuer}". ` +
+        'Pass the issuer origin, not the .well-known path.',
+    )
   }
 
-  if (parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname)) {
-    return
+  if (verdict === 'insecure') {
+    throw new OAuthError(
+      'configuration_error',
+      `Insecure discovery issuer: "${issuer}". The document fetched from it decides this ` +
+        'provider\'s authorization and token endpoints, so anyone on the network path can ' +
+        'choose them — including https ones, which would pass every later check. The issuer ' +
+        'must use https, except on loopback.',
+    )
   }
-
-  throw new OAuthError(
-    'configuration_error',
-    `Discovery document at ${source} names an insecure ${field}: "${value}". ` +
-      'Endpoints taken from a discovery document must use https, except on loopback.',
-  )
 }
 
 /**
  * Builds a descriptor from an OIDC discovery document, so providers that move
  * their endpoints (or ones this library has never heard of) work without a
- * release. Pass the issuer URL, not the `.well-known` path.
+ * release. Pass the issuer URL, not the `.well-known` path. It must use `https`
+ * — outside loopback — for the same reason its document's endpoints must.
  *
  * `authorizationUrl`, `tokenUrl` and `scopes` are optional in `input` because
  * the discovery document supplies them. They are re-declared rather than
@@ -194,6 +255,11 @@ export async function providerFromDiscovery(
   },
   fetchImpl: FetchLike = globalThis.fetch,
 ): Promise<ProviderConfig> {
+  // Before the fetch, not after: a request to a cleartext issuer has already
+  // told an observer who the client is and invited a response by the time any
+  // value could be inspected.
+  assertSecureIssuer(issuer)
+
   const url = `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`
   const response = await fetchImpl(url)
 
