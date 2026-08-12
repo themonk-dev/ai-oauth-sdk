@@ -141,6 +141,17 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
  * navigation, so nothing else is legitimate, and any local process can reach a
  * loopback port — a narrower surface is one less thing to reason about.
  *
+ * The same reasoning extends to fetch metadata. Any page the user happens to
+ * have open can issue a no-preflight `GET` at a loopback port, and two of the
+ * bundled providers bind a fixed, published one. That request is not a
+ * credential leak — the response is opaque to the page and `state` still has to
+ * match — but a bare `?error=access_denied` would settle the callback promise
+ * and kill a login that was in progress. So a request the browser itself labels
+ * as a subresource is refused without touching the promise: `Sec-Fetch-Site`
+ * present, not `none`, and `Sec-Fetch-Mode` something other than `navigate`.
+ * The headers are only trusted when the browser sends them; curl, undici and
+ * anything else non-browser send no `Sec-Fetch-Site` at all and are unaffected.
+ *
  * The callback promise is given a no-op `catch` at construction because it is
  * consumed only in `wait()`; without it, a callback that fails before anyone
  * calls `wait()` would surface as an unhandled rejection.
@@ -162,10 +173,55 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       })
       callbackPromise.catch(() => {})
 
+      let settled = false
+
+      /**
+       * Settles the callback exactly once and then retires the server, so the
+       * receiver really does serve one callback and no more: a second request
+       * cannot overwrite the first result, and after the port is gone it cannot
+       * arrive at all. Closing waits for the response to flush, because
+       * `close()` destroys the sockets and would otherwise cut off the page the
+       * user is looking at.
+       */
+      const settle = (response: ServerResponse, done: () => void): void => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        done()
+
+        if (response.writableFinished) {
+          void close()
+
+          return
+        }
+
+        response.once('close', () => void close())
+      }
+
       const server = createServer((request: IncomingMessage, response: ServerResponse) => {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           response.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'text/plain' })
           response.end('Method not allowed')
+
+          return
+        }
+
+        // A browser labels the provider's redirect `Sec-Fetch-Mode: navigate`.
+        // `<img>`, `fetch()` and friends carry `no-cors`/`cors` instead, so a
+        // page cannot use one to settle — and thereby cancel — a live login.
+        // `none` is a typed-in URL, which is legitimate; a missing header means
+        // a non-browser client, which this check has no opinion about.
+        const fetchSite = request.headers['sec-fetch-site']
+
+        if (
+          typeof fetchSite === 'string' &&
+          fetchSite !== 'none' &&
+          request.headers['sec-fetch-mode'] !== 'navigate'
+        ) {
+          response.writeHead(403, { ...securityHeaders, 'Content-Type': 'text/plain' })
+          response.end('Forbidden')
 
           return
         }
@@ -190,18 +246,24 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
               : String(error)
           response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
           response.end((options.failureHtml ?? defaultFailureHtml)(detail))
-          rejectCallback(error)
+          settle(response, () => rejectCallback(error))
 
           return
         }
 
         response.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
         response.end(options.successHtml ?? DEFAULT_SUCCESS_HTML)
-        resolveCallback(result)
+        settle(response, () => resolveCallback(result))
       })
 
-      const boundPort = await listen(server, requestedPort, bindHost)
-
+      /**
+       * Safe to call more than once, which it now is: `settle()` closes the
+       * server as soon as a callback has been served, and the caller closes it
+       * again in `login()`'s `finally`. `server.close()` on a server that has
+       * already gone still invokes its callback — with an
+       * `ERR_SERVER_NOT_RUNNING` there is nothing to do about — so the second
+       * call resolves rather than hanging.
+       */
       const close = async (): Promise<void> => {
         await new Promise<void>((resolve) => {
           server.close(() => resolve())
@@ -209,7 +271,10 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         })
       }
 
+      const boundPort = await listen(server, requestedPort, bindHost)
+
       const onAbort = () => {
+        settled = true
         rejectCallback(new OAuthError('aborted', 'Login was aborted.'))
         void close()
       }
