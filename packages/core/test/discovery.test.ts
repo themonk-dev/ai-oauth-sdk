@@ -120,6 +120,120 @@ describe('providerFromDiscovery', () => {
       providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
     ).rejects.toThrowError(/missing authorization_endpoint or token_endpoint/)
   })
+
+  // A discovery document is remote input. An http token_endpoint there would put
+  // the refresh token and client secret on the wire in cleartext without anyone
+  // typing an http URL, which is why these are rejected here but tolerated in
+  // hand-written `defineProvider` config.
+  it('rejects a document naming an http token_endpoint', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'http://acme.test/token',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/token_endpoint.*"http:\/\/acme\.test\/token"/),
+    })
+  })
+
+  it('rejects a document naming an http authorization_endpoint', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'http://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/authorization_endpoint.*"http:\/\/acme\.test\/authorize"/),
+    })
+  })
+
+  it('rejects a document naming an http device_authorization_endpoint', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'http://acme.test/device',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/device_authorization_endpoint.*"http:\/\/acme\.test\/device"/),
+    })
+  })
+
+  it('rejects a document endpoint that is not a URL at all', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: '/token',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
+    ).rejects.toThrowError(/token_endpoint that is not a valid URL: "\/token"/)
+  })
+
+  it('accepts http loopback endpoints, which never reach a wire', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'http://127.0.0.1:8123/authorize',
+      token_endpoint: 'http://localhost:8123/token',
+      device_authorization_endpoint: 'http://[::1]:8123/device',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      redirect: { mode: 'loopback' },
+    })
+
+    expect(provider.authorizationUrl).toBe('http://127.0.0.1:8123/authorize')
+    expect(provider.tokenUrl).toBe('http://localhost:8123/token')
+    expect(provider.deviceAuthorizationUrl).toBe('http://[::1]:8123/device')
+  })
+
+  it('leaves an integrator-supplied http tokenUrl alone', async () => {
+    // Not document-sourced, so it is the integrator's own config — the same
+    // value `defineProvider` would accept without comment.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      tokenUrl: 'http://internal-gateway.acme.test/token',
+      redirect: { mode: 'loopback' },
+    })
+    expect(provider.tokenUrl).toBe('http://internal-gateway.acme.test/token')
+  })
+
+  it('still checks the document when an endpoint is passed as null', async () => {
+    // `??` falls through on `null` as well as `undefined`, so the document's
+    // value wins here. A guard testing only for `undefined` would skip the
+    // check on exactly the value it is meant to cover. TypeScript rejects
+    // `null`, but a JS consumer — or a JSON config with an unset optional key
+    // — produces it.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'http://attacker.test/token',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, {
+        id: 'acme',
+        label: 'Acme',
+        tokenUrl: null as unknown as undefined,
+        redirect: { mode: 'loopback' },
+      }),
+    ).rejects.toMatchObject({ code: 'configuration_error' })
+  })
 })
 
 describe('manualReceiver', () => {

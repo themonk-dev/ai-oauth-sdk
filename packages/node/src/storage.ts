@@ -1,4 +1,5 @@
 import { homedir } from 'node:os'
+import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
@@ -24,6 +25,10 @@ export function defaultAuthDir(): string {
  * cannot leave a truncated credential file behind. All reads and writes are
  * serialised through a promise chain so concurrent `set` calls do not clobber
  * each other's copy of the record.
+ *
+ * The directory is created `0700`, but an existing one keeps whatever mode it
+ * already has: a `dir` other local users can write to is outside what this
+ * adapter can defend.
  */
 export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
   const dir = options.dir ?? defaultAuthDir()
@@ -53,8 +58,38 @@ export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
 
   const writeAll = async (record: Record<string, string>): Promise<void> => {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-    const temp = `${path}.${process.pid}.tmp`
-    await writeFile(temp, JSON.stringify(record, null, 2), { encoding: 'utf8', mode: 0o600 })
+    // The temp name is random rather than derived from the pid, and the write
+    // is `wx` (`O_CREAT|O_EXCL`), because both halves are load-bearing.
+    //
+    // `O_EXCL` is the security half: a plain `w` open follows a symlink sitting
+    // at the temp path, so anyone who can write to the credential directory
+    // could aim the write at a file they own and read every provider's tokens
+    // out of it. `mode` does not save us there — it applies only when open(2)
+    // creates the inode, so a pre-created 0644 target keeps its permissions,
+    // and the trailing `chmod` fails EPERM on a file we do not own.
+    //
+    // The random name is the correctness half: with `O_EXCL` a predictable name
+    // turns one stale temp file — left by a crash, under a pid that has since
+    // been recycled — into an `EEXIST` that every later write inherits, which
+    // would wedge the credential store permanently.
+    const temp = `${path}.${randomBytes(8).toString('hex')}.tmp`
+
+    try {
+      await writeFile(temp, JSON.stringify(record, null, 2), {
+        encoding: 'utf8',
+        mode: 0o600,
+        flag: 'wx',
+      })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new Error(
+          `Refusing to overwrite ${temp}: something already exists at the temporary path used to write ${path}.`,
+          { cause: error },
+        )
+      }
+
+      throw error
+    }
 
     try {
       await rename(temp, path)
