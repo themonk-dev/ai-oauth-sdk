@@ -208,17 +208,28 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        // A browser labels the provider's redirect `Sec-Fetch-Mode: navigate`.
-        // `<img>`, `fetch()` and friends carry `no-cors`/`cors` instead, so a
-        // page cannot use one to settle — and thereby cancel — a live login.
-        // `none` is a typed-in URL, which is legitimate; a missing header means
-        // a non-browser client, which this check has no opinion about.
+        // A browser labels the provider's redirect `Sec-Fetch-Mode: navigate`
+        // and `Sec-Fetch-Dest: document`. `<img>`, `fetch()` and friends carry
+        // `no-cors`/`cors` instead, so a page cannot use one to settle — and
+        // thereby cancel — a live login. `none` is a typed-in URL, which is
+        // legitimate; a missing header means a non-browser client, which this
+        // check has no opinion about.
+        //
+        // The destination is load-bearing, not belt-and-braces. A hidden
+        // cross-origin `<iframe>` is a navigation too, so mode alone lets it
+        // through, and `http://127.0.0.1` counts as a potentially trustworthy
+        // origin — mixed content does not block one embedded in an https page.
+        // That is the same drive-by with nothing for the user to notice. Only
+        // `document` is a real redirect back from the provider; `iframe`,
+        // `frame`, `object` and `embed` are not.
         const fetchSite = request.headers['sec-fetch-site']
+        const fetchDest = request.headers['sec-fetch-dest']
 
         if (
           typeof fetchSite === 'string' &&
           fetchSite !== 'none' &&
-          request.headers['sec-fetch-mode'] !== 'navigate'
+          (request.headers['sec-fetch-mode'] !== 'navigate' ||
+            (typeof fetchDest === 'string' && fetchDest !== 'document'))
         ) {
           response.writeHead(403, { ...securityHeaders, 'Content-Type': 'text/plain' })
           response.end('Forbidden')

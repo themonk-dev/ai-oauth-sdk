@@ -251,6 +251,32 @@ describe('loopbackReceiver', () => {
     }
   })
 
+  it('refuses an embedded navigation, which a subresource check on the mode alone would miss', async () => {
+    // A hidden cross-origin `<iframe>` is a navigation, so `Sec-Fetch-Mode`
+    // says `navigate` and only the destination gives it away. The loopback
+    // origin is potentially trustworthy, so an https page can embed one
+    // without tripping mixed content — same drive-by, nothing to notice.
+    for (const dest of ['iframe', 'frame', 'object', 'embed']) {
+      const started = await loopbackReceiver({ port: 0 }).start({
+        provider: testProvider(server.url),
+      })
+      const waiting = started.wait()
+
+      try {
+        const embedded = await rawGet(`${started.redirectUri}?error=access_denied`, {
+          'Sec-Fetch-Site': 'cross-site',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Dest': dest,
+        })
+
+        expect(embedded.status, `Sec-Fetch-Dest: ${dest}`).toBe(403)
+        expect(await isSettled(waiting), `Sec-Fetch-Dest: ${dest}`).toBe(false)
+      } finally {
+        await started.close()
+      }
+    }
+  })
+
   it('accepts the top-level navigation the provider actually sends', async () => {
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
     const waiting = started.wait()
