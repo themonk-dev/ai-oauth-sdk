@@ -215,6 +215,19 @@ export class AuthClient {
   }
 
   /**
+   * True when `providerId` names this provider — its current id, or one it used
+   * to have.
+   *
+   * Renamed providers are still the same issuer, so a flow started under an old
+   * id has to keep completing across the upgrade that renamed it. This is the
+   * same allowance {@link AuthClient.#readRenamedTokens} makes for credentials
+   * stored under a previous key.
+   */
+  #ownsProviderId(providerId: string): boolean {
+    return providerId === this.provider.id || (this.provider.previousIds ?? []).includes(providerId)
+  }
+
+  /**
    * Finishes the flow for a `state` and returns its tokens.
    *
    * Accepts either an explicit `code`/`state` pair or a raw `callbackUrl`, so
@@ -283,6 +296,31 @@ export class AuthClient {
 
     try {
       const pending = await this.#registry.consume(state)
+
+      /* Pending records are keyed by `state` alone, and one storage is
+         routinely shared by every client an app builds — so a callback routed
+         to the wrong client would otherwise post *that* flow's code, PKCE
+         verifier and redirect URI to this provider's token endpoint, under this
+         provider's client id. Mis-routing the callback is an application bug,
+         most easily made on a single shared `/callback` page that must pick a
+         client before it knows whose `state` it is holding; the guard is here
+         so the bug cannot turn into the mix-up attack of OAuth 2.0 Security BCP
+         §4.4, where the response is not bound to the issuer it came from and a
+         live credential leaves the process before anything rejects it.
+
+         The record has already been consumed, and stays consumed: a callback
+         that reached the wrong client must not be replayable at the right one.
+         `consumeLatest` was provider-scoped from the start; this is the same
+         rule on the `state`-keyed path. */
+      if (!this.#ownsProviderId(pending.provider)) {
+        throw new OAuthError(
+          'state_mismatch',
+          `Pending authorization for state "${state}" belongs to provider ` +
+            `"${pending.provider}", not "${this.provider.id}".`,
+          { state },
+        )
+      }
+
       const tokens = await exchangeCode({
         provider: this.provider,
         clientId: this.#clientId,

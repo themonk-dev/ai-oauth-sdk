@@ -39,9 +39,19 @@ Providers that never return `state`, which today means OpenRouter, set `echoesSt
 resolve against the most recently started flow instead. That is fine for a CLI or a single-flow app.
 **It is not safe in a multi-user server**, where one user's callback could complete another's login.
 
-**The loopback server** binds `127.0.0.1`, never `0.0.0.0`, answers `GET` and `HEAD` only, and serves
-exactly one callback before shutting down. It sends `no-store`, `no-referrer` and `nosniff`, because
-the callback URL carries the authorization code in its query string.
+**The loopback server** binds `127.0.0.1`, never `0.0.0.0`, answers `GET` and `HEAD` only, and closes
+itself the moment a callback settles, so it really does serve exactly one. It sends `no-store`,
+`no-referrer` and `nosniff`, because the callback URL carries the authorization code in its query
+string. It also turns away anything the browser itself labels as other than a top-level navigation —
+`Sec-Fetch-Site` present and not `none`, without both `Sec-Fetch-Mode: navigate` and
+`Sec-Fetch-Dest: document`. Any page the user happens to have open can aim an `<img>` at a loopback
+port, and two of the bundled providers bind published, fixed ones. Such a request cannot read the
+response or produce a matching `state`, but a bare `?error=access_denied` would otherwise cancel
+whichever login was in progress, so it is refused without touching the pending callback and the real
+redirect still completes. The destination is checked as well as the mode because a hidden
+cross-origin `<iframe>` is also a navigation, and `127.0.0.1` is a potentially trustworthy origin, so
+mixed content does not stop an https page embedding one. A client that sends no `Sec-Fetch-*`
+headers at all, which means anything that is not a browser, is unaffected.
 
 **Popup callbacks are origin-checked** before being trusted, and `postCallbackToOpener` posts to its
 own origin rather than to `*`.

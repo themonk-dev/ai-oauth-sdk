@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { providerFromDiscovery } from '../src/providers/index.js'
 import { manualReceiver } from '../src/receivers/manual.js'
 import { defineProvider } from '../src/providers/define.js'
-import type { ProviderConfig } from '../src/types.js'
+import type { FetchLike, ProviderConfig } from '../src/types.js'
 
 let server: Server | undefined
 
@@ -212,6 +212,86 @@ describe('providerFromDiscovery', () => {
       redirect: { mode: 'loopback' },
     })
     expect(provider.tokenUrl).toBe('http://internal-gateway.acme.test/token')
+  })
+
+  // The issuer is the transport the document arrives over, so it needs the same
+  // rule as the values inside it — the loopback issuers every test above builds
+  // are exactly the exemption that keeps working.
+  it('refuses a cleartext issuer without fetching anything', async () => {
+    const requested: string[] = []
+    const fetchImpl: FetchLike = async (input) => {
+      requested.push(input)
+
+      throw new Error('discovery must not be fetched over cleartext')
+    }
+
+    await expect(
+      providerFromDiscovery(
+        'http://sso.corp.internal',
+        { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } },
+        fetchImpl,
+      ),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/"http:\/\/sso\.corp\.internal"/),
+    })
+    // The check has to precede the request: by the time a response exists, the
+    // client has already announced itself to whoever is on the path.
+    expect(requested).toEqual([])
+  })
+
+  it('closes the on-path swap of https endpoints served over an http issuer', async () => {
+    // The endpoints below are https, so the document-value guard passes them
+    // happily. Only the issuer check catches this, and without it the
+    // descriptor would carry the attacker's token endpoint for its whole life.
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          authorization_endpoint: 'https://evil.example/authorize',
+          token_endpoint: 'https://evil.example/token',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+
+    await expect(
+      providerFromDiscovery(
+        'http://sso.corp.internal',
+        { id: 'acme', label: 'Acme', clientSecret: 'super-secret', redirect: { mode: 'loopback' } },
+        fetchImpl,
+      ),
+    ).rejects.toMatchObject({ code: 'configuration_error' })
+  })
+
+  it('accepts an https issuer', async () => {
+    const fetchImpl: FetchLike = async (input) => {
+      expect(input).toBe('https://acme.test/.well-known/openid-configuration')
+
+      return new Response(
+        JSON.stringify({
+          authorization_endpoint: 'https://acme.test/authorize',
+          token_endpoint: 'https://acme.test/token',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+
+    await expect(
+      providerFromDiscovery(
+        'https://acme.test',
+        { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } },
+        fetchImpl,
+      ),
+    ).resolves.toMatchObject({ tokenUrl: 'https://acme.test/token' })
+  })
+
+  it('refuses an issuer that is not a URL at all', async () => {
+    await expect(
+      providerFromDiscovery('sso.corp.internal', {
+        id: 'acme',
+        label: 'Acme',
+        redirect: { mode: 'loopback' },
+      }),
+    ).rejects.toThrowError(/issuer is not a valid URL: "sso\.corp\.internal"/)
   })
 
   it('still checks the document when an endpoint is passed as null', async () => {

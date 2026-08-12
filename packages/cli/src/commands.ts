@@ -44,6 +44,19 @@ interface CommandContext {
 /**
  * Builds a provider from `--authorize-url`/`--token-url`, so the CLI works with
  * any OAuth 2.0 provider, not only the built-ins.
+ *
+ * A built-in id is refused rather than overridden. The descriptor built here
+ * keeps `id: providerId`, and that id is what everything else is keyed on: the
+ * tokens live at `tokens:<id>`, and `resolveClientId`/the client-secret
+ * fallback below read `publicClientIds[id]`/`publicClientSecrets[id]`. So
+ * `login gemini --token-url https://staging.internal/token` does not describe a
+ * separate provider that happens to share a name — it sends the real Google
+ * refresh token and Google's published client secret to whatever endpoint was
+ * named, and reports success. Nobody points a built-in at a different token
+ * endpoint meaning that; they mean "a provider of my own", which needs an id of
+ * its own. The rest of the file already draws that line — `recallProvider` is
+ * guarded by the same check on the next line, and `login` refuses to
+ * `rememberProvider` a built-in id — so this closes the one path that was not.
  */
 function customProvider(providerId: string, args: ParsedArgs): ProviderConfig | undefined {
   const authorizationUrl = flagString(args.flags, 'authorize-url')
@@ -51,6 +64,14 @@ function customProvider(providerId: string, args: ParsedArgs): ProviderConfig | 
 
   if (!authorizationUrl && !tokenUrl) {
     return undefined
+  }
+
+  if (providerId in providers) {
+    throw new CliError(
+      `"${providerId}" is a built-in provider — --authorize-url/--token-url would point it at ` +
+        'different endpoints while it still uses the credentials stored under that id.',
+      `Give the custom provider an id of its own, e.g. ai-oauth-sdk login ${providerId}-staging --authorize-url … --token-url …`,
+    )
   }
 
   if (!authorizationUrl || !tokenUrl) {

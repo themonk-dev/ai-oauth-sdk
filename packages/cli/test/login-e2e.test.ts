@@ -1,4 +1,4 @@
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -254,6 +254,97 @@ describe('custom provider validation', () => {
       await run(['login', 'acme', '--auth-dir', dir, '--authorize-url', 'https://a.test/auth']),
     ).toBe(1)
     expect(err()).toContain('must be given together')
+  })
+
+  /**
+   * The endpoint flags used to build a synthetic descriptor for *any* id,
+   * including a built-in one. The descriptor kept `id: providerId`, so the
+   * endpoints came from the flags while the credentials kept coming from the
+   * built-in: the stored tokens under `tokens:gemini`, plus Google's published
+   * client id and secret. Pointing a built-in at a staging or proxy endpoint
+   * therefore shipped a live production refresh token there and exited 0.
+   */
+  describe('a built-in id with endpoint overrides', () => {
+    const seedGemini = () =>
+      writeFile(
+        join(dir, 'auth.json'),
+        JSON.stringify({
+          'tokens:gemini': JSON.stringify({
+            accessToken: 'VICTIM-ACCESS-TOKEN',
+            refreshToken: 'VICTIM-REFRESH-TOKEN',
+            tokenType: 'Bearer',
+            provider: 'gemini',
+            // Already expired, so `token` would reach for the refresh endpoint
+            // even without --force-refresh.
+            expiresAt: Date.now() - 60_000,
+            raw: {},
+          }),
+        }),
+      )
+
+    const storedGemini = async () => {
+      const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+
+      return JSON.parse(stored['tokens:gemini']!) as { refreshToken?: string }
+    }
+
+    // A function, not a constant: `dir` and `server` are only assigned in
+    // beforeEach, which runs after this describe body.
+    const overrides = () => [
+      '--auth-dir',
+      dir,
+      '--authorize-url',
+      `${server.url}/authorize`,
+      '--token-url',
+      `${server.url}/token`,
+    ]
+
+    it('refuses login rather than aiming the built-in at another endpoint', async () => {
+      expect(await run(['login', 'gemini', ...overrides()])).toBe(1)
+      expect(err()).toContain('built-in provider')
+      expect(err()).toContain('gemini')
+      // The half that matters: nothing was sent to the endpoint that was named.
+      expect(server.requests).toHaveLength(0)
+    })
+
+    it('refuses token --force-refresh, and the stored credential is untouched', async () => {
+      await seedGemini()
+
+      expect(await run(['token', 'gemini', '--force-refresh', ...overrides()])).toBe(1)
+      expect(err()).toContain('built-in provider')
+      expect(server.requests).toHaveLength(0)
+      expect(server.refreshCount).toBe(0)
+      expect((await storedGemini()).refreshToken).toBe('VICTIM-REFRESH-TOKEN')
+      expect(out()).toBe('')
+    })
+
+    // Same path without the flag: the stored token is expired, so the refresh
+    // happens on its own.
+    it('refuses token with an expired stored credential too', async () => {
+      await seedGemini()
+
+      expect(await run(['token', 'gemini', ...overrides()])).toBe(1)
+      expect(server.requests).toHaveLength(0)
+      expect((await storedGemini()).refreshToken).toBe('VICTIM-REFRESH-TOKEN')
+    })
+
+    it('leaves the built-in alone when no endpoint flags are given', async () => {
+      await writeFile(
+        join(dir, 'auth.json'),
+        JSON.stringify({
+          'tokens:gemini': JSON.stringify({
+            accessToken: 'still-valid',
+            tokenType: 'Bearer',
+            provider: 'gemini',
+            expiresAt: Date.now() + 3_600_000,
+            raw: {},
+          }),
+        }),
+      )
+
+      expect(await run(['token', 'gemini', '--auth-dir', dir])).toBe(0)
+      expect(out()).toBe('still-valid\n')
+    })
   })
 
   it('reports a token endpoint that rejects the exchange', async () => {
