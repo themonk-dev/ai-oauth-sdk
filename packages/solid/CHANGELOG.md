@@ -1,5 +1,12 @@
 # @ai-oauth-sdk/solid
 
+## 1.1.1
+
+### Patch Changes
+
+- Updated dependencies [3f7b8b5]
+  - @ai-oauth-sdk/core@1.1.1
+
 ## 1.1.0
 
 ### Patch Changes
