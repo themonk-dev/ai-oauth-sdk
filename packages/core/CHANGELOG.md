@@ -1,5 +1,51 @@
 # @ai-oauth-sdk/core
 
+## 1.1.2
+
+### Patch Changes
+
+- e0f0ee6: Require `https` on the issuer `providerFromDiscovery()` fetches from, except on loopback.
+
+  The previous release required `https` on the endpoints lifted _out of_ a discovery document. It never checked the URL the document was fetched _from_: the issuer was string-concatenated into a `.well-known/openid-configuration` path and handed to `fetch`, so `providerFromDiscovery('http://sso.corp.internal', …)` was accepted without comment.
+
+  That leaves the strictly worse half of the same problem open. The library would reject an `http` `token_endpoint` served by an `https` issuer — a misconfiguration, visible to whoever runs the issuer — while accepting an `https` `token_endpoint` chosen by whoever sits on the network path in front of an `http` issuer. An on-path attacker answering the cleartext discovery request returns a document naming `https://evil.example/authorize` and `https://evil.example/token`; both are `https`, so the endpoint check passes them, and passing is worse than silence here because it reads as validation of values the issuer never sent. The descriptor then carries them for its entire life, and every `exchangeCode()` and `refreshTokens()` POSTs the authorization code, the PKCE `code_verifier` and any `clientSecret` to the attacker.
+
+  The rationale for the endpoint check already rested on this: "an `https` issuer — TLS-verified, and the only thing the integrator actually vouched for". The code simply never enforced the assumption it was reasoning from. It does now, using the same rule and the same `127.0.0.1` / `[::1]` / `localhost` exemption, so local development authorization servers keep working. An issuer that does not parse as a URL is rejected too, with its own message. The check runs before the request rather than after it, because a cleartext discovery request has already announced the client and invited a response by the time any value could be examined.
+
+  An integrator who genuinely has a plaintext internal IDP should describe it with `defineProvider()`, which leaves a hand-written `http` endpoint alone as it always has. Note that passing `authorizationUrl` and `tokenUrl` explicitly is no longer a way to keep a cleartext _issuer_: the check runs before the fetch, and it has to, because the discovery request itself is the part that travels in the clear. Endpoints an integrator typed are still exempt from the endpoint check — that exemption is unchanged — but they no longer excuse the transport.
+
+  Nothing was added around redirects. Refusing them, or comparing the final `response.url` origin to the issuer, breaks issuers that legitimately redirect — an `http`→`https` upgrade, or path normalisation — and a custom `fetchImpl` is free to ignore either signal anyway. Validating the document's own `issuer` claim likewise stays out: with the issuer required to be `https`, that is spec conformance rather than a vulnerability, and it would reject multi-tenant deployments by design.
+
+- e0f0ee6: Bind a pending authorization to the provider that started it
+
+  Pending records are keyed by `state` alone, and one storage is routinely shared
+  by every client an app builds. `completeAuthorization()` consumed whatever
+  record that key named without ever asking whose it was, so a callback handed to
+  the wrong client posted the _other_ flow's code, PKCE verifier and redirect URI
+  to this provider's token endpoint, under this provider's client id.
+
+  Mis-routing the callback is an application bug, and the exchange fails — the
+  receiving server does not recognise a code it never issued. But it fails after
+  the request goes out, so the credential has already left the process, and the
+  legitimate flow's record is consumed either way and can no longer complete.
+  That is the mix-up class of OAuth 2.0 Security BCP §4.4: the authorization
+  response is not bound to the issuer it came from. A hostile or low-trust
+  provider on the receiving end gets a live code plus its verifier plus its
+  redirect URI for someone else's provider, whose client id is public.
+
+  The easiest way to make the mistake is a single-page app with one shared
+  `/callback` route, which has to pick a client before it knows whose `state` it
+  is holding. `consumeLatest()` — the path for providers that never echo `state`
+  — was provider-scoped from the start; this is the same rule on the
+  `state`-keyed path, and the mismatch now throws `state_mismatch`.
+
+  The record stays consumed when the check fails: a callback that reached the
+  wrong client should not be replayable at the right one. Ids the provider used
+  to have count as its own, so a flow started before a rename — `anthropic` to
+  `claude`, `google` to `gemini`, `microsoft` to `azureAi` — still completes
+  across the upgrade that renamed it, the same allowance already made for
+  credentials stored under a previous key.
+
 ## 1.1.1
 
 ### Patch Changes

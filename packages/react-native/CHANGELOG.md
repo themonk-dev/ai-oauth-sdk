@@ -1,5 +1,13 @@
 # @ai-oauth-sdk/react-native
 
+## 1.1.2
+
+### Patch Changes
+
+- Updated dependencies [e0f0ee6]
+- Updated dependencies [e0f0ee6]
+  - @ai-oauth-sdk/core@1.1.2
+
 ## 1.1.1
 
 ### Patch Changes
