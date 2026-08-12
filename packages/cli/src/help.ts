@@ -40,7 +40,8 @@ ${bold('LOGIN OPTIONS')}
   --timeout <seconds>   Give up waiting after N seconds
 
 ${bold('CUSTOM PROVIDERS')}
-  --authorize-url <url> Use any OAuth 2.0 provider, not just the built-ins
+  --authorize-url <url> Use any OAuth 2.0 provider, not just the built-ins.
+                        Needs an id of its own — a built-in id is refused.
   --token-url <url>     Required alongside --authorize-url
   --device-url <url>    Device authorization endpoint, if the provider has one
 
