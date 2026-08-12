@@ -1,5 +1,14 @@
 # @ai-oauth-sdk/cli
 
+## 1.1.1
+
+### Patch Changes
+
+- Updated dependencies [3f7b8b5]
+- Updated dependencies [3f7b8b5]
+  - @ai-oauth-sdk/core@1.1.1
+  - @ai-oauth-sdk/node@1.1.1
+
 ## 1.1.0
 
 ### Patch Changes
