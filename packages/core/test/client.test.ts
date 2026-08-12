@@ -150,6 +150,95 @@ describe('authorization lifecycle', () => {
   })
 })
 
+describe('pending authorizations are bound to their provider', () => {
+  it('refuses a callback that belongs to another provider, without contacting the token endpoint', async () => {
+    /* Two providers, two authorization servers, one storage — the ordinary
+       shape of an app that offers a choice of logins. */
+    const serverB = await startFakeAuthServer()
+
+    try {
+      const storage = memoryStorage()
+      const clientA = createAuthClient({
+        provider: testProvider(server.url, { id: 'provider-a' }),
+        redirectUri: 'http://localhost:9999/callback-a',
+        storage,
+      })
+      const clientB = createAuthClient({
+        provider: testProvider(serverB.url, { id: 'provider-b' }),
+        redirectUri: 'http://localhost:9999/callback-b',
+        storage,
+      })
+
+      const authorization = await clientA.createAuthorization()
+      const { code, state } = await followAuthorization(authorization.url)
+
+      await expect(clientB.completeAuthorization({ code, state })).rejects.toMatchObject({
+        code: 'state_mismatch',
+      })
+
+      // The security-relevant part: provider A's code, verifier and redirect
+      // URI never reached provider B.
+      expect(serverB.requests).toHaveLength(0)
+      expect(server.requests).toHaveLength(0)
+    } finally {
+      await serverB.close()
+    }
+  })
+
+  it('consumes the mis-routed record, so it cannot be replayed at the right client', async () => {
+    const serverB = await startFakeAuthServer()
+
+    try {
+      const storage = memoryStorage()
+      const clientA = createAuthClient({
+        provider: testProvider(server.url, { id: 'provider-a' }),
+        redirectUri: 'http://localhost:9999/callback-a',
+        storage,
+      })
+      const clientB = createAuthClient({
+        provider: testProvider(serverB.url, { id: 'provider-b' }),
+        redirectUri: 'http://localhost:9999/callback-b',
+        storage,
+      })
+
+      const authorization = await clientA.createAuthorization()
+      const { code, state } = await followAuthorization(authorization.url)
+
+      await expect(clientB.completeAuthorization({ code, state })).rejects.toMatchObject({
+        code: 'state_mismatch',
+      })
+      await expect(clientA.completeAuthorization({ code, state })).rejects.toMatchObject({
+        code: 'unknown_state',
+      })
+    } finally {
+      await serverB.close()
+    }
+  })
+
+  it('still completes a flow started under an id the provider has since shed', async () => {
+    /* The upgrade case: the pending record was written by the version that
+       still called this provider `legacy-test`. */
+    const storage = memoryStorage()
+    const before = createAuthClient({
+      provider: testProvider(server.url, { id: 'legacy-test' }),
+      redirectUri: 'http://localhost:9999/callback',
+      storage,
+    })
+    const after = createAuthClient({
+      provider: testProvider(server.url, { id: 'test', previousIds: ['legacy-test'] }),
+      redirectUri: 'http://localhost:9999/callback',
+      storage,
+    })
+
+    const authorization = await before.createAuthorization()
+    const { code, state } = await followAuthorization(authorization.url)
+
+    const tokens = await after.completeAuthorization({ code, state })
+    expect(tokens.accessToken).toBe('access-1')
+    expect(server.requests[0]?.['code_verifier']).toBe(authorization.codeVerifier)
+  })
+})
+
 describe('waitForAuthorization — the state-keyed handoff', () => {
   it('delivers tokens to a waiter that started before the callback', async () => {
     const client = createAuthClient({
