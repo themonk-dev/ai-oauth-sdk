@@ -1,4 +1,5 @@
-import { request as httpRequest } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
+import type { AddressInfo } from 'node:net'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -67,6 +68,20 @@ const navigationHeaders = {
   'Sec-Fetch-Mode': 'navigate',
   'Sec-Fetch-Dest': 'document',
 }
+
+/**
+ * Whether this kernel has IPv6 at all.
+ *
+ * Where it does not, `localhost` cannot resolve to `::1` either, so there is no
+ * second address for anyone to contest and the receiver's degraded IPv4-only
+ * bind already covers the name completely. The dual-stack cases below are
+ * skipped there and run on CI, which is dual-stack.
+ */
+const hasIpv6 = await new Promise<boolean>((resolve) => {
+  const probe = createServer()
+  probe.once('error', () => resolve(false))
+  probe.listen(0, '::1', () => probe.close(() => resolve(true)))
+})
 
 /** Whether a promise has settled, without consuming its result. */
 const isSettled = async (promise: Promise<unknown>): Promise<boolean> => {
@@ -335,5 +350,93 @@ describe('loopbackReceiver', () => {
 
     await expect(waiting).rejects.toMatchObject({ code: 'aborted' })
     await started.close()
+  })
+
+  // The receiver binds `127.0.0.1`; the redirect URI it advertises names
+  // `localhost`, which on a dual-stack machine also resolves to `::1` — and
+  // browsers try `::1` first. Binding one address while promising a name lets
+  // another local process own the address the browser actually reaches, and
+  // because port reservation is per address the `EADDRINUSE` guard never fires.
+  describe('binds every address the advertised host resolves to', () => {
+    it.skipIf(!hasIpv6)('answers on ::1 as well as 127.0.0.1', async () => {
+      const started = await loopbackReceiver({ port: 0 }).start({
+        provider: testProvider(server.url),
+      })
+      const port = new URL(started.redirectUri).port
+
+      try {
+        // The advertised URI still names `localhost` — nothing about what the
+        // authorization server is told changes. Only the coverage does.
+        expect(started.redirectUri).toContain('localhost')
+        const viaIpv6 = await rawGet(`http://[::1]:${port}/callback?code=six&state=xyz`, navigationHeaders)
+        expect(viaIpv6.status).toBe(200)
+        await expect(started.wait()).resolves.toMatchObject({ code: 'six' })
+      } finally {
+        await started.close()
+      }
+    })
+
+    it.skipIf(!hasIpv6)('refuses a fixed port whose sibling address is held', async () => {
+      // A squatter on `[::1]:PORT` is the attack: our own bind on 127.0.0.1
+      // succeeds, the login looks normal, and the browser hands the code to
+      // them. On a fixed published port there is nowhere else to go, so the
+      // login is refused rather than started.
+      const squatter = createServer()
+      await new Promise<void>((resolve) => squatter.listen(0, '::1', resolve))
+      const port = (squatter.address() as AddressInfo).port
+
+      try {
+        await expect(
+          loopbackReceiver({ port }).start({ provider: testProvider(server.url) }),
+        ).rejects.toMatchObject({
+          code: 'configuration_error',
+          message: expect.stringMatching(/held by another process/),
+        })
+      } finally {
+        await new Promise<void>((resolve) => squatter.close(() => resolve()))
+      }
+    })
+
+    it.skipIf(!hasIpv6)('moves to another port when an ephemeral sibling is held', async () => {
+      // Same squatter, but the provider asked for any free port, so a collision
+      // is as likely to be ordinary as hostile. Take a different one.
+      const squatter = createServer()
+      await new Promise<void>((resolve) => squatter.listen(0, '::1', resolve))
+      const taken = (squatter.address() as AddressInfo).port
+
+      const started = await loopbackReceiver({ port: 0 }).start({
+        provider: testProvider(server.url),
+      })
+
+      try {
+        expect(new URL(started.redirectUri).port).not.toBe(String(taken))
+        const viaIpv6 = await rawGet(
+          `http://[::1]:${new URL(started.redirectUri).port}/callback?code=moved&state=xyz`,
+          navigationHeaders,
+        )
+        expect(viaIpv6.status).toBe(200)
+      } finally {
+        await started.close()
+        await new Promise<void>((resolve) => squatter.close(() => resolve()))
+      }
+    })
+
+    it('leaves a provider that advertises the IP literal on one address', async () => {
+      // `xai` already names `127.0.0.1`, which nothing else can answer for, so
+      // there is no sibling to cover and no second bind to attempt.
+      const started = await loopbackReceiver({ port: 0 }).start({
+        provider: testProvider(server.url, {
+          redirect: { mode: 'loopback', loopbackPort: 0, loopbackHost: '127.0.0.1' },
+        }),
+      })
+
+      try {
+        expect(started.redirectUri).toContain('127.0.0.1')
+        const result = await rawGet(`${started.redirectUri}?code=literal&state=xyz`, navigationHeaders)
+        expect(result.status).toBe(200)
+      } finally {
+        await started.close()
+      }
+    })
   })
 })

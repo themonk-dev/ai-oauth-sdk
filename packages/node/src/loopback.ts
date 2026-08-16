@@ -97,6 +97,70 @@ const securityHeaders: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
 }
 
+/**
+ * Host forms that name one address outright. Nothing else can answer for them,
+ * so a receiver advertising one of these already binds everything it promises.
+ */
+const ipLiteralHosts = new Set(['127.0.0.1', '::1', '[::1]'])
+
+/** The other address a hostname like `localhost` routinely also resolves to. */
+const siblingAddresses: Record<string, string> = { '127.0.0.1': '::1', '::1': '127.0.0.1' }
+
+/**
+ * Errno values that mean the address family is not available on this host at
+ * all, as opposed to the address being taken.
+ *
+ * The distinction is the whole point. A machine with IPv6 disabled cannot
+ * resolve `localhost` to `::1` either, so there is no address left for anyone
+ * to squat and binding IPv4 alone is complete. A port *held* by someone else is
+ * the opposite situation and must not be waved through.
+ */
+const familyUnavailable = new Set(['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EINVAL', 'EPROTONOSUPPORT'])
+
+/**
+ * The address a hostname resolves to besides `bindHost`, or `undefined` when
+ * there is nothing extra to cover.
+ */
+function siblingBindHost(advertisedHost: string, bindHost: string): string | undefined {
+  if (ipLiteralHosts.has(advertisedHost)) {
+    return undefined
+  }
+
+  return siblingAddresses[bindHost]
+}
+
+type BindOutcome = 'bound' | 'no-family' | 'in-use'
+
+/** Binds without opinions, so the caller can tell "taken" from "not supported". */
+async function tryListen(server: Server, port: number, host: string): Promise<BindOutcome> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: NodeJS.ErrnoException) => {
+      server.removeListener('listening', onListening)
+
+      if (error.code === 'EADDRINUSE') {
+        resolve('in-use')
+
+        return
+      }
+
+      if (error.code && familyUnavailable.has(error.code)) {
+        resolve('no-family')
+
+        return
+      }
+
+      reject(error)
+    }
+    const onListening = () => {
+      server.removeListener('error', onError)
+      resolve('bound')
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    server.listen(port, host)
+  })
+}
+
 async function listen(server: Server, port: number, host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const onError = (error: NodeJS.ErrnoException) => {
@@ -200,7 +264,7 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         response.once('close', () => void close())
       }
 
-      const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+      const handleRequest = (request: IncomingMessage, response: ServerResponse): void => {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           response.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'text/plain' })
           response.end('Method not allowed')
@@ -265,7 +329,11 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         response.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
         response.end(options.successHtml ?? DEFAULT_SUCCESS_HTML)
         settle(response, () => resolveCallback(result))
-      })
+      }
+
+      const server = createServer(handleRequest)
+      /* Every address currently answering for the advertised name. */
+      const servers: Server[] = [server]
 
       /**
        * Safe to call more than once, which it now is: `settle()` closes the
@@ -276,13 +344,88 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * call resolves rather than hanging.
        */
       const close = async (): Promise<void> => {
-        await new Promise<void>((resolve) => {
-          server.close(() => resolve())
-          server.closeAllConnections?.()
-        })
+        await Promise.all(
+          servers.map(
+            (each) =>
+              new Promise<void>((resolve) => {
+                each.close(() => resolve())
+                each.closeAllConnections?.()
+              }),
+          ),
+        )
       }
 
-      const boundPort = await listen(server, requestedPort, bindHost)
+      /**
+       * Binds every address the advertised host resolves to, not just one.
+       *
+       * The receiver binds `127.0.0.1`, but the redirect URI it hands the
+       * authorization server names `localhost` for four of the five bundled
+       * providers. On a dual-stack machine `localhost` resolves to `::1` as
+       * well — Chromium puts `::1` first and Happy Eyeballs tries it first — so
+       * another local user can bind `[::1]:<port>` and receive the callback
+       * while our own bind succeeds and the login looks entirely normal. Port
+       * reservation is per address, not per name, so the `EADDRINUSE` guard
+       * below never sees it. RFC 8252 §7.3 recommends the IP literal for
+       * exactly this reason, but OpenAI registered the `localhost` form, so the
+       * fix has to be to own the name rather than to stop using it.
+       *
+       * Failing to bind the sibling is only an error when something is *holding*
+       * it. A host with IPv6 disabled cannot resolve `localhost` to `::1`
+       * either, so there is nothing there to take and IPv4 alone is complete.
+       *
+       * A fixed published port gets one attempt, because a squatted sibling is
+       * the attack and there is no other port to move to. An ephemeral port may
+       * simply have collided with something already there, so it takes another —
+       * an attacker holding a wide swathe of the range makes this likely enough
+       * to matter, and each retry is a fresh draw.
+       */
+      const listenOnEveryAddress = async (): Promise<number> => {
+        const advertisedHost =
+          options.redirectHost ?? provider.redirect.loopbackHost ?? 'localhost'
+        const siblingHost = siblingBindHost(advertisedHost, bindHost)
+
+        if (!siblingHost) {
+          return listen(server, requestedPort, bindHost)
+        }
+
+        const attempts = requestedPort === 0 ? 5 : 1
+
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+          const port = await listen(server, requestedPort, bindHost)
+          const sibling = createServer(handleRequest)
+          const outcome = await tryListen(sibling, port, siblingHost)
+
+          if (outcome === 'bound') {
+            servers.push(sibling)
+
+            return port
+          }
+
+          if (outcome === 'no-family') {
+            return port
+          }
+
+          if (attempt === attempts) {
+            throw new OAuthError(
+              'configuration_error',
+              `Port ${port} on ${siblingHost} is held by another process, but the redirect ` +
+                `URI for this login names "${advertisedHost}", which resolves to both ` +
+                `${bindHost} and ${siblingHost}. The browser may hand the authorization code ` +
+                'to whoever holds the other address, so this login was refused rather than ' +
+                'started. Free that port, or pass `redirectHost: \'127.0.0.1\'` to ' +
+                'loopbackReceiver() if the provider accepts the IP literal.',
+            )
+          }
+
+          /* Release the port we took so the retry is a genuinely fresh draw. */
+          await new Promise<void>((resolve) => server.close(() => resolve()))
+        }
+
+        /* Unreachable: the loop either returns or throws on its last attempt. */
+        throw new OAuthError('configuration_error', 'Could not bind a loopback port.')
+      }
+
+      const boundPort = await listenOnEveryAddress()
 
       const onAbort = () => {
         settled = true

@@ -39,8 +39,8 @@ Providers that never return `state`, which today means OpenRouter, set `echoesSt
 resolve against the most recently started flow instead. That is fine for a CLI or a single-flow app.
 **It is not safe in a multi-user server**, where one user's callback could complete another's login.
 
-**The loopback server** binds `127.0.0.1`, never `0.0.0.0`, answers `GET` and `HEAD` only, and closes
-itself the moment a callback settles, so it really does serve exactly one. It sends `no-store`,
+**The loopback server** binds the loopback interface, never `0.0.0.0`, answers `GET` and `HEAD`
+only, and closes itself the moment a callback settles, so it really does serve exactly one. It sends `no-store`,
 `no-referrer` and `nosniff`, because the callback URL carries the authorization code in its query
 string. It also turns away anything the browser itself labels as other than a top-level navigation —
 `Sec-Fetch-Site` present and not `none`, without both `Sec-Fetch-Mode: navigate` and
@@ -52,6 +52,24 @@ redirect still completes. The destination is checked as well as the mode because
 cross-origin `<iframe>` is also a navigation, and `127.0.0.1` is a potentially trustworthy origin, so
 mixed content does not stop an https page embedding one. A client that sends no `Sec-Fetch-*`
 headers at all, which means anything that is not a browser, is unaffected.
+
+**It binds every address the redirect URI's host resolves to**, which is not the same thing as
+binding one. Most providers register the `localhost` form of the redirect URI rather than the IP
+literal, and on a dual-stack machine `localhost` is both `127.0.0.1` and `::1` — with browsers
+trying `::1` first. Binding only `127.0.0.1` would leave `[::1]:<port>` free for any other local
+user to take, and they would receive the callback while our own bind succeeded and the login looked
+normal, because a port is reserved per address and not per name. So the sibling address is bound
+too. A port already held there is treated as the hazard it is: on a fixed, published port the login
+is refused rather than started, and on an ephemeral one the receiver moves to a different port. A
+host with IPv6 switched off cannot resolve `localhost` to `::1` either, so binding IPv4 alone is
+complete there and the receiver degrades quietly.
+
+What that protects is narrower than it looks, and worth being plain about. PKCE is what stops a
+captured code being redeemed, since the verifier never leaves this process — so a squatter who won
+the race would get the code, the ability to stall the login, and control of a page on a URL the user
+was told to trust, but not a token. That depends on the authorization server actually enforcing the
+challenge, which this library cannot observe, and it does not apply at all to a provider you define
+with `usePkce: false`.
 
 **Popup callbacks are origin-checked** before being trusted, and `postCallbackToOpener` posts to its
 own origin rather than to `*`.
