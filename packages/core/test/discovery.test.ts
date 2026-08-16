@@ -294,6 +294,120 @@ describe('providerFromDiscovery', () => {
     ).rejects.toThrowError(/issuer is not a valid URL: "sso\.corp\.internal"/)
   })
 
+  // `fetch` follows redirects, and outside a browser nothing bars an https→http
+  // hop. Checking only the issuer therefore constrains where the request went,
+  // not where the document came from — and it is the document that names the
+  // endpoints. A stub `Response` cannot be given a `url` by its constructor, so
+  // these define one, which is exactly what a redirected real response carries.
+  const servedFrom = (finalUrl: string, document: unknown): Response => {
+    const response = new Response(JSON.stringify(document), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+    Object.defineProperty(response, 'url', { value: finalUrl })
+
+    return response
+  }
+
+  const hostileDocument = {
+    authorization_endpoint: 'https://evil.example/authorize',
+    token_endpoint: 'https://evil.example/token',
+  }
+
+  it('refuses a document redirected down to cleartext', async () => {
+    // The endpoints are https, so every later check passes them. Only the
+    // scheme of the URL the document was actually served from catches this.
+    const fetchImpl: FetchLike = async () =>
+      servedFrom('http://sso.corp.example/.well-known/openid-configuration', hostileDocument)
+
+    await expect(
+      providerFromDiscovery(
+        'https://idp.acme.example',
+        { id: 'acme', label: 'Acme', clientSecret: 'super-secret', redirect: { mode: 'loopback' } },
+        fetchImpl,
+      ),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/redirected to an insecure URL/),
+    })
+  })
+
+  it('allows a redirect that stays on https', async () => {
+    // Path normalisation and a hop to a separate identity host are both
+    // ordinary. The check is on the scheme alone precisely so they keep working
+    // — requiring the final origin to match the issuer would break them.
+    for (const finalUrl of [
+      'https://idp.acme.example/.well-known/openid-configuration/',
+      'https://login.acme.example/.well-known/openid-configuration',
+    ]) {
+      const fetchImpl: FetchLike = async () =>
+        servedFrom(finalUrl, {
+          authorization_endpoint: 'https://acme.test/authorize',
+          token_endpoint: 'https://acme.test/token',
+        })
+
+      await expect(
+        providerFromDiscovery(
+          'https://idp.acme.example',
+          { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } },
+          fetchImpl,
+        ),
+      ).resolves.toMatchObject({ tokenUrl: 'https://acme.test/token' })
+    }
+  })
+
+  it('leaves a hand-built response with no url alone', async () => {
+    // A `FetchLike` returning a constructed `Response` reports `url` as '', and
+    // a test double should not have to fake one to stay working.
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          authorization_endpoint: 'https://acme.test/authorize',
+          token_endpoint: 'https://acme.test/token',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+
+    await expect(
+      providerFromDiscovery(
+        'https://acme.test',
+        { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } },
+        fetchImpl,
+      ),
+    ).resolves.toMatchObject({ tokenUrl: 'https://acme.test/token' })
+  })
+
+  it('follows a real redirect between loopback hosts', async () => {
+    // End to end through the platform `fetch`, so `response.url` is the real
+    // one rather than a defined property. Cleartext on loopback keeps the same
+    // exemption every other check here gives it.
+    const target = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+    })
+    const redirector = createServer((request, response) => {
+      response.writeHead(302, { Location: `${target}${request.url}` })
+      response.end()
+    })
+    await new Promise<void>((resolve) => redirector.listen(0, '127.0.0.1', resolve))
+    const issuer = `http://127.0.0.1:${(redirector.address() as AddressInfo).port}`
+
+    try {
+      await expect(
+        providerFromDiscovery(issuer, {
+          id: 'acme',
+          label: 'Acme',
+          redirect: { mode: 'loopback' },
+        }),
+      ).resolves.toMatchObject({ tokenUrl: 'https://acme.test/token' })
+    } finally {
+      await new Promise<void>((resolve) => {
+        redirector.close(() => resolve())
+        redirector.closeAllConnections?.()
+      })
+    }
+  })
+
   it('still checks the document when an endpoint is passed as null', async () => {
     // `??` falls through on `null` as well as `undefined`, so the document's
     // value wins here. A guard testing only for `undefined` would skip the

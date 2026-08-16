@@ -236,6 +236,46 @@ function assertSecureIssuer(issuer: string): void {
 }
 
 /**
+ * The issuer check above constrains where the request was *sent*; this one
+ * constrains where the document was actually *served from*.
+ *
+ * `fetch` follows redirects by default, and outside a browser nothing bars an
+ * https→http hop — Node's does follow one. So an https issuer that redirects
+ * down to cleartext lands us right back in the case {@link assertSecureIssuer}
+ * exists to prevent: whoever is on the network path writes the document, names
+ * `https` endpoints of their own, and those pass every later check and are
+ * carried by the descriptor for its whole life. The realistic way to get there
+ * is not an attacker — they cannot answer the https request in the first place
+ * — but an issuer behind a TLS-terminating proxy that ignores
+ * `X-Forwarded-Proto` and emits an absolute `Location: http://…` when it
+ * canonicalises a host or a trailing slash.
+ *
+ * Deliberately a scheme check and nothing more. Refusing redirects outright, or
+ * requiring the final origin to match the issuer, would break issuers that
+ * legitimately redirect for path normalisation or to a separate identity host,
+ * and those hops are not the problem. The `http`→`https` upgrade that once
+ * argued against checking here can no longer occur: an `http` issuer is now
+ * refused before any request is made.
+ *
+ * A `FetchLike` that returns a hand-built `Response` leaves `url` empty, so
+ * stubs and test doubles are untouched.
+ */
+function assertSecureDiscoveryResponse(url: string, response: { url?: string }): void {
+  const finalUrl = response.url
+
+  if (!finalUrl || classifyDiscoveryUrl(finalUrl) !== 'insecure') {
+    return
+  }
+
+  throw new OAuthError(
+    'configuration_error',
+    `Discovery for ${url} was redirected to an insecure URL: "${finalUrl}". The document ` +
+      'decides this provider\'s authorization and token endpoints, so it must arrive over ' +
+      'https, except on loopback.',
+  )
+}
+
+/**
  * Builds a descriptor from an OIDC discovery document, so providers that move
  * their endpoints (or ones this library has never heard of) work without a
  * release. Pass the issuer URL, not the `.well-known` path. It must use `https`
@@ -262,6 +302,8 @@ export async function providerFromDiscovery(
 
   const url = `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`
   const response = await fetchImpl(url)
+
+  assertSecureDiscoveryResponse(url, response)
 
   if (!response.ok) {
     throw new OAuthError(

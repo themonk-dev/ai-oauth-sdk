@@ -65,6 +65,19 @@ callback taken by the wrong tab fails rather than completing. Use it on redirect
 — an authorization page that severs `window.opener` leaves no alternative — and prefer
 `postCallbackToOpener` wherever the opener survived.
 
+**Discovery is treated as remote input, over a transport that has to stay https.**
+`providerFromDiscovery()` takes a document from a party you have not vouched for, and that document
+names the endpoints every later code exchange and refresh will post to — so the issuer must use
+`https`, the endpoints it names must use `https`, and the URL the document was finally *served* from
+must use `https` too. The last of those is not the same check as the first: `fetch` follows
+redirects, and outside a browser nothing bars an `https`→`http` hop, so an issuer that redirects
+down to cleartext would otherwise let whoever is on the path write the document and choose
+endpoints that pass every remaining check. Loopback is exempt throughout, so a local authorization
+server on `http://127.0.0.1:<port>` still works. Endpoints you pass explicitly are your own config
+and are left alone. There is no issuer-equality check, which would break legitimate multi-tenant
+deployments; an `AuthClient` is bound to one provider at construction, so it has nothing to be
+mixed up with.
+
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis, but that body is not ours and a misconfigured
 gateway echoing the request back would put a live refresh token straight into your logs. Snippets
