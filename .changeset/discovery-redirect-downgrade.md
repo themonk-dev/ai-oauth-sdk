@@ -14,4 +14,6 @@ The response's final URL must now use `https`, with the same loopback exemption 
 
 Deliberately a scheme check and nothing more. Refusing redirects outright, or requiring the final origin to match the issuer, would break issuers that legitimately redirect for path normalisation or onto a separate identity host, and neither hop is the problem. The `http`→`https` upgrade that previously argued against checking here can no longer arise, because an `http` issuer is refused before any request is made.
 
+The loopback exemption is inherited only when the issuer was itself on loopback. A local development server redirecting within `127.0.0.1` is ordinary; a public `https` issuer redirecting *down* onto loopback is not, and would hand the choice of endpoints to whatever local process holds that port. A final URL that does not parse is refused rather than waved through, matching what the issuer and endpoint checks already do with one.
+
 A `FetchLike` that returns a hand-built `Response` reports its `url` as empty, so stubs and test doubles are unaffected.

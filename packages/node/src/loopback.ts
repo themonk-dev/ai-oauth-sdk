@@ -107,6 +107,20 @@ const ipLiteralHosts = new Set(['127.0.0.1', '::1', '[::1]'])
 const siblingAddresses: Record<string, string> = { '127.0.0.1': '::1', '::1': '127.0.0.1' }
 
 /**
+ * Names that mean "the loopback interface" rather than one address on it.
+ *
+ * A bind host given as a name is normalised to `127.0.0.1` before anything
+ * reasons about siblings. Otherwise `loopbackReceiver({ host: 'localhost' })` —
+ * a plausible reading of an option documented as "interface to bind" — would
+ * bind whichever single address the resolver happened to prefer and find no
+ * sibling to pair it with, silently reinstating the very gap this covers.
+ */
+const loopbackNames = new Set(['localhost'])
+
+/** How many ephemeral ports to try before giving up on finding a clean pair. */
+const EPHEMERAL_BIND_ATTEMPTS = 5
+
+/**
  * Errno values that mean the address family is not available on this host at
  * all, as opposed to the address being taken.
  *
@@ -127,6 +141,20 @@ function siblingBindHost(advertisedHost: string, bindHost: string): string | und
   }
 
   return siblingAddresses[bindHost]
+}
+
+/**
+ * Retires one server.
+ *
+ * `closeAllConnections()` is not optional dressing: `close()` alone waits for
+ * in-flight connections, and a client that has sent half a request holds one
+ * open indefinitely — which would hang whoever awaited this.
+ */
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve())
+    server.closeAllConnections?.()
+  })
 }
 
 type BindOutcome = 'bound' | 'no-family' | 'in-use'
@@ -227,6 +255,7 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       const { provider } = context
       const path = options.path ?? provider.redirect.loopbackPath ?? '/callback'
       const bindHost = options.host ?? '127.0.0.1'
+      const primaryHost = loopbackNames.has(bindHost) ? '127.0.0.1' : bindHost
       const requestedPort = options.port ?? provider.redirect.loopbackPort ?? 0
 
       let resolveCallback: (result: CallbackResult) => void
@@ -344,15 +373,7 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * call resolves rather than hanging.
        */
       const close = async (): Promise<void> => {
-        await Promise.all(
-          servers.map(
-            (each) =>
-              new Promise<void>((resolve) => {
-                each.close(() => resolve())
-                each.closeAllConnections?.()
-              }),
-          ),
-        )
+        await Promise.all(servers.map(closeServer))
       }
 
       /**
@@ -382,47 +403,60 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       const listenOnEveryAddress = async (): Promise<number> => {
         const advertisedHost =
           options.redirectHost ?? provider.redirect.loopbackHost ?? 'localhost'
-        const siblingHost = siblingBindHost(advertisedHost, bindHost)
+        const siblingHost = siblingBindHost(advertisedHost, primaryHost)
 
         if (!siblingHost) {
-          return listen(server, requestedPort, bindHost)
+          return listen(server, requestedPort, primaryHost)
         }
 
-        const attempts = requestedPort === 0 ? 5 : 1
+        const attempts = requestedPort === 0 ? EPHEMERAL_BIND_ATTEMPTS : 1
 
-        for (let attempt = 1; attempt <= attempts; attempt++) {
-          const port = await listen(server, requestedPort, bindHost)
-          const sibling = createServer(handleRequest)
-          const outcome = await tryListen(sibling, port, siblingHost)
+        /* Anything thrown from here escapes `start()`, and a caller that never
+           received a receiver has nothing to call `close()` on — `login()` binds
+           `started` outside its own `try`. So a failure that leaves the primary
+           listening would hold the port for the life of the process: the CLI,
+           which sets `process.exitCode` rather than calling `process.exit`,
+           would never terminate, and a second attempt would collide with our own
+           socket and report "already in use" instead of the real reason. */
+        try {
+          for (let attempt = 1; attempt <= attempts; attempt++) {
+            const port = await listen(server, requestedPort, primaryHost)
+            const sibling = createServer(handleRequest)
+            const outcome = await tryListen(sibling, port, siblingHost)
 
-          if (outcome === 'bound') {
-            servers.push(sibling)
+            if (outcome === 'bound') {
+              servers.push(sibling)
 
-            return port
+              return port
+            }
+
+            if (outcome === 'no-family') {
+              return port
+            }
+
+            if (attempt === attempts) {
+              throw new OAuthError(
+                'configuration_error',
+                `Port ${port} on ${siblingHost} is held by another process, but the redirect ` +
+                  `URI for this login names "${advertisedHost}", which resolves to both ` +
+                  `${primaryHost} and ${siblingHost}. The browser may hand the authorization ` +
+                  'code to whoever holds the other address, so this login was refused rather ' +
+                  'than started. Free that port, or pass `redirectHost: \'127.0.0.1\'` to ' +
+                  'loopbackReceiver() if the provider accepts the IP literal.',
+              )
+            }
+
+            /* Release the port we took so the retry is a genuinely fresh draw. */
+            await closeServer(server)
           }
 
-          if (outcome === 'no-family') {
-            return port
-          }
+          /* Unreachable: the loop either returns or throws on its last attempt. */
+          throw new OAuthError('configuration_error', 'Could not bind a loopback port.')
+        } catch (error) {
+          await close()
 
-          if (attempt === attempts) {
-            throw new OAuthError(
-              'configuration_error',
-              `Port ${port} on ${siblingHost} is held by another process, but the redirect ` +
-                `URI for this login names "${advertisedHost}", which resolves to both ` +
-                `${bindHost} and ${siblingHost}. The browser may hand the authorization code ` +
-                'to whoever holds the other address, so this login was refused rather than ' +
-                'started. Free that port, or pass `redirectHost: \'127.0.0.1\'` to ' +
-                'loopbackReceiver() if the provider accepts the IP literal.',
-            )
-          }
-
-          /* Release the port we took so the retry is a genuinely fresh draw. */
-          await new Promise<void>((resolve) => server.close(() => resolve()))
+          throw error
         }
-
-        /* Unreachable: the loop either returns or throws on its last attempt. */
-        throw new OAuthError('configuration_error', 'Could not bind a loopback port.')
       }
 
       const boundPort = await listenOnEveryAddress()

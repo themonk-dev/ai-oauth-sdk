@@ -14,4 +14,7 @@ RFC 8252 §7.3 recommends the IP literal precisely to avoid this, but OpenAI reg
 
 Failing to bind the sibling is only treated as an error when something is *holding* it. A host with IPv6 disabled cannot resolve `localhost` to `::1` either, so there is nothing there to take and the IPv4 bind is already complete; `EAFNOSUPPORT` and friends degrade silently. `EADDRINUSE` is the attack signal: on a fixed published port there is nowhere else to go, so the login is refused with an explanation rather than started, and on an ephemeral port — where a collision is as likely to be ordinary as hostile — the receiver takes a different port instead.
 
-A provider that already advertises an IP literal, like `xai`, is untouched: nothing else can answer for an address, so there is no sibling to cover.
+A provider that already advertises an IP literal, like `xai`, is untouched: nothing else can answer for an address, so there is no sibling to cover. A `host` passed as a name rather than an address is normalised first, so `loopbackReceiver({ host: 'localhost' })` cannot quietly opt back out of the pairing.
+
+A refusal releases the port it had already taken. That matters more than it sounds: the throw leaves `start()` before the caller holds a receiver, so nothing else can close it, and a listening handle left behind would stop the CLI exiting at all — `bin.ts` sets `process.exitCode` rather than calling `process.exit`. It would also make the next attempt collide with our own socket and report "already in use" instead of the reason the first one was refused.
+

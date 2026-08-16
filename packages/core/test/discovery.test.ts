@@ -328,8 +328,40 @@ describe('providerFromDiscovery', () => {
       ),
     ).rejects.toMatchObject({
       code: 'configuration_error',
-      message: expect.stringMatching(/redirected to an insecure URL/),
+      message: expect.stringMatching(/redirected to an unusable URL/),
     })
+  })
+
+  it('refuses a public issuer redirected onto loopback', async () => {
+    // The loopback exemption is for a local development issuer redirecting
+    // within itself. Arriving on loopback after starting at a public https
+    // issuer is not that: it hands the choice of endpoints to whatever local
+    // process holds the port.
+    const fetchImpl: FetchLike = async () =>
+      servedFrom('http://127.0.0.1:9999/.well-known/openid-configuration', hostileDocument)
+
+    await expect(
+      providerFromDiscovery(
+        'https://idp.acme.example',
+        { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } },
+        fetchImpl,
+      ),
+    ).rejects.toMatchObject({ code: 'configuration_error' })
+  })
+
+  it('refuses a final URL it cannot parse', async () => {
+    // The issuer and endpoint checks both refuse an unparseable URL. A value we
+    // cannot read is not one we can vouch for, so this one does too rather than
+    // falling through.
+    const fetchImpl: FetchLike = async () => servedFrom('not a url at all', hostileDocument)
+
+    await expect(
+      providerFromDiscovery(
+        'https://idp.acme.example',
+        { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } },
+        fetchImpl,
+      ),
+    ).rejects.toMatchObject({ code: 'configuration_error' })
   })
 
   it('allows a redirect that stays on https', async () => {

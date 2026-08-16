@@ -376,48 +376,81 @@ describe('loopbackReceiver', () => {
       }
     })
 
+    /**
+     * Holds `[::1]:port` while leaving `127.0.0.1:port` free — the shape of the
+     * attack, and the one arrangement the receiver must not start under.
+     *
+     * The port is taken on both addresses first and IPv4 released, so the test
+     * cannot pick a port that something else already holds on `127.0.0.1` and
+     * then fail on the generic "already in use" message for the wrong reason.
+     */
+    const squatSibling = async (): Promise<{ port: number; release: () => Promise<void> }> => {
+      const onIpv4 = createServer()
+      await new Promise<void>((resolve) => onIpv4.listen(0, '127.0.0.1', resolve))
+      const port = (onIpv4.address() as AddressInfo).port
+      const onIpv6 = createServer()
+      await new Promise<void>((resolve, reject) => {
+        onIpv6.once('error', reject)
+        onIpv6.listen(port, '::1', resolve)
+      })
+      await new Promise<void>((resolve) => onIpv4.close(() => resolve()))
+
+      return {
+        port,
+        release: () => new Promise<void>((resolve) => onIpv6.close(() => resolve())),
+      }
+    }
+
     it.skipIf(!hasIpv6)('refuses a fixed port whose sibling address is held', async () => {
       // A squatter on `[::1]:PORT` is the attack: our own bind on 127.0.0.1
       // succeeds, the login looks normal, and the browser hands the code to
       // them. On a fixed published port there is nowhere else to go, so the
       // login is refused rather than started.
-      const squatter = createServer()
-      await new Promise<void>((resolve) => squatter.listen(0, '::1', resolve))
-      const port = (squatter.address() as AddressInfo).port
+      const squatter = await squatSibling()
 
       try {
         await expect(
-          loopbackReceiver({ port }).start({ provider: testProvider(server.url) }),
+          loopbackReceiver({ port: squatter.port }).start({ provider: testProvider(server.url) }),
         ).rejects.toMatchObject({
           code: 'configuration_error',
           message: expect.stringMatching(/held by another process/),
         })
       } finally {
-        await new Promise<void>((resolve) => squatter.close(() => resolve()))
+        await squatter.release()
       }
     })
 
-    it.skipIf(!hasIpv6)('moves to another port when an ephemeral sibling is held', async () => {
-      // Same squatter, but the provider asked for any free port, so a collision
-      // is as likely to be ordinary as hostile. Take a different one.
-      const squatter = createServer()
-      await new Promise<void>((resolve) => squatter.listen(0, '::1', resolve))
-      const taken = (squatter.address() as AddressInfo).port
-
-      const started = await loopbackReceiver({ port: 0 }).start({
-        provider: testProvider(server.url),
-      })
+    it.skipIf(!hasIpv6)('releases the port it took when it refuses', async () => {
+      // The refusal throws out of `start()`, so the caller never receives a
+      // receiver and has nothing to close. A primary left listening would hold
+      // the port for the life of the process — the CLI sets `process.exitCode`
+      // rather than calling `process.exit`, so a live handle means it never
+      // exits — and the next attempt would collide with our own socket and
+      // report "already in use" instead of the real reason.
+      const squatter = await squatSibling()
 
       try {
-        expect(new URL(started.redirectUri).port).not.toBe(String(taken))
-        const viaIpv6 = await rawGet(
-          `http://[::1]:${new URL(started.redirectUri).port}/callback?code=moved&state=xyz`,
-          navigationHeaders,
-        )
-        expect(viaIpv6.status).toBe(200)
+        await expect(
+          loopbackReceiver({ port: squatter.port }).start({ provider: testProvider(server.url) }),
+        ).rejects.toMatchObject({ code: 'configuration_error' })
+
+        // Nothing of ours is left on the IPv4 side.
+        const probe = createServer()
+        await expect(
+          new Promise<void>((resolve, reject) => {
+            probe.once('error', reject)
+            probe.listen(squatter.port, '127.0.0.1', resolve)
+          }),
+        ).resolves.toBeUndefined()
+        await new Promise<void>((resolve) => probe.close(() => resolve()))
+
+        // And the second attempt still reports the security refusal, not a
+        // collision with a socket we forgot to release.
+        await expect(
+          loopbackReceiver({ port: squatter.port }).start({ provider: testProvider(server.url) }),
+        ).rejects.toMatchObject({ message: expect.stringMatching(/held by another process/) })
       } finally {
-        await started.close()
-        await new Promise<void>((resolve) => squatter.close(() => resolve()))
+        await squatter.release()
       }
     })
 
