@@ -43,8 +43,29 @@ const tokens = await client.login({
 })
 ```
 
-It also checks `getInitialURL()`, which is how the redirect arrives when the OS killed
-your app while the user was on the consent screen.
+A custom URL scheme is open to every app on the device, so the receiver matches the
+callback to the attempt it presented, by `state`. A deep link whose `state` disagrees —
+or that carries none where one was presented — is dropped instead of settling the login.
+That includes `?error=...`, which RFC 6749 requires a provider to echo `state` on; a
+provider that does not leaves the login pending rather than failing it, so pass
+`timeoutMs` (or a `signal`) to `login()`.
+
+### Cold start
+
+If the OS killed your app while the user was on the consent screen, the redirect arrives
+as the launch URL rather than a `url` event, and `login()` cannot pick it up: the
+relaunched app starts a fresh authorization with a fresh `state`, which the old URL can
+never match. Finish it yourself instead — the pending record is stored under its `state`,
+so with a persistent storage adapter, and inside the authorization TTL (10 minutes by
+default), this completes the flow the killed process started:
+
+```ts
+const callbackUrl = await Linking.getInitialURL()
+
+if (callbackUrl?.startsWith('myapp://auth/callback')) {
+  await client.completeAuthorization({ callbackUrl })
+}
+```
 
 ## Crypto
 

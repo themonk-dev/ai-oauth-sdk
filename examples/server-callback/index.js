@@ -44,6 +44,20 @@ const html = (body) =>
    <style>body{font:16px/1.6 ui-sans-serif,system-ui;max-width:44rem;margin:4rem auto;padding:0 1rem}
    code{background:#0001;padding:.15em .4em;border-radius:4px}</style>${body}`
 
+// Every value interpolated into a page below goes through this first. None of
+// them look dangerous — a provider label, an account id, an error message — but
+// `error.message` quotes the provider's `error_description`, which on this
+// route is whatever the caller put in the query string, and the error branch
+// runs before any `state` is looked up, so no flow need be in progress for a
+// stranger to reach it. Copy this along with the rest of the file.
+const escapeHtml = (value) =>
+  String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, ORIGIN)
 
@@ -69,10 +83,10 @@ const server = createServer(async (request, response) => {
       response.writeHead(200, { 'Content-Type': 'text/html' })
       response.end(
         html(`<h1>Signed in</h1>
-              <p>Account: <code>${tokens.email ?? tokens.accountId ?? 'unknown'}</code></p>
-              <p>Token expires: <code>${
-                tokens.expiresAt ? new Date(tokens.expiresAt).toLocaleString() : 'n/a'
-              }</code></p>
+              <p>Account: <code>${escapeHtml(tokens.email ?? tokens.accountId ?? 'unknown')}</code></p>
+              <p>Token expires: <code>${escapeHtml(
+                tokens.expiresAt ? new Date(tokens.expiresAt).toLocaleString() : 'n/a',
+              )}</code></p>
               <p><a href="/">Back</a></p>`),
       )
 
@@ -93,7 +107,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/html' })
     response.end(
       html(`<h1>ai-oauth-sdk — server callback</h1>
-            <p>Provider: <code>${client.provider.label}</code></p>
+            <p>Provider: <code>${escapeHtml(client.provider.label)}</code></p>
             <p><a href="/login">Sign in</a></p>
             <p>The flow starts on <code>/login</code> and finishes on
                <code>/callback</code> — a different request entirely. They are
@@ -102,7 +116,7 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     const status = isOAuthError(error) ? 400 : 500
     response.writeHead(status, { 'Content-Type': 'text/html' })
-    response.end(html(`<h1>Sign-in failed</h1><p><code>${error.message}</code></p>`))
+    response.end(html(`<h1>Sign-in failed</h1><p><code>${escapeHtml(error.message)}</code></p>`))
   }
 })
 

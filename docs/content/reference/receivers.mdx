@@ -151,7 +151,16 @@ bare app that has none of Expo.
 | `linking` | `LinkingLike` | **Required.** Linking from react-native. |
 | `redirectUri` | `string` | **Required.** Your app's callback URL. |
 
-Also checks `getInitialURL()`, so a cold start after the OS killed your app still completes.
+Matches every deep link to the attempt it presented, by `state`, because a custom scheme is open to
+every app on the device. One that disagrees, or that carries no `state` where one was presented, is
+dropped — including `?error=...`, which RFC 6749 requires providers to echo `state` on. A provider
+that does not leaves the login pending rather than failing it, so give `login()` a `timeoutMs`.
+
+Also reads `getInitialURL()`, which is where the redirect lands when the OS killed your app while
+the user was on the consent screen. That does not resume the `login()` the killed process started —
+the relaunched app mints a new `state` the old URL can never match — so pass the URL to
+`completeAuthorization()` yourself, from storage that survived the restart. See
+[React Native](/docs/runtimes/react-native).
 
 ### authSessionReceiver(options)
 

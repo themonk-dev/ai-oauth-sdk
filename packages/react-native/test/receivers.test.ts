@@ -52,6 +52,22 @@ function fakeLinking(options: { initialUrl?: string } = {}) {
   }
 }
 
+/**
+ * What the login did, or `'ignored'` when the receiver never settled it.
+ *
+ * A dropped deep link leaves `wait()` pending, which is the whole point — so
+ * the assertion has to be "still pending after a beat" rather than an outcome.
+ */
+function outcomeOf(waiting: Promise<unknown>): Promise<string> {
+  return Promise.race([
+    waiting.then(
+      () => 'resolved',
+      () => 'rejected',
+    ),
+    new Promise<string>((resolve) => setTimeout(() => resolve('ignored'), 50)),
+  ])
+}
+
 describe('deepLinkReceiver', () => {
   it('opens the URL and resolves on the matching deep link', async () => {
     const fake = fakeLinking()
@@ -87,27 +103,94 @@ describe('deepLinkReceiver', () => {
     await started.close()
   })
 
-  it('handles a cold start, where the redirect is the initial URL', async () => {
-    // The OS killed the app while the user was on the consent screen, so the
-    // callback never arrives as a `url` event.
+  it('ignores a deep link whose path merely starts with the redirect URI', async () => {
+    const fake = fakeLinking()
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider,
+    })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    const waiting = started.wait()
+
+    // The `state` matches, so only the path comparison can turn this away.
+    fake.emit(`${REDIRECT}XYZ?code=abc&state=xyz`)
+    expect(await outcomeOf(waiting)).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('takes an initial URL that belongs to the attempt it presented', async () => {
+    // `getInitialURL()` is the OS's other delivery path for the redirect. It
+    // resumes nothing across a cold start — a relaunched app mints a new
+    // `state` — but the URL is still the callback when the presented `state`
+    // says so.
     const fake = fakeLinking({ initialUrl: `${REDIRECT}?code=cold&state=start` })
     const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
       provider,
     })
 
+    await started.present('https://provider.test/authorize?state=start')
     await expect(started.wait()).resolves.toEqual({ code: 'cold', state: 'start' })
     await started.close()
   })
 
-  it('surfaces a denial', async () => {
+  it('ignores an initial URL left over from an earlier attempt', async () => {
+    // `getInitialURL()` does not drain: it answers with the launch URL for the
+    // life of the process, so every login after the first sees it again.
+    const fake = fakeLinking({ initialUrl: `${REDIRECT}?code=stale&state=previous` })
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider,
+    })
+
+    await started.present('https://provider.test/authorize?state=current')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('surfaces a denial that echoes the presented state', async () => {
     const fake = fakeLinking()
     const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
       provider,
     })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    const waiting = started.wait()
+
+    fake.emit(`${REDIRECT}?error=access_denied&state=xyz`)
+    await expect(waiting).rejects.toMatchObject({ code: 'authorization_denied' })
+
+    await started.close()
+  })
+
+  it('ignores a denial that carries no state', async () => {
+    // Any app on the device can send this one, so it must not be able to fail
+    // a login that is genuinely in progress.
+    const fake = fakeLinking()
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider,
+    })
+
+    await started.present('https://provider.test/authorize?state=xyz')
     const waiting = started.wait()
 
     fake.emit(`${REDIRECT}?error=access_denied`)
-    await expect(waiting).rejects.toMatchObject({ code: 'authorization_denied' })
+    expect(await outcomeOf(waiting)).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('ignores a callback whose state disagrees', async () => {
+    const fake = fakeLinking()
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider,
+    })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    const waiting = started.wait()
+
+    fake.emit(`${REDIRECT}?code=forged&state=someone-elses`)
+    expect(await outcomeOf(waiting)).toBe('ignored')
 
     await started.close()
   })
