@@ -42,6 +42,7 @@ function stubGitHub({ expiresIn = 1500, apiHost = 'https://api.individual.github
   const calls: Array<{ url: string; headers: Headers }> = []
   let issued = 0
   let apiStatus = 200
+  let host = apiHost
 
   const fetchImpl = async (url: string, init?: RequestInit): Promise<Response> => {
     if (url === EXCHANGE_URL) {
@@ -55,7 +56,7 @@ function stubGitHub({ expiresIn = 1500, apiHost = 'https://api.individual.github
       return Response.json({
         token: `copilot-token-${issued}`,
         expires_at: Math.floor((Date.now() + expiresIn * 1000) / 1000),
-        ...(apiHost ? { endpoints: { api: apiHost } } : {}),
+        ...(host ? { endpoints: { api: host } } : {}),
       })
     }
 
@@ -76,6 +77,10 @@ function stubGitHub({ expiresIn = 1500, apiHost = 'https://api.individual.github
     },
     recoverApi() {
       apiStatus = 200
+    },
+    /** What the *next* exchange names as this account's host. */
+    setApiHost(next: string) {
+      host = next
     },
   }
 }
@@ -197,5 +202,33 @@ describe('an authenticated fetch against Copilot', () => {
 
     expect(github.exchangeCount).toBe(2)
     expect(github.calls.at(-1)?.headers.get('authorization')).toBe('Bearer copilot-token-2')
+  })
+
+  /*
+   * A `fetch` is built once and kept, but the client's stored token is not
+   * fixed for its lifetime. Cached on nothing, the exchanged credential — and
+   * the enterprise host that came with it — outlived the account it belonged to.
+   */
+  it('re-exchanges after the account underneath it changes', async () => {
+    const client = await signedInClient()
+    const github = stubGitHub({ apiHost: 'https://api.enterprise.githubcopilot.com' })
+    const api = createAuthenticatedFetch(client, { fetch: github.fetchImpl })
+
+    await api('/as-user-a')
+    expect(github.exchangeCount).toBe(1)
+
+    await client.logout()
+    await client.setTokens({ ...tokens, accessToken: 'ghu_second-account' })
+    github.setApiHost('https://api.individual.githubcopilot.com')
+    await api('/as-user-b')
+
+    // User B's request must be exchanged for their own credential, and sent to
+    // the host their own exchange named.
+    expect(github.exchangeCount).toBe(2)
+    expect(github.exchanges[1]?.['authorization']).toBe('token ghu_second-account')
+    expect(github.calls.at(-1)?.headers.get('authorization')).toBe('Bearer copilot-token-2')
+    expect(github.calls.at(-1)?.url).toBe(
+      'https://api.individual.githubcopilot.com/as-user-b',
+    )
   })
 })

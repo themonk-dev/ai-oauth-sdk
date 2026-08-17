@@ -1,0 +1,15 @@
+---
+'@ai-oauth-sdk/core': patch
+---
+
+Key the exchanged-credential cache on the token it was derived from, and redact the device flow's `error` code before printing it.
+
+**`createAuthenticatedFetch()` cached the exchanged credential on nothing at all.** For a provider that declares `exchangeCredential` — GitHub Copilot is the one in the box — the stored OAuth token is not the API credential, so the fetch trades it for a short-lived one and holds that for its ~25-minute life rather than paying a round trip per request. The cache was a closure variable holding the credential and its expiry, and no record of whose it was. It was thrown away on exactly one path: the 401 retry.
+
+Nothing else can reach it. `logout()` clears the client's in-memory tokens and the storage key, but has no handle on a fetch built from that client, and the fetch never asks whether the token underneath it is the one it exchanged. So a sign-in, one Copilot call, a `logout()`, and a second sign-in on the same `AuthClient` left the second account's requests carrying the first account's credential — and going to the first account's host, because Copilot only learns its API host from the exchange and an enterprise account gets a different one. Requests made by user B went out as `Bearer EX(USER-A)` to A's host, for as long as A's credential remained valid. No 401 ever corrected it, since A's credential was not expired or revoked — merely not B's.
+
+Reusing one fetch across calls is the documented shape, not misuse: it is presented as a long-lived object to hand to an SDK, and holding one for the process is the point of it. The library never told the caller to rebuild it after a logout, and nothing in the type says it is bound to an account.
+
+The cache now records the stored access token the credential came from and is only read while that token still matches. A changed token — a different account, or any other reason the stored value moved — misses and re-exchanges, which also picks up the new account's `baseUrl`. Reuse across calls for one unchanging token, the renewal window, and the 401 discard are all unchanged, and there is no public API change.
+
+**On the device flow, the provider's `error` code was interpolated verbatim** into the failure message and stored on `providerError`, unbounded, while `error_description` and the raw body beside it both went through `safeSnippet`. A gateway that reflects the request into that field — the same misconfiguration the redaction exists for — put a live `device_code` and PKCE `code_verifier` straight into the error message, and from there into logs and terminal scrollback. The identical body handled by the token endpoint's path came out redacted, because `readTokenError` sends `error` through `safeSnippet` like everything else; this was the one call site that did not. It now does, at the throw only: the `authorization_pending` and `slow_down` comparisons that drive the poll loop keep matching the raw value rather than depending on a spec code happening to survive redaction unchanged.
