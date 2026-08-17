@@ -136,6 +136,24 @@ const loopbackHosts = new Set(['127.0.0.1', '[::1]', 'localhost'])
  * wrong with an `http` `token_endpoint` and what is wrong with an `http` issuer
  * are different sentences, and the reader only ever sees one of them.
  */
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+
+    return parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
 function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' {
   let parsed: URL
 
@@ -236,6 +254,67 @@ function assertSecureIssuer(issuer: string): void {
 }
 
 /**
+ * The issuer check above constrains where the request was *sent*; this one
+ * constrains where the document was actually *served from*.
+ *
+ * `fetch` follows redirects by default, and outside a browser nothing bars an
+ * https→http hop — Node's does follow one. So an https issuer that redirects
+ * down to cleartext lands us right back in the case {@link assertSecureIssuer}
+ * exists to prevent: whoever is on the network path writes the document, names
+ * `https` endpoints of their own, and those pass every later check and are
+ * carried by the descriptor for its whole life. The realistic way to get there
+ * is not an attacker — they cannot answer the https request in the first place
+ * — but an issuer behind a TLS-terminating proxy that ignores
+ * `X-Forwarded-Proto` and emits an absolute `Location: http://…` when it
+ * canonicalises a host or a trailing slash.
+ *
+ * Deliberately a scheme check and nothing more. Refusing redirects outright, or
+ * requiring the final origin to match the issuer, would break issuers that
+ * legitimately redirect for path normalisation or to a separate identity host,
+ * and those hops are not the problem. The `http`→`https` upgrade that once
+ * argued against checking here can no longer occur: an `http` issuer is now
+ * refused before any request is made.
+ *
+ * The loopback exemption is inherited only when the issuer was itself loopback.
+ * A local development server redirecting within `127.0.0.1` is ordinary; a
+ * public `https` issuer redirecting *down* onto loopback is not, and would hand
+ * the choice of endpoints to whatever local process holds that port.
+ *
+ * A `FetchLike` that returns a hand-built `Response` leaves `url` empty, so
+ * stubs and test doubles are untouched.
+ */
+function assertSecureDiscoveryResponse(
+  url: string,
+  issuer: string,
+  response: { url?: string },
+): void {
+  const finalUrl = response.url
+
+  if (!finalUrl) {
+    return
+  }
+
+  /* https is always fine. Cleartext on loopback is fine only when the issuer was
+     already there — a local development server redirecting within `127.0.0.1`.
+     Everything else, `unparseable` included, is refused: the sibling checks
+     refuse an unparseable URL too, and a value we cannot read is not one we can
+     vouch for. */
+  const acceptable =
+    isHttpsUrl(finalUrl) || (isLoopbackUrl(finalUrl) && isLoopbackUrl(issuer))
+
+  if (acceptable) {
+    return
+  }
+
+  throw new OAuthError(
+    'configuration_error',
+    `Discovery for ${url} was redirected to an unusable URL: "${finalUrl}". The document ` +
+      'decides this provider\'s authorization and token endpoints, so it must arrive over ' +
+      'https — or over loopback, if that is where the issuer already was.',
+  )
+}
+
+/**
  * Builds a descriptor from an OIDC discovery document, so providers that move
  * their endpoints (or ones this library has never heard of) work without a
  * release. Pass the issuer URL, not the `.well-known` path. It must use `https`
@@ -262,6 +341,8 @@ export async function providerFromDiscovery(
 
   const url = `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`
   const response = await fetchImpl(url)
+
+  assertSecureDiscoveryResponse(url, issuer, response)
 
   if (!response.ok) {
     throw new OAuthError(

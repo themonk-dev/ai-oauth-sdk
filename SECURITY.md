@@ -39,8 +39,8 @@ Providers that never return `state`, which today means OpenRouter, set `echoesSt
 resolve against the most recently started flow instead. That is fine for a CLI or a single-flow app.
 **It is not safe in a multi-user server**, where one user's callback could complete another's login.
 
-**The loopback server** binds `127.0.0.1`, never `0.0.0.0`, answers `GET` and `HEAD` only, and closes
-itself the moment a callback settles, so it really does serve exactly one. It sends `no-store`,
+**The loopback server** binds the loopback interface, never `0.0.0.0`, answers `GET` and `HEAD`
+only, and closes itself the moment a callback settles, so it really does serve exactly one. It sends `no-store`,
 `no-referrer` and `nosniff`, because the callback URL carries the authorization code in its query
 string. It also turns away anything the browser itself labels as other than a top-level navigation —
 `Sec-Fetch-Site` present and not `none`, without both `Sec-Fetch-Mode: navigate` and
@@ -53,6 +53,24 @@ cross-origin `<iframe>` is also a navigation, and `127.0.0.1` is a potentially t
 mixed content does not stop an https page embedding one. A client that sends no `Sec-Fetch-*`
 headers at all, which means anything that is not a browser, is unaffected.
 
+**It binds every address the redirect URI's host resolves to**, which is not the same thing as
+binding one. Most providers register the `localhost` form of the redirect URI rather than the IP
+literal, and on a dual-stack machine `localhost` is both `127.0.0.1` and `::1` — with browsers
+trying `::1` first. Binding only `127.0.0.1` would leave `[::1]:<port>` free for any other local
+user to take, and they would receive the callback while our own bind succeeded and the login looked
+normal, because a port is reserved per address and not per name. So the sibling address is bound
+too. A port already held there is treated as the hazard it is: on a fixed, published port the login
+is refused rather than started, and on an ephemeral one the receiver moves to a different port. A
+host with IPv6 switched off cannot resolve `localhost` to `::1` either, so binding IPv4 alone is
+complete there and the receiver degrades quietly.
+
+What that protects is narrower than it looks, and worth being plain about. PKCE is what stops a
+captured code being redeemed, since the verifier never leaves this process — so a squatter who won
+the race would get the code, the ability to stall the login, and control of a page on a URL the user
+was told to trust, but not a token. That depends on the authorization server actually enforcing the
+challenge, which this library cannot observe, and it does not apply at all to a provider you define
+with `usePkce: false`.
+
 **Popup callbacks are origin-checked** before being trusted, and `postCallbackToOpener` posts to its
 own origin rather than to `*`.
 
@@ -64,6 +82,19 @@ callback minted for a different attempt, and the client compares it again before
 callback taken by the wrong tab fails rather than completing. Use it on redirect pages that need it
 — an authorization page that severs `window.opener` leaves no alternative — and prefer
 `postCallbackToOpener` wherever the opener survived.
+
+**Discovery is treated as remote input, over a transport that has to stay https.**
+`providerFromDiscovery()` takes a document from a party you have not vouched for, and that document
+names the endpoints every later code exchange and refresh will post to — so the issuer must use
+`https`, the endpoints it names must use `https`, and the URL the document was finally *served* from
+must use `https` too. The last of those is not the same check as the first: `fetch` follows
+redirects, and outside a browser nothing bars an `https`→`http` hop, so an issuer that redirects
+down to cleartext would otherwise let whoever is on the path write the document and choose
+endpoints that pass every remaining check. Loopback is exempt throughout, so a local authorization
+server on `http://127.0.0.1:<port>` still works. Endpoints you pass explicitly are your own config
+and are left alone. There is no issuer-equality check, which would break legitimate multi-tenant
+deployments; an `AuthClient` is bound to one provider at construction, so it has nothing to be
+mixed up with.
 
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis, but that body is not ours and a misconfigured
