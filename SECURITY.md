@@ -18,8 +18,11 @@ application from logging or transmitting them.
 What it does do:
 
 **PKCE is on by default**, with S256, for every redirect-based provider. The verifier is persisted
-only for the flow's lifetime, ten minutes by default, and consumed exactly once, so a replayed
-callback cannot replay the exchange.
+only for the flow's lifetime, ten minutes by default, and consumed once, so a replayed callback
+cannot replay the exchange. Callbacks arriving together for one `state` are serialised, so a browser
+double-submit or a prefetched redirect gets one exchange rather than two. That serialisation is per
+process: `AuthStorage` has no compare-and-swap, so two processes sharing one credential file can
+still both consume the same record.
 
 **Randomness never degrades.** With no `crypto.getRandomValues` available, the library throws rather
 than falling back to `Math.random()`. A guessable `state` or PKCE verifier defeats the point of

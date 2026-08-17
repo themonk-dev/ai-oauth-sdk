@@ -43,6 +43,8 @@ export class AuthorizationRegistry {
   readonly #settled = new Map<string, { tokens?: TokenSet; error?: unknown; at: number }>()
   readonly #settledTtlMs: number
   readonly #maxSettled: number
+  /** `consume` calls still running, by state. See {@link consume}. */
+  readonly #consuming = new Map<string, Promise<PendingAuthorization>>()
 
   constructor(options: AuthorizationRegistryOptions) {
     this.#storage = options.storage
@@ -209,8 +211,50 @@ export class AuthorizationRegistry {
   /**
    * Reads and removes a pending authorization. Single-use by design: replaying
    * a `state` must not replay the code exchange.
+   *
+   * Single-use *sequentially* was all the read-then-delete gave: the read is two
+   * awaits into storage, so callers arriving together all saw the record before
+   * any of them deleted it and all were handed the same `codeVerifier`. Calls
+   * for one state are now serialised — a later arrival waits for the one in
+   * flight and then reads again, finding nothing.
+   *
+   * That race needs no attacker to reach. A browser resending a callback, or a
+   * link scanner prefetching the redirect, is enough for two
+   * `completeAuthorization` calls to post the same code and the same verifier.
+   * Only one redemption can succeed at the authorization server and the
+   * verifier never leaves this process, so what the duplicate costs is the
+   * reuse itself: an authorization server following RFC 6749 §4.1.2 revokes
+   * every token it already issued for a reused code, taking out the session the
+   * first call had just established.
+   *
+   * In-process only, and deliberately so. `AuthStorage` has no
+   * compare-and-swap, so two CLI windows sharing one `auth.json` can still both
+   * read the record before either deletes it. Closing that needs an atomic
+   * primitive on the storage interface, which is a much larger change than this
+   * defect justifies.
    */
   async consume(state: string): Promise<PendingAuthorization> {
+    const inFlight = this.#consuming.get(state)
+
+    if (inFlight) {
+      // However the first call ends — consumed, expired, or thrown — the record
+      // is gone once it has, so reading again reports it as already used.
+      await inFlight.catch(() => {})
+
+      return this.#consumeOnce(state)
+    }
+
+    const running = this.#consumeOnce(state)
+    this.#consuming.set(state, running)
+
+    try {
+      return await running
+    } finally {
+      this.#consuming.delete(state)
+    }
+  }
+
+  async #consumeOnce(state: string): Promise<PendingAuthorization> {
     const pending = await this.get(state)
 
     if (!pending) {
