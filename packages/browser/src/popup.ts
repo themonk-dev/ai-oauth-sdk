@@ -180,12 +180,25 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
        * is not what stops a forged code getting in — what it stops is two
        * working sign-ins becoming one failure.
        *
-       * Only a disagreement disqualifies. A provider that does not echo
-       * `state`, or an authorization URL that carried none, leaves nothing to
-       * compare and the callback is taken as it comes.
+       * A callback carrying no `state` is refused wherever this attempt
+       * presented one, and that asymmetry is the point rather than an
+       * oversight. A payload with no `state` cannot be shown to be ours, and
+       * it is exactly what a stray or hostile broadcast looks like: the
+       * redirect page announces whatever query string it happens to be loaded
+       * with, so anything that can get this origin's redirect page opened —
+       * a second tab of an app whose root *is* its redirect page, or a
+       * cross-origin link to `?error=access_denied` — puts a state-less
+       * payload on the channel. Taking one would let it cancel a live login
+       * outright, because a payload that reads as a denial rejects `wait()`
+       * here, and the client's own `state` comparison never runs on a
+       * receiver that threw.
+       *
+       * Nothing to compare is still not a mismatch, the other way round: an
+       * authorization URL that carried no `state` leaves this receiver with no
+       * attempt to tell callbacks apart by, and one is taken as it comes.
        */
       const belongsToThisAttempt = (state: string | undefined): boolean =>
-        presentedState === undefined || state === undefined || state === presentedState
+        presentedState === undefined || state === presentedState
 
       const onMessage = (event: MessageEvent) => {
         if (event.origin !== window.location.origin) {
