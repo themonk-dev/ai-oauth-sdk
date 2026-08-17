@@ -1,8 +1,9 @@
-import type {
-  CallbackReceiver,
-  CallbackResult,
-  ReceiverContext,
-  StartedReceiver,
+import {
+  isOAuthError,
+  type CallbackReceiver,
+  type CallbackResult,
+  type ReceiverContext,
+  type StartedReceiver,
 } from '@ai-oauth-sdk/core'
 
 import { loopbackReceiver, type LoopbackReceiverOptions } from './loopback.js'
@@ -32,10 +33,26 @@ export interface HybridReceiverOptions extends LoopbackReceiverOptions {
  *
  * Three details keep the race honest:
  *
- * - **The listener is best-effort.** Binding fails when the port is already
- *   held or the sandbox forbids `listen()` — which are precisely the conditions
- *   `--paste` exists to serve — so a failure degrades to the prompt alone
- *   rather than ending the login before the URL is even shown.
+ * - **The listener is best-effort about the machine, never about the address.**
+ *   A sandbox that forbids `listen()` is precisely the condition `--paste`
+ *   exists to serve: the redirect URI stays unclaimed because nothing here can
+ *   claim it, so degrading to the prompt alone costs the user a copy and
+ *   nothing else. A port already *held* is the opposite situation. Someone else
+ *   is listening on the exact URI both halves are about to advertise, so
+ *   dropping the loopback half would print an authorization URL naming an
+ *   address this process does not own, and the browser would deliver the code
+ *   to whoever does — while the terminal sat at the paste prompt looking
+ *   patient. `loopbackReceiver()` already refuses to start under that
+ *   arrangement, for a fixed port taken outright and for the sibling address a
+ *   name like `localhost` also resolves to; the refusal has to survive being
+ *   wrapped, or `--paste` quietly becomes the way around it.
+ *
+ *   The two are told apart by type rather than by errno: a refusal is an
+ *   `OAuthError` and a kernel saying no is not, so `OAuthError` is rethrown and
+ *   everything else degrades. That is deliberately coarser than matching a
+ *   specific code — `start()` throws an `OAuthError` only when it has decided
+ *   the login should not proceed, and any later reason it decides that should
+ *   propagate here too without this file having to be edited again.
  * - **Only the prompt's *success* competes.** A blank line or a mistyped paste
  *   rejects that half, and letting a rejection win would tear down a server
  *   that was about to receive a perfectly good callback.
@@ -51,7 +68,13 @@ export function hybridReceiver(options: HybridReceiverOptions = {}): CallbackRec
 
       try {
         loopback = await loopbackReceiver({ ...options, openBrowser: false }).start(context)
-      } catch {
+      } catch (error) {
+        /* A refusal, not an unusable machine — see the note above. Pasting past
+           it would advertise a redirect URI someone else is holding. */
+        if (isOAuthError(error)) {
+          throw error
+        }
+
         loopback = undefined
       }
 

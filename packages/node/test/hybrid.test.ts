@@ -19,6 +19,18 @@ const provider = defineProvider({
 
 const silent = { openBrowser: false, message: () => '' }
 
+/**
+ * Whether this kernel has IPv6 at all. Where it does not, `localhost` cannot
+ * resolve to `::1` either, so there is no sibling address for anyone to contest
+ * and the case below cannot arise. Skipped there, run on CI, which is
+ * dual-stack.
+ */
+const hasIpv6 = await new Promise<boolean>((resolve) => {
+  const probe = createServer()
+  probe.once('error', () => resolve(false))
+  probe.listen(0, '::1', () => probe.close(() => resolve(true)))
+})
+
 let squatter: Server | undefined
 
 afterEach(async () => {
@@ -87,10 +99,36 @@ describe('hybridReceiver', () => {
   })
 
   /*
-   * Binding fails when the port is held or the sandbox forbids listen() —
-   * exactly the conditions --paste exists for, so it must not end the login.
+   * The sandbox case --paste exists for: this process cannot listen at all, so
+   * the redirect URI it advertises is unclaimed by anyone and the worst that
+   * happens is the user copies a code. `listen()` refused by seccomp or by a
+   * dropped capability reports EPERM/EACCES/ENOTSUP, none of which can be
+   * provoked portably from a test; an address that is simply not on this host
+   * fails the same way — a raw errno out of listen() rather than a decision by
+   * the receiver — which is the distinction the fallback turns on.
    */
-  it('falls back to pasting when the port cannot be bound', async () => {
+  it('falls back to pasting when listen() itself is refused', async () => {
+    const started = await hybridReceiver({ ...silent, host: '203.0.113.1' }).start({ provider })
+
+    try {
+      expect(started.redirectUri).toContain('/callback')
+      /* The prompt's own synthesised URI, since no server ever bound. */
+      expect(started.redirectUri).toContain(':1455/')
+    } finally {
+      await started.close()
+    }
+  })
+
+  /*
+   * This used to assert the fallback. It is not the sandbox case at all: a live
+   * squatter on the advertised port is the attack loopbackReceiver() was
+   * changed to refuse, and hybrid discarding that refusal made --paste the way
+   * around it. The CLI routes every provider without a hosted page through this
+   * receiver, so `login xai --paste` against a squatted 127.0.0.1:56121 would
+   * have printed an authorization URL naming the squatter's socket and waited
+   * at the prompt while the browser handed them the code.
+   */
+  it('refuses the login when the advertised port is already held', async () => {
     squatter = createServer(() => {})
     await new Promise<void>((resolve) => squatter!.listen(0, '127.0.0.1', () => resolve()))
     const held = (squatter.address() as { port: number }).port
@@ -100,12 +138,41 @@ describe('hybridReceiver', () => {
       redirect: { mode: 'loopback', loopbackPort: held, loopbackPath: '/callback' },
     })
 
-    const started = await hybridReceiver({ ...silent, port: held }).start({ provider: fixedPort })
+    await expect(
+      hybridReceiver({ ...silent, port: held }).start({ provider: fixedPort }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/already in use/),
+    })
+  })
 
-    try {
-      expect(started.redirectUri).toContain('/callback')
-    } finally {
-      await started.close()
-    }
+  /*
+   * The sibling-address refusal reaches the caller the same way. Holding
+   * `[::1]:port` while `127.0.0.1:port` stays free is the shape of the attack
+   * on a name like `localhost`: our own bind succeeds, so only the receiver's
+   * own refusal stands between the user and a squatted callback.
+   */
+  it.skipIf(!hasIpv6)('refuses the login when the sibling address is held', async () => {
+    const onIpv4 = createServer(() => {})
+    await new Promise<void>((resolve) => onIpv4.listen(0, '127.0.0.1', () => resolve()))
+    const port = (onIpv4.address() as { port: number }).port
+    squatter = createServer(() => {})
+    await new Promise<void>((resolve, reject) => {
+      squatter!.once('error', reject)
+      squatter!.listen(port, '::1', () => resolve())
+    })
+    await new Promise<void>((resolve) => onIpv4.close(() => resolve()))
+
+    const fixedPort = defineProvider({
+      ...provider,
+      redirect: { mode: 'loopback', loopbackPort: port, loopbackPath: '/callback' },
+    })
+
+    await expect(
+      hybridReceiver({ ...silent, port }).start({ provider: fixedPort }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/held by another process/),
+    })
   })
 })
