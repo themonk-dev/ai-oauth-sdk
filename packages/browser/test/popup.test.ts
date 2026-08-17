@@ -488,6 +488,26 @@ describe('a callback broadcast while another attempt is open', () => {
   })
 
   /**
+   * `echoesState: false` is that same "nothing to compare", declared ahead of
+   * time rather than discovered. `buildAuthorizationUrl` puts a `state` on
+   * every URL it builds, so unless a provider strips it in `buildAuthParams`
+   * the way OpenRouter does, one is presented to a provider that has already
+   * said it will not send it back. Holding the callback to a comparison the
+   * provider cannot satisfy would reject the only callback it can produce, and
+   * the login would hang to its timeout instead of completing.
+   */
+  it('still takes a callback from a provider that declares it echoes no state', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: defineProvider({ ...severingProvider, echoesState: false }),
+    })
+    await started.present('https://provider.test/authorize?state=presented')
+
+    broadcastCallback('?code=unechoed')
+
+    await expect(started.wait()).resolves.toEqual({ code: 'unechoed' })
+  })
+
+  /**
    * The other direction of the same comparison, and the one that bites: a
    * payload with no `state` cannot be shown to belong to an attempt that
    * presented one. The redirect page announces whatever query string it was

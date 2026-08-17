@@ -196,9 +196,20 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
        * Nothing to compare is still not a mismatch, the other way round: an
        * authorization URL that carried no `state` leaves this receiver with no
        * attempt to tell callbacks apart by, and one is taken as it comes.
+       *
+       * A provider declaring `echoesState: false` is that same case even though
+       * the authorization URL carried a `state`, because it is a statement that
+       * the callback will not bring one back. Sending a `state` and refusing
+       * every callback for not returning it would reject the only callback such
+       * a provider can produce. The client makes the same exception at the same
+       * boundary, and `SECURITY.md` is plain about what it costs: these
+       * providers resolve against the most recently started flow, which is fine
+       * for a CLI or a single-flow app and is not safe in a multi-user server.
        */
       const belongsToThisAttempt = (state: string | undefined): boolean =>
-        presentedState === undefined || state === presentedState
+        presentedState === undefined ||
+        context.provider.echoesState === false ||
+        state === presentedState
 
       const onMessage = (event: MessageEvent) => {
         if (event.origin !== window.location.origin) {

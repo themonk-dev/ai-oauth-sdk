@@ -82,7 +82,14 @@ own origin rather than to `*`.
 does not reach one window the way `postMessage` does. Every same-origin context is in the audience,
 your other tabs and your own iframes included. `popupReceiver` compares `state` and ignores a
 callback minted for a different attempt, and the client compares it again before exchanging, so a
-callback taken by the wrong tab fails rather than completing. Use it on redirect pages that need it
+callback taken by the wrong tab fails rather than completing. A callback carrying no `state` where
+the attempt presented one is ignored on the same test, and that direction is the one that bites: the
+redirect page announces whatever query string it was loaded with, so a cross-origin link to
+`?error=access_denied` on that page — or a second tab of an app whose root *is* its redirect page —
+puts a state-less denial on the channel, and taking one would cancel a live sign-in outright. The
+receiver rejects before the client's own comparison can run, so this is the only place it can be
+caught. A provider declaring `echoesState: false` is exempt, because it has said the callback will
+not carry one; that is the same narrow exemption, with the same caveat, described above. Use it on redirect pages that need it
 — an authorization page that severs `window.opener` leaves no alternative — and prefer
 `postCallbackToOpener` wherever the opener survived.
 

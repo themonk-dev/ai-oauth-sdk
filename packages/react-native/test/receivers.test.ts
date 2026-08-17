@@ -180,6 +180,26 @@ describe('deepLinkReceiver', () => {
     await started.close()
   })
 
+  it('still takes a callback from a provider that declares it echoes no state', async () => {
+    // `buildAuthorizationUrl` puts a `state` on every URL it builds, so unless
+    // a provider strips it the way OpenRouter does, one is presented to a
+    // provider that has already said it will not send it back. Holding the
+    // callback to a comparison the provider cannot satisfy would reject the
+    // only callback it can produce, and hang the login until its timeout.
+    const fake = fakeLinking()
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider: defineProvider({ ...provider, echoesState: false }),
+    })
+
+    await started.present('https://provider.test/authorize?state=presented')
+    const waiting = started.wait()
+
+    fake.emit(`${REDIRECT}?code=unechoed`)
+    await expect(waiting).resolves.toMatchObject({ code: 'unechoed' })
+
+    await started.close()
+  })
+
   it('ignores a callback whose state disagrees', async () => {
     const fake = fakeLinking()
     const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({

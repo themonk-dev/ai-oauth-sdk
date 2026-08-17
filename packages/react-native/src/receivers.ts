@@ -77,17 +77,20 @@ function stateOfAuthorizationUrl(url: string): string | undefined {
  * URL without one) leaves this receiver with no attempt to tell callbacks apart
  * by, and one is taken as it comes.
  *
- * `wait()` also reads `getInitialURL()`, which is where the OS leaves the
- * redirect when it killed the app while the user was on the consent screen.
- * That does not resume a `client.login()` across the restart and cannot: the
+ * `wait()` also reads `getInitialURL()`, which is where the OS leaves a
+ * redirect it delivered as a launch rather than as a `url` event. The same
+ * `state` test decides it: a launch URL belonging to this attempt completes the
+ * login, and one left over from an earlier attempt is dropped. That second half
+ * is why the test has to be here — `getInitialURL()` does not drain, it keeps
+ * returning the launch URL for the life of the process, so an unbound callback
+ * would otherwise be replayed into every later login.
+ *
+ * What this cannot do is resume a `login()` the OS killed mid-flow. The
  * relaunched app calls `createAuthorization()` again, which mints a fresh
  * `state`, so the URL from before the kill belongs to an attempt that no longer
- * exists. Dropping it is the point of the read — `getInitialURL()` keeps
- * returning the launch URL for the life of the process, so a callback nothing
- * is bound to would otherwise be replayed into every later login in that
- * process. To finish a flow the OS interrupted, hand the URL to the client
- * yourself, with storage that survives the restart and within the authorization
- * TTL:
+ * exists and is dropped like any other stale one. To finish a flow the OS
+ * interrupted, hand the URL to the client yourself, with storage that survives
+ * the restart and within the authorization TTL:
  *
  * ```ts
  * const callbackUrl = await Linking.getInitialURL()
@@ -163,7 +166,20 @@ export function deepLinkReceiver(options: DeepLinkReceiverOptions): CallbackRece
         // Only a `state` that was presented can be answered for. Where none
         // was, there is nothing to compare and the callback is taken as it
         // comes; where one was, silence is a disagreement like any other.
-        if (presentedState !== undefined && callback.state !== presentedState) {
+        //
+        // A provider declaring `echoesState: false` is the first case even
+        // where the URL carried a `state`, because it has said the callback
+        // will not bring one back — holding it to a comparison it has already
+        // said it cannot satisfy would reject the only callback it can send.
+        // The client draws the same exception, with the same caveat: a
+        // provider that echoes nothing cannot tell two concurrent attempts
+        // apart, so this is for a CLI or a single-flow app rather than a
+        // multi-user server.
+        if (
+          presentedState !== undefined &&
+          context.provider.echoesState !== false &&
+          callback.state !== presentedState
+        ) {
           return
         }
 
