@@ -56,6 +56,15 @@ cross-origin `<iframe>` is also a navigation, and `127.0.0.1` is a potentially t
 mixed content does not stop an https page embedding one. A client that sends no `Sec-Fetch-*`
 headers at all, which means anything that is not a browser, is unaffected.
 
+That check cannot be the whole answer, because the provider's own redirect is a cross-site top-level
+navigation too and is indistinguishable from a page navigating the user to the same URL. So the
+callback is also matched to the attempt by `state`, read from the authorization URL the receiver was
+handed: one that disagrees, or that carries no `state` where a state was presented, is refused
+without settling the pending callback and the server keeps listening for the real one. A provider
+declaring `echoesState: false` has said no `state` will come back and is exempt, and a receiver
+driven directly, without `present()`, has no attempt to compare against and takes callbacks as they
+come.
+
 **It binds every address the redirect URI's host resolves to**, which is not the same thing as
 binding one. Most providers register the `localhost` form of the redirect URI rather than the IP
 literal, and on a dual-stack machine `localhost` is both `127.0.0.1` and `::1` — with browsers
@@ -89,9 +98,9 @@ redirect page announces whatever query string it was loaded with, so a cross-ori
 puts a state-less denial on the channel, and taking one would cancel a live sign-in outright. The
 receiver rejects before the client's own comparison can run, so this is the only place it can be
 caught. A provider declaring `echoesState: false` is exempt, because it has said the callback will
-not carry one; that is the same narrow exemption, with the same caveat, described above. Use it on redirect pages that need it
-— an authorization page that severs `window.opener` leaves no alternative — and prefer
-`postCallbackToOpener` wherever the opener survived.
+not carry one; that is the same narrow exemption, with the same caveat, described above. Use it on
+redirect pages that need it — an authorization page that severs `window.opener` leaves no
+alternative — and prefer `postCallbackToOpener` wherever the opener survived.
 
 **Discovery is treated as remote input, over a transport that has to stay https.**
 `providerFromDiscovery()` takes a document from a party you have not vouched for, and that document

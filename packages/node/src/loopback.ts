@@ -4,7 +4,9 @@ import type { AddressInfo } from 'node:net'
 import {
   OAuthError,
   buildLoopbackRedirectUri,
+  isOAuthError,
   readCallback,
+  timingSafeEqual,
   type CallbackReceiver,
   type CallbackResult,
   type ReceiverContext,
@@ -95,6 +97,28 @@ const securityHeaders: Record<string, string> = {
   Pragma: 'no-cache',
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
+}
+
+/**
+ * The `state` in an authorization URL, or nothing where it carries none.
+ *
+ * This reads the URL the client built and handed to `present()`, never a
+ * callback: its params are in the query, so a fragment is something else and is
+ * left out of the read, which would otherwise be carried into the value and
+ * produce a `state` that matches nothing. Callbacks go through the provider's
+ * own parser instead, which is the only thing that knows where a given provider
+ * puts them.
+ */
+function stateOfAuthorizationUrl(url: string): string | undefined {
+  const questionMark = url.indexOf('?')
+
+  if (questionMark === -1) {
+    return undefined
+  }
+
+  const query = url.slice(questionMark + 1).split('#')[0]!
+
+  return new URLSearchParams(query).get('state') ?? undefined
 }
 
 /**
@@ -244,6 +268,31 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
  * The headers are only trusted when the browser sends them; curl, undici and
  * anything else non-browser send no `Sec-Fetch-Site` at all and are unaffected.
  *
+ * That check cannot be the whole answer, and no tightening of it could be. The
+ * provider's own redirect is a cross-site top-level navigation, so a page that
+ * simply navigates the user to `http://127.0.0.1:1455/callback?error=...`
+ * sends a byte-identical request — same `Sec-Fetch-Site: cross-site`, same
+ * `navigate`, same `document` — and there is nothing in the metadata left to
+ * tell them apart. `Sec-Fetch-User` is not it either: a provider that
+ * auto-approves an already-consented app redirects without a gesture and sends
+ * none. Only `state` separates the two.
+ *
+ * So the callback is also matched to the attempt, by the `state` read out of
+ * the authorization URL this receiver was handed. One that disagrees — or that
+ * carries no `state` where a state was presented — is refused without settling
+ * the promise, and the server keeps listening for the real redirect. The
+ * comparison runs in constant time because it now sits on a security boundary.
+ *
+ * Two gaps are left open deliberately. A receiver driven directly, without
+ * `present()`, has no attempt to compare against and takes callbacks as they
+ * come: `start()` binds a port, so unlike a deep-link channel there is no
+ * pre-existing route for a stray callback to arrive on, and requiring
+ * `present()` would break every caller that drives `start()` itself. And a
+ * provider declaring `echoesState: false` has said no `state` will come back,
+ * so holding it to a comparison it cannot satisfy would reject the only
+ * callback it can send. The `Sec-Fetch-*` check above is what covers both, and
+ * it is why that check runs first and stays.
+ *
  * The callback promise is given a no-op `catch` at construction because it is
  * consumed only in `wait()`; without it, a callback that fails before anyone
  * calls `wait()` would surface as an unhandled rejection.
@@ -267,6 +316,74 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       callbackPromise.catch(() => {})
 
       let settled = false
+
+      /**
+       * The `state` of the authorization this receiver actually presented,
+       * learned from the URL it was handed rather than tracked separately, so
+       * the two cannot disagree.
+       *
+       * There is no companion "has present() run" flag, unlike the deep-link
+       * and popup receivers. Those listen on a channel that exists before the
+       * flow does, so a callback arriving before `present()` is somebody
+       * else's; a bound port does not exist until `start()` binds it, and a
+       * caller may legitimately drive `start()` and never call `present()` at
+       * all.
+       */
+      let presentedState: string | undefined
+
+      /**
+       * The provider's own read of the callback query, with the failure it may
+       * represent held rather than thrown.
+       *
+       * The `state` has to come from the same parser the client will use:
+       * providers disagree about where the callback params live, and
+       * `parseCallback` is the only thing that knows which. Settling is held
+       * back so ownership can be decided first — `readCallback` throws on an
+       * `error=` callback, and that rejection is exactly what a page trying to
+       * cancel this login would like to hand us.
+       */
+      const read = (
+        search: string,
+      ):
+        | { state: string | undefined; result: CallbackResult }
+        | { state: string | undefined; detail: string; failure: unknown } => {
+        try {
+          const result = readCallback(provider, search)
+
+          return { state: result.state, result }
+        } catch (error) {
+          // `readCallback` carries the `state` its parse found onto the error
+          // it throws, so even a refusal still says whose it is.
+          const detail =
+            error instanceof OAuthError
+              ? (error.providerErrorDescription ?? error.providerError ?? error.message)
+              : String(error)
+
+          return { state: isOAuthError(error) ? error.state : undefined, detail, failure: error }
+        }
+      }
+
+      /**
+       * Whether a callback belongs to *this* receiver's attempt.
+       *
+       * Where nothing was presented there is nothing to compare and the
+       * callback is taken as it comes; where a `state` was, silence is a
+       * disagreement like any other, because a callback that cannot be shown to
+       * be ours is exactly what a drive-by navigation produces. RFC 6749
+       * §4.1.2.1 requires `state` to be echoed on an error response as well as
+       * a successful one, so nothing conforming is turned away.
+       *
+       * A provider declaring `echoesState: false` is the "nothing to compare"
+       * case even though the authorization URL carried a `state`, because it
+       * has said the callback will not bring one back. The client draws the
+       * same exception at the same boundary, with the same caveat: such a
+       * provider cannot tell two concurrent attempts apart, which is fine for a
+       * CLI and is not safe in a multi-user server.
+       */
+      const belongsToThisAttempt = (state: string | undefined): boolean =>
+        presentedState === undefined ||
+        provider.echoesState === false ||
+        timingSafeEqual(state ?? '', presentedState)
 
       /**
        * Settles the callback exactly once and then retires the server, so the
@@ -339,25 +456,32 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        let result: CallbackResult
+        // Read before responding, so ownership is decided before anything is
+        // written and before anything is settled. A callback that is not ours
+        // must leave the pending promise and the server exactly as it found
+        // them — the damage a drive-by does is not the response it gets, it is
+        // that settling closes the port the real redirect is about to arrive
+        // on.
+        const callback = read(url.search)
 
-        try {
-          result = readCallback(provider, url.search)
-        } catch (error) {
-          const detail =
-            error instanceof OAuthError
-              ? (error.providerErrorDescription ?? error.providerError ?? error.message)
-              : String(error)
+        if (!belongsToThisAttempt(callback.state)) {
+          response.writeHead(403, { ...securityHeaders, 'Content-Type': 'text/plain' })
+          response.end('Forbidden')
+
+          return
+        }
+
+        if ('failure' in callback) {
           response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
-          response.end((options.failureHtml ?? defaultFailureHtml)(detail))
-          settle(response, () => rejectCallback(error))
+          response.end((options.failureHtml ?? defaultFailureHtml)(callback.detail))
+          settle(response, () => rejectCallback(callback.failure))
 
           return
         }
 
         response.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
         response.end(options.successHtml ?? DEFAULT_SUCCESS_HTML)
-        settle(response, () => resolveCallback(result))
+        settle(response, () => resolveCallback(callback.result))
       }
 
       const server = createServer(handleRequest)
@@ -480,6 +604,11 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       return {
         redirectUri: buildLoopbackRedirectUri(redirectProvider, boundPort),
         async present(url) {
+          // Read from the URL the client built rather than tracked alongside
+          // it, so what this receiver believes its attempt is can never drift
+          // from what it actually sent the user to.
+          presentedState = stateOfAuthorizationUrl(url)
+
           options.onAuthorizationUrl?.(url)
 
           if (context.openUrl) {

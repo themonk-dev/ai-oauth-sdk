@@ -55,6 +55,30 @@ const rawGet = (url: string, headers: Record<string, string> = {}) =>
     call.end()
   })
 
+/** The `state` the presented receivers below all sign their attempt with. */
+const PRESENTED_STATE = 'xyz'
+
+/**
+ * A receiver that has been through `present()`, which is how a real login runs
+ * it and the only way it learns the `state` it matches callbacks against.
+ *
+ * `openBrowser: false` because `present()` would otherwise try to launch one;
+ * the browser is not what any of these tests are about.
+ */
+const startPresented = async (
+  provider: ProviderConfig = testProvider(server.url),
+  state: string | undefined = PRESENTED_STATE,
+) => {
+  const started = await loopbackReceiver({ port: 0, openBrowser: false }).start({ provider })
+  await started.present(
+    state === undefined
+      ? 'https://provider.test/authorize'
+      : `https://provider.test/authorize?client_id=c&state=${state}`,
+  )
+
+  return started
+}
+
 /** The shape a browser puts on a `<img src>`/`fetch()` hit from another page. */
 const driveByHeaders = {
   'Sec-Fetch-Site': 'cross-site',
@@ -179,11 +203,15 @@ describe('loopbackReceiver', () => {
   })
 
   it('rejects when the provider reports a denial', async () => {
-    const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+    const started = await startPresented()
     const waiting = started.wait()
 
     try {
-      const response = await fetch(`${started.redirectUri}?error=access_denied&error_description=nope`)
+      // RFC 6749 §4.1.2.1 requires `state` back on an error response as well as
+      // a successful one, so a real denial for this attempt carries it.
+      const response = await fetch(
+        `${started.redirectUri}?error=access_denied&error_description=nope&state=${PRESENTED_STATE}`,
+      )
       expect(response.status).toBe(400)
       await expect(waiting).rejects.toMatchObject({
         code: 'authorization_denied',
@@ -293,13 +321,111 @@ describe('loopbackReceiver', () => {
   })
 
   it('accepts the top-level navigation the provider actually sends', async () => {
+    // The redirect that belongs to this attempt: a cross-site top-level
+    // navigation *carrying the presented `state`*. The metadata alone is not
+    // what makes it acceptable — a page navigating the user to the same URL
+    // sends exactly these headers, which is what the cases below are about.
+    const started = await startPresented()
+    const waiting = started.wait()
+
+    try {
+      const response = await rawGet(
+        `${started.redirectUri}?code=abc&state=${PRESENTED_STATE}`,
+        navigationHeaders,
+      )
+      expect(response.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc', state: PRESENTED_STATE })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('refuses a drive-by denial sent as a top-level navigation, and survives it', async () => {
+    // The `Sec-Fetch-*` gate cannot reach this one and no tightening of it
+    // could: the provider's real redirect is a cross-site top-level navigation
+    // too, so a page that simply navigates the user to the loopback URL sends a
+    // byte-identical request. `openai` (1455) and `xai` (56121) publish fixed
+    // ports, so there is nothing to guess. Only `state` tells them apart.
+    const started = await startPresented()
+    const waiting = started.wait()
+
+    try {
+      const driveBy = await rawGet(`${started.redirectUri}?error=access_denied`, navigationHeaders)
+      expect(driveBy.status).toBe(403)
+
+      // Not settled, and — the part that actually matters — the server is still
+      // listening, because settling is what closes it.
+      expect(await isSettled(waiting)).toBe(false)
+
+      const real = await rawGet(
+        `${started.redirectUri}?code=abc&state=${PRESENTED_STATE}`,
+        navigationHeaders,
+      )
+      expect(real.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc', state: PRESENTED_STATE })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('refuses a callback minted for another attempt, and keeps the port', async () => {
+    // A foreign `code`+`state` would have been resolved and the server retired
+    // on it. The client's own comparison then throws `state_mismatch`, so the
+    // login fails either way — but the real redirect arriving afterwards would
+    // find nothing listening at all.
+    const started = await startPresented()
+    const waiting = started.wait()
+
+    try {
+      const foreign = await rawGet(
+        `${started.redirectUri}?code=theirs&state=someone-elses`,
+        navigationHeaders,
+      )
+      expect(foreign.status).toBe(403)
+      expect(await isSettled(waiting)).toBe(false)
+
+      const real = await rawGet(
+        `${started.redirectUri}?code=ours&state=${PRESENTED_STATE}`,
+        navigationHeaders,
+      )
+      expect(real.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'ours' })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('takes a callback carrying no state from a provider that echoes none', async () => {
+    // OpenRouter declares `echoesState: false`: it has said no `state` will
+    // come back, so holding it to a comparison it cannot satisfy would reject
+    // the only callback it can send. The `Sec-Fetch-*` check is what covers it.
+    const started = await startPresented(testProvider(server.url, { echoesState: false }))
+    const waiting = started.wait()
+
+    try {
+      const response = await rawGet(`${started.redirectUri}?code=abc`, navigationHeaders)
+      expect(response.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('takes callbacks as they come when it was never presented', async () => {
+    // A deliberate gap, and the reason there is no "has present() run" flag
+    // here: `start()` binds the port, so there is no channel for a stray
+    // callback to have arrived on beforehand, and a caller that drives
+    // `start()` itself and never presents must still be able to complete.
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
     const waiting = started.wait()
 
     try {
-      const response = await rawGet(`${started.redirectUri}?code=abc&state=xyz`, navigationHeaders)
+      const response = await rawGet(
+        `${started.redirectUri}?code=abc&state=unrelated`,
+        navigationHeaders,
+      )
       expect(response.status).toBe(200)
-      await expect(waiting).resolves.toMatchObject({ code: 'abc', state: 'xyz' })
+      await expect(waiting).resolves.toMatchObject({ code: 'abc' })
     } finally {
       await started.close()
     }

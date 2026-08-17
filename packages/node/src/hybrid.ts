@@ -56,9 +56,18 @@ export interface HybridReceiverOptions extends LoopbackReceiverOptions {
  * - **Only the prompt's *success* competes.** A blank line or a mistyped paste
  *   rejects that half, and letting a rejection win would tear down a server
  *   that was about to receive a perfectly good callback.
- * - **Only the prompt announces.** The loopback half is never presented,
- *   because `present()` is what opens the browser, and two halves announcing
- *   means two or three tabs on the same authorization URL.
+ * - **Only the prompt announces, but both halves are presented.** The loopback
+ *   half needs `present()` to learn the `state` it matches callbacks against,
+ *   or the drive-by cancellation that check exists to stop is simply reopened
+ *   under `--paste`. So it is presented too — silently. Its `openBrowser` is
+ *   already forced off, its `onAuthorizationUrl` is stripped, and it is started
+ *   on a context with no `openUrl`, which between them are every way
+ *   `present()` can announce anything. The prompt keeps all three, so the URL
+ *   is shown exactly once and a browser opened at most once, whichever of
+ *   `context.openUrl` and `openBrowser` is in play. Stripping
+ *   `onAuthorizationUrl` costs nothing today — it never fired here, since the
+ *   loopback half was never presented — and keeping it would print the URL a
+ *   second time.
  */
 export function hybridReceiver(options: HybridReceiverOptions = {}): CallbackReceiver {
   return {
@@ -66,8 +75,20 @@ export function hybridReceiver(options: HybridReceiverOptions = {}): CallbackRec
     async start(context: ReceiverContext): Promise<StartedReceiver> {
       let loopback: StartedReceiver | undefined
 
+      /* Every announcing channel removed from the loopback half: the printed
+         URL, the browser launch, and the caller's own opener. Presenting it is
+         what binds it to the attempt; announcing twice is what that must not
+         cost. */
+      const { onAuthorizationUrl: _announce, ...quietOptions } = options
+      const quietContext: ReceiverContext = {
+        provider: context.provider,
+        ...(context.signal ? { signal: context.signal } : {}),
+      }
+
       try {
-        loopback = await loopbackReceiver({ ...options, openBrowser: false }).start(context)
+        loopback = await loopbackReceiver({ ...quietOptions, openBrowser: false }).start(
+          quietContext,
+        )
       } catch (error) {
         /* A refusal, not an unusable machine — see the note above. Pasting past
            it would advertise a redirect URI someone else is holding. */
@@ -89,6 +110,9 @@ export function hybridReceiver(options: HybridReceiverOptions = {}): CallbackRec
       return {
         redirectUri: loopback?.redirectUri ?? prompt.redirectUri,
         async present(url) {
+          /* First and silently, so the server is bound to this attempt before
+             the URL reaches the user and any callback can arrive. */
+          await loopback?.present(url)
           await prompt.present(url)
         },
         async wait() {
