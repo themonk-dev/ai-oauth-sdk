@@ -488,6 +488,78 @@ describe('a callback broadcast while another attempt is open', () => {
   })
 
   /**
+   * `echoesState: false` is that same "nothing to compare", declared ahead of
+   * time rather than discovered. `buildAuthorizationUrl` puts a `state` on
+   * every URL it builds, so unless a provider strips it in `buildAuthParams`
+   * the way OpenRouter does, one is presented to a provider that has already
+   * said it will not send it back. Holding the callback to a comparison the
+   * provider cannot satisfy would reject the only callback it can produce, and
+   * the login would hang to its timeout instead of completing.
+   */
+  it('still takes a callback from a provider that declares it echoes no state', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: defineProvider({ ...severingProvider, echoesState: false }),
+    })
+    await started.present('https://provider.test/authorize?state=presented')
+
+    broadcastCallback('?code=unechoed')
+
+    await expect(started.wait()).resolves.toEqual({ code: 'unechoed' })
+  })
+
+  /**
+   * The other direction of the same comparison, and the one that bites: a
+   * payload with no `state` cannot be shown to belong to an attempt that
+   * presented one. The redirect page announces whatever query string it was
+   * loaded with, so anything that can get this origin's redirect page opened —
+   * a cross-origin link to `?error=access_denied` is enough — could otherwise
+   * broadcast a state-less denial that rejects a live login on the spot, well
+   * before the client has any chance to compare `state` itself.
+   */
+  it('is ignored when it carries no state and this attempt presented one', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: severingProvider,
+    })
+    await started.present('https://provider.test/authorize?state=mine')
+
+    const watched = watch(started)
+
+    broadcastCallback('?error=access_denied&error_description=nope')
+    await delivered()
+
+    expect(watched.settled).toBe(false)
+
+    // And the genuine callback still lands afterwards: the attempt was left
+    // waiting, not quietly poisoned.
+    broadcastCallback('?code=mine&state=mine')
+    await expect(started.wait()).resolves.toEqual({ code: 'mine', state: 'mine' })
+  })
+
+  /**
+   * No attacker required. Where the app's own root is its redirect page —
+   * which is what `autoReceiver` arranges on a loopback origin — opening a
+   * second tab of the app runs the redirect page with an empty query, and it
+   * announces `''`. That parses to a state-less "no code returned", and taking
+   * one would have a stray tab kill a sign-in running in another.
+   */
+  it('is ignored when a second tab broadcasts an empty payload', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: severingProvider,
+    })
+    await started.present('https://provider.test/authorize?state=mine')
+
+    const watched = watch(started)
+
+    broadcastCallback('')
+    await delivered()
+
+    expect(watched.settled).toBe(false)
+
+    broadcastCallback('?code=mine&state=mine')
+    await expect(started.wait()).resolves.toEqual({ code: 'mine', state: 'mine' })
+  })
+
+  /**
    * A fragment is not part of the query, and reading one as though it were
    * yields a `state` that matches nothing — the receiver then drops a callback
    * the client would have taken, and the login hangs instead of failing.

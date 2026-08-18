@@ -200,6 +200,55 @@ describe('device authorization flow', () => {
     expect(target.devicePolls).toBeLessThanOrEqual(5)
   }, 20_000)
 
+  /*
+   * `error_description` and the raw body were already scrubbed; `error` was
+   * interpolated verbatim, so a gateway reflecting the poll body printed the
+   * device code and the PKCE verifier into the message and onto `providerError`.
+   */
+  it('redacts a credential reflected back in the error code', async () => {
+    // No server: the point is the body, so the poll is answered directly.
+    const provider = deviceProvider('https://device.invalid')
+    const reflected =
+      'invalid_grant: could not process grant_type=urn:ietf:params:oauth:grant-type:device_code ' +
+      'device_code=DEV-SECRET-0123456789abcdef code_verifier=VERIFIER-0123456789abcdef'
+
+    const error = await pollDeviceToken({
+      provider,
+      clientId: 'device-client',
+      device: {
+        deviceCode: 'DEV-SECRET-0123456789abcdef',
+        userCode: 'WXYZ-1234',
+        verificationUri: 'https://example.test/device',
+        expiresAt: Date.now() + 60_000,
+        intervalMs: 1,
+        codeVerifier: 'VERIFIER-0123456789abcdef',
+      },
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: reflected }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        }),
+    }).catch((caught: Error) => caught)
+
+    expect((error as Error).message).not.toContain('DEV-SECRET')
+    expect((error as Error).message).not.toContain('VERIFIER-')
+    expect((error as Error).message).toContain('device_code=[redacted]')
+    expect(error).toMatchObject({ code: 'device_flow_failed' })
+    expect((error as { providerError?: string }).providerError).not.toContain('DEV-SECRET')
+  })
+
+  // Short spec codes are unchanged by redaction, so `providerError` still
+  // carries exactly what the provider said. See the `access_denied` case above.
+  it('leaves a spec error code intact', async () => {
+    const target = await server({ device: { failWith: 'expired_token' } })
+    const provider = deviceProvider(target.url)
+
+    const device = await startDeviceAuthorization({ provider, clientId: 'device-client' })
+    await expect(
+      pollDeviceToken({ provider, clientId: 'device-client', device }),
+    ).rejects.toMatchObject({ providerError: 'expired_token' })
+  })
+
   it('explains when a provider has no device endpoint', async () => {
     const target = await server()
     const client = createAuthClient({

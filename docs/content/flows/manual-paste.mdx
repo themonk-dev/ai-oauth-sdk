@@ -65,9 +65,17 @@ await client.login({ receiver: hybridReceiver() })
 
 Three details keep that race honest:
 
-- **The listener is best-effort.** Binding fails when the port is held or the sandbox forbids
-  `listen()`, which are exactly the conditions pasting exists to serve. A failure degrades to the
-  prompt alone rather than ending the login before the URL is even shown.
+- **The listener is best-effort about the machine, never about the address.** A sandbox that
+  forbids `listen()` is exactly the condition pasting exists to serve — the redirect URI stays
+  unclaimed because nothing here can claim it — so that failure degrades to the prompt alone rather
+  than ending the login before the URL is even shown. A port already *held* is the opposite
+  situation: someone else is listening on the exact URI both halves are about to advertise, so
+  carrying on would print an authorization URL naming an address this process does not own and let
+  the browser deliver the code to whoever does. `loopbackReceiver` refuses to start under that
+  arrangement, and `hybridReceiver` propagates the refusal instead of pasting past it — so
+  `start()` rejects, and `ai-oauth-sdk login <provider> --paste` reports the contested port rather
+  than prompting. The two are told apart by type: a refusal is an `OAuthError`, and a kernel saying
+  no is not.
 - **Only the prompt's success competes.** A blank line or a mistyped paste rejects that half, and
   letting a rejection win would tear down a server that was about to receive a perfectly good
   callback.

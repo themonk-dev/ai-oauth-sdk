@@ -57,6 +57,10 @@ export type { RevocableTokenType, RevokeTokenInput } from './revoke.js'
 /* flow primitives */
 export { buildAuthorizationUrl, buildLoopbackRedirectUri, defaultRedirectUri } from './authorize.js'
 export type { BuildAuthorizationUrlInput } from './authorize.js'
+/* A receiver that has to read a param back out of an authorization URL needs
+   the same parser the URL was built with, and on Hermes cannot reach for
+   `URLSearchParams` to do it — see `query.ts` for why. */
+export { parseQuery } from './query.js'
 export { DEFAULT_EXPIRY_SKEW_MS, exchangeCode, isExpired, refreshTokens } from './token.js'
 export type { ExchangeCodeInput, RefreshTokensInput } from './token.js'
 export { AuthorizationRegistry } from './registry.js'

@@ -139,8 +139,10 @@ await client.login({ receiver: hybridReceiver({ port: 1455 }) })
 
 Both halves advertise the same redirect URI, since the provider matches it against the value
 replayed at the code exchange. Only the prompt announces the URL, or the user would get two browser
-tabs. If binding the port fails, which is exactly the situation pasting exists for, it degrades to
-the prompt alone rather than failing the login.
+tabs. If `listen()` itself is refused — a sandbox, not a contested address — it degrades to the
+prompt alone rather than failing the login, which is exactly the situation pasting exists for. If
+the port is *held*, the login is refused instead: someone else would be receiving the callback on
+the URI the prompt was about to print. See [manual paste](/docs/flows/manual-paste).
 
 </Accordion>
 

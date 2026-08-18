@@ -158,7 +158,9 @@ export function createAuthenticatedFetch(
     return `${baseUrl.replace(/\/$/, '')}/${input.replace(/^\//, '')}`
   }
 
-  let cached: { credential: ResolvedCredential; expiresAt: number } | undefined
+  let cached:
+    | { credential: ResolvedCredential; expiresAt: number; source: string }
+    | undefined
 
   /**
    * Resolves the stored token into the credential the API takes.
@@ -167,6 +169,15 @@ export function createAuthenticatedFetch(
    * a network round trip and the result lives about 25 minutes. `discard`
    * throws the cache away, which is what the 401 retry wants: an exchanged
    * credential can be revoked before its nominal expiry just like any other.
+   *
+   * `source` is the stored token the credential was derived from, and the cache
+   * is only read when it still matches. This `fetch` is meant to be built once
+   * and kept — the client underneath it is not. A `logout()` followed by a
+   * second `login()` puts a different account's token in the same storage and
+   * tells this closure nothing, so without the check the new account's requests
+   * would go out bearing the previous account's credential, and to the host
+   * that account's exchange named, for the credential's full lifetime. Nothing
+   * self-heals it: the credential is still entirely valid, so no 401 arrives.
    */
   const resolveCredential = async (
     tokens: TokenSet | undefined,
@@ -183,13 +194,19 @@ export function createAuthenticatedFetch(
       cached = undefined
     }
 
-    if (cached && Date.now() < cached.expiresAt - DEFAULT_EXPIRY_SKEW_MS) {
+    if (
+      cached &&
+      cached.source === tokens.accessToken &&
+      Date.now() < cached.expiresAt - DEFAULT_EXPIRY_SKEW_MS
+    ) {
       return cached.credential
     }
 
     const credential = await exchangeCredential(tokens, { fetch: fetchImpl })
     cached =
-      credential.expiresAt === undefined ? undefined : { credential, expiresAt: credential.expiresAt }
+      credential.expiresAt === undefined
+        ? undefined
+        : { credential, expiresAt: credential.expiresAt, source: tokens.accessToken }
 
     return credential
   }

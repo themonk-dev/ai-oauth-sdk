@@ -245,10 +245,18 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
       typeof described === 'string' && described
         ? safeSnippet(described, 120)
         : safeSnippet(text, 120)
+    // `error` is the provider's string too, so it gets the same treatment as
+    // the description beside it — a gateway that reflects the request back puts
+    // the `device_code` and `code_verifier` we just posted into this field, and
+    // it was the one place here quoting a response verbatim. Redacted only on
+    // the way out: the comparisons above must keep matching the raw value, not
+    // a value that happens to survive `safeSnippet` because spec codes are
+    // short. Same rule as `readTokenError`.
+    const reported = safeSnippet(error, 120)
     throw new OAuthError(
       'device_flow_failed',
-      `Device authorization failed: ${error}${detail ? ` (${detail})` : ''}`,
-      { providerError: error, status: response.status },
+      `Device authorization failed: ${reported}${detail ? ` (${detail})` : ''}`,
+      { providerError: reported, status: response.status },
     )
   }
 

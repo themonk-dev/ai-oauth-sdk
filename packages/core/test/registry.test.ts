@@ -47,6 +47,25 @@ describe('AuthorizationRegistry', () => {
     await expect(registry.consume('s1')).rejects.toMatchObject({ code: 'unknown_state' })
   })
 
+  it('consume() is single-use under concurrency, not just in sequence', async () => {
+    // Read-then-delete is two awaits into storage, so callers arriving together
+    // all saw the record. Every one of them then held the same code_verifier.
+    const registry = make()
+    await registry.create({ state: 's1', provider: 'test', redirectUri: 'http://localhost/cb' })
+
+    const results = await Promise.allSettled([
+      registry.consume('s1'),
+      registry.consume('s1'),
+      registry.consume('s1'),
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+
+    for (const result of results.filter((r) => r.status === 'rejected')) {
+      expect(result.reason).toMatchObject({ code: 'unknown_state' })
+    }
+  })
+
   it('rejects an unknown state', async () => {
     await expect(make().consume('nope')).rejects.toMatchObject({ code: 'unknown_state' })
   })

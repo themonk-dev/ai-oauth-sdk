@@ -18,8 +18,11 @@ application from logging or transmitting them.
 What it does do:
 
 **PKCE is on by default**, with S256, for every redirect-based provider. The verifier is persisted
-only for the flow's lifetime, ten minutes by default, and consumed exactly once, so a replayed
-callback cannot replay the exchange.
+only for the flow's lifetime, ten minutes by default, and consumed once, so a replayed callback
+cannot replay the exchange. Callbacks arriving together for one `state` are serialised, so a browser
+double-submit or a prefetched redirect gets one exchange rather than two. That serialisation is per
+process: `AuthStorage` has no compare-and-swap, so two processes sharing one credential file can
+still both consume the same record.
 
 **Randomness never degrades.** With no `crypto.getRandomValues` available, the library throws rather
 than falling back to `Math.random()`. A guessable `state` or PKCE verifier defeats the point of
@@ -53,6 +56,15 @@ cross-origin `<iframe>` is also a navigation, and `127.0.0.1` is a potentially t
 mixed content does not stop an https page embedding one. A client that sends no `Sec-Fetch-*`
 headers at all, which means anything that is not a browser, is unaffected.
 
+That check cannot be the whole answer, because the provider's own redirect is a cross-site top-level
+navigation too and is indistinguishable from a page navigating the user to the same URL. So the
+callback is also matched to the attempt by `state`, read from the authorization URL the receiver was
+handed: one that disagrees, or that carries no `state` where a state was presented, is refused
+without settling the pending callback and the server keeps listening for the real one. A provider
+declaring `echoesState: false` has said no `state` will come back and is exempt, and a receiver
+driven directly, without `present()`, has no attempt to compare against and takes callbacks as they
+come.
+
 **It binds every address the redirect URI's host resolves to**, which is not the same thing as
 binding one. Most providers register the `localhost` form of the redirect URI rather than the IP
 literal, and on a dual-stack machine `localhost` is both `127.0.0.1` and `::1` — with browsers
@@ -79,9 +91,16 @@ own origin rather than to `*`.
 does not reach one window the way `postMessage` does. Every same-origin context is in the audience,
 your other tabs and your own iframes included. `popupReceiver` compares `state` and ignores a
 callback minted for a different attempt, and the client compares it again before exchanging, so a
-callback taken by the wrong tab fails rather than completing. Use it on redirect pages that need it
-— an authorization page that severs `window.opener` leaves no alternative — and prefer
-`postCallbackToOpener` wherever the opener survived.
+callback taken by the wrong tab fails rather than completing. A callback carrying no `state` where
+the attempt presented one is ignored on the same test, and that direction is the one that bites: the
+redirect page announces whatever query string it was loaded with, so a cross-origin link to
+`?error=access_denied` on that page — or a second tab of an app whose root *is* its redirect page —
+puts a state-less denial on the channel, and taking one would cancel a live sign-in outright. The
+receiver rejects before the client's own comparison can run, so this is the only place it can be
+caught. A provider declaring `echoesState: false` is exempt, because it has said the callback will
+not carry one; that is the same narrow exemption, with the same caveat, described above. Use it on
+redirect pages that need it — an authorization page that severs `window.opener` leaves no
+alternative — and prefer `postCallbackToOpener` wherever the opener survived.
 
 **Discovery is treated as remote input, over a transport that has to stay https.**
 `providerFromDiscovery()` takes a document from a party you have not vouched for, and that document
