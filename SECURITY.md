@@ -115,6 +115,24 @@ and are left alone. There is no issuer-equality check, which would break legitim
 deployments; an `AuthClient` is bound to one provider at construction, so it has nothing to be
 mixed up with.
 
+**Requests that carry a credential refuse redirects outright.** The discovery rule above is about a
+document; this one is about the POSTs that follow it. Every credential this library sends travels in
+a request body — `refresh_token`, `code`, `code_verifier`, `device_code`, `client_secret` — and
+`fetch` follows redirects by default. A 307 or 308 preserves the method and replays that body
+verbatim to the origin the `Location` names, so one hop delivers the whole set to whoever answers;
+that Node strips `Authorization` and `Cookie` cross-origin is no help, because no provider here puts
+a credential in a header. A 301, 302 or 303 is rewritten to a bodiless GET and leaks nothing, but it
+is still followed silently and the target's answer is then read as the token endpoint's — a forged
+`access_token` accepted and stored. So the token, revocation and device endpoints are called with
+`redirect: 'error'`: a redirect on one of those is not something to inspect, it is something that
+must not happen. This is not the same trade-off discovery makes, and it is not the same request —
+there is no legitimate reason for a token POST to be moved, and nothing here to be broken by
+refusing. `createAuthenticatedFetch()` is deliberately excluded, because it calls arbitrary provider
+APIs where redirects are ordinary traffic. The guard is a runtime one and not every runtime honours
+it: React Native's `fetch` polyfill is XHR underneath and follows redirects transparently whatever
+the option says, and a custom `FetchLike` may ignore it too. On those, a token endpoint reached over
+`https` is what protects the body.
+
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis, but that body is not ours and a misconfigured
 gateway echoing the request back would put a live refresh token straight into your logs. Snippets

@@ -236,6 +236,32 @@ export interface AuthSessionReceiverOptions {
  * Custom Tabs, so the user keeps their provider cookies and the OS closes the
  * sheet automatically on redirect. `openAuthSessionAsync` both presents the URL
  * and returns the result, so `present()` starts it and `wait()` awaits it.
+ *
+ * The result is matched to the attempt this receiver presented, by `state`, the
+ * same way a deep link is, because on Android it arrives by the same route. No
+ * Android version has the native session, so `openAuthSessionAsync` falls back
+ * to a JavaScript polyfill that opens a Custom Tab and then resolves from the
+ * first `Linking` event whose URL starts with the redirect URI. Any app on the
+ * device, and any web page the user follows a link from, can fire that. On iOS
+ * and on web the native `ASWebAuthenticationSession` returns the redirect it
+ * saw itself, and nothing else can reach this.
+ *
+ * A result that disagrees with the presented `state`, or that carries none
+ * where one was presented, is refused as `state_mismatch` rather than read as
+ * our callback — so an unsolicited `?error=access_denied` can no longer fail a
+ * live sign-in as the provider's own `authorization_denied`. A provider
+ * declaring `echoesState: false` is exempt, as it is for deep links: it has
+ * said its callback brings no `state` back, and holding it to that comparison
+ * would reject the only result it can send.
+ *
+ * Unlike the deep-link receiver, a foreign URL cannot be dropped in favour of
+ * waiting for the real one. The polyfill removes its `Linking` subscription and
+ * settles its promise the moment it matches, so once any matching deep link has
+ * fired there is nothing left listening for the genuine redirect, and waiting
+ * would only hang the login until `timeoutMs`. It fails fast instead. The
+ * denial-of-sign-in therefore still succeeds on Android and `login()` has to be
+ * retried; what this buys is that a URL belonging to someone else is not parsed
+ * as ours and the failure is not misreported as the provider's.
  */
 export function authSessionReceiver(options: AuthSessionReceiverOptions): CallbackReceiver {
   return {
@@ -243,12 +269,52 @@ export function authSessionReceiver(options: AuthSessionReceiverOptions): Callba
     async start(context: ReceiverContext) {
       let pending: Promise<CallbackResult> | undefined
 
+      /**
+       * The `state` of the authorization this receiver actually presented,
+       * learned from the URL it was handed rather than tracked separately, so
+       * the two cannot disagree.
+       */
+      let presentedState: string | undefined
+
+      /**
+       * The provider's own read of the result URL, with the failure it may
+       * represent held rather than thrown.
+       *
+       * The `state` has to come from the same parser the client will use:
+       * providers disagree about where the callback params live, and
+       * `parseCallback` is the only thing that knows which. Settling is held
+       * back so ownership can be decided first — `readCallback` throws on an
+       * `error=` callback, and that rejection is exactly what an unrelated app
+       * would like the session to end on.
+       */
+      const read = (url: string): { state: string | undefined; settle: () => CallbackResult } => {
+        try {
+          const result = readCallback(context.provider, url)
+
+          return { state: result.state, settle: () => result }
+        } catch (error) {
+          // `readCallback` carries the `state` its parse found onto the error
+          // it throws, so even a refusal still says whose it is.
+          return {
+            state: isOAuthError(error) ? error.state : undefined,
+            settle: () => {
+              throw error
+            },
+          }
+        }
+      }
+
       const onAbort = () => options.webBrowser.dismissAuthSession?.()
       context.signal?.addEventListener('abort', onAbort, { once: true })
 
       return {
         redirectUri: options.redirectUri,
         async present(url) {
+          // Read from the URL the client built rather than tracked alongside
+          // it, so what this receiver believes its attempt is can never drift
+          // from what it actually sent the user to.
+          presentedState = stateOfAuthorizationUrl(url)
+
           pending = options.webBrowser
             .openAuthSessionAsync(url, options.redirectUri, options.browserOptions)
             .then((result) => {
@@ -259,7 +325,38 @@ export function authSessionReceiver(options: AuthSessionReceiverOptions): Callba
                 )
               }
 
-              return readCallback(context.provider, result.url)
+              const callback = read(result.url)
+
+              // Only a `state` that was presented can be answered for. Where
+              // none was, there is nothing to compare and the result is taken
+              // as it comes; where one was, silence is a disagreement like any
+              // other — the Android polyfill resolves from any deep link whose
+              // URL starts with the redirect URI, so "not ours" is a shape it
+              // can be handed rather than a shape only the provider produces.
+              //
+              // A provider declaring `echoesState: false` is the first case
+              // even where the URL carried a `state`, because it has said the
+              // callback will not bring one back.
+              //
+              // Refused rather than dropped: the polyfill has already removed
+              // its `Linking` subscription and settled, so there is no longer
+              // anything listening for the genuine redirect and waiting on it
+              // would hang the login until `timeoutMs`. The sign-in is lost
+              // either way and has to be retried; refusing here at least keeps
+              // a foreign URL from being read as our callback, and keeps the
+              // failure from being reported as the provider's own denial.
+              if (
+                presentedState !== undefined &&
+                context.provider.echoesState !== false &&
+                callback.state !== presentedState
+              ) {
+                throw new OAuthError(
+                  'state_mismatch',
+                  'A deep link that does not belong to this sign-in ended the auth session.',
+                )
+              }
+
+              return callback.settle()
             })
         },
         async wait() {

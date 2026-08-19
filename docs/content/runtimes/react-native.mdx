@@ -46,6 +46,22 @@ const tokens = await client.login({
 `present()` and awaits it in `wait()`. Cancelling the sheet rejects with an `aborted` error rather
 than hanging.
 
+<Callout type="warn" title="On Android the auth session is a deep link">
+  There is no native auth session on Android, so `expo-web-browser` polyfills one in JavaScript: it
+  opens a Custom Tab and resolves from the first `Linking` deep link whose URL starts with your
+  redirect URI. Any app on the device, and any web page the user follows a link from, can fire that.
+  So the receiver matches the result to the attempt it presented, by `state`, the same way the
+  deep-link receiver does, and refuses one that disagrees or that carries no `state` where one was
+  presented — an unsolicited `?error=access_denied` is refused as `state_mismatch` rather than
+  surfaced as the provider's own denial.
+
+  It cannot rescue the sign-in. Once anything matching has fired, the polyfill has removed its
+  listener and settled, so the genuine redirect has nowhere to land and `login()` must be retried;
+  waiting for it would only hang until `timeoutMs`. What the check buys is that a URL belonging to
+  someone else is never parsed as your callback and the failure is attributed honestly. iOS and web
+  use the native `ASWebAuthenticationSession`, which returns only the redirect it saw itself.
+</Callout>
+
 ## Bare React Native
 
 ```ts
