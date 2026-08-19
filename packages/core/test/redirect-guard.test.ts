@@ -4,7 +4,9 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { defineProvider } from '../src/providers/define.js'
-import { pollDeviceToken } from '../src/receivers/device.js'
+import { providers } from '../src/providers/index.js'
+import { pollDeviceToken, startDeviceAuthorization } from '../src/receivers/device.js'
+import { openaiDeviceFlow } from '../src/receivers/openai-device.js'
 import { revokeToken } from '../src/revoke.js'
 import { exchangeCode, refreshTokens } from '../src/token.js'
 import type { DeviceCodeResponse, ProviderConfig, TokenSet } from '../src/types.js'
@@ -144,6 +146,14 @@ describe('credential-bearing POSTs refuse to follow a redirect', () => {
     expect(sinkHits).toEqual([])
   })
 
+  it('does not replay the device authorization request', async () => {
+    await expect(
+      startDeviceAuthorization({ provider: provider(), clientId: 'redirect-client' }),
+    ).rejects.toThrow()
+
+    expect(sinkHits).toEqual([])
+  })
+
   it('does not replay the device code from the poll loop', async () => {
     await expect(
       pollDeviceToken({ provider: provider(), clientId: 'redirect-client', device: device() }),
@@ -169,5 +179,35 @@ describe('credential-bearing POSTs refuse to follow a redirect', () => {
     expect(result).toBeInstanceOf(Error)
     expect(result).not.toMatchObject({ accessToken: 'pwned' })
     expect(sinkHits).toEqual([])
+  })
+
+  /*
+   * OpenAI's device flow posts to hardcoded `auth.openai.com` URLs, so there is
+   * no provider config to point at the redirector above. The guard is asserted
+   * on the request instead: whatever `fetch` this flow is handed must be asked
+   * to refuse the hop. Both of its endpoints go through one helper, so the
+   * start call covers the poll too.
+   */
+  it('asks its fetch to refuse a redirect on the OpenAI device endpoints', async () => {
+    const seen: (RequestInit | undefined)[] = []
+    const fetchImpl = (_url: string, init?: RequestInit): Promise<Response> => {
+      seen.push(init)
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ device_auth_id: 'd-1', user_code: 'WXYZ-1234', interval: 1 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+    }
+
+    await openaiDeviceFlow.start({
+      provider: providers.openai,
+      clientId: 'redirect-client',
+      fetchImpl,
+    })
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ method: 'POST', redirect: 'error' })
   })
 })

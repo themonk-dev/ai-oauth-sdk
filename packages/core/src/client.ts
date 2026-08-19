@@ -741,9 +741,15 @@ export class AuthClient {
    * triggers the migration first — the no-revocation path never reads tokens at
    * all — so this is the only place the old key gets cleared.
    *
-   * Each delete stands alone: a backend that throws on a key it does not hold
-   * must not strand the rest, the same allowance {@link #readRenamedTokens}
-   * makes for its own tidying.
+   * The old keys go first, and each stands alone. A backend that throws on a
+   * key it does not hold must not strand the rest — the same allowance
+   * {@link #readRenamedTokens} makes for its own tidying — and for a renamed
+   * provider the key most likely to be absent is the *current* one, which is
+   * the whole reason this method needed fixing. Clearing it first would put
+   * the throw in front of the credential that actually exists. The current
+   * key's delete is deliberately left to propagate: a storage that cannot
+   * clear the key this client writes is a failed sign-out, and saying so is
+   * better than a quiet success.
    */
   async logout(options: { revoke?: boolean; signal?: AbortSignal } = {}): Promise<void> {
     if (options.revoke && this.provider.revocationUrl) {
@@ -756,7 +762,6 @@ export class AuthClient {
 
     this.#cachedTokens = undefined
     this.#tokensLoaded = true
-    await this.#storage.delete(this.#tokenKey)
 
     for (const previousId of this.provider.previousIds ?? []) {
       try {
@@ -765,6 +770,8 @@ export class AuthClient {
         /* one unclearable old key must not leave the others behind */
       }
     }
+
+    await this.#storage.delete(this.#tokenKey)
   }
 }
 

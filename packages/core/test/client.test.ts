@@ -5,7 +5,7 @@ import { isOAuthError, OAuthError } from '../src/errors.js'
 import { defineProvider } from '../src/providers/define.js'
 import { providers, publicClientIds } from '../src/providers/index.js'
 import { memoryStorage } from '../src/storage.js'
-import type { CallbackReceiver, ProviderConfig } from '../src/types.js'
+import type { AuthStorage, CallbackReceiver, ProviderConfig } from '../src/types.js'
 import { startFakeAuthServer, type FakeAuthServer } from './helpers/fakeAuthServer.js'
 
 let server: FakeAuthServer
@@ -656,6 +656,37 @@ describe('token persistence', () => {
       })
       expect(await nextWork.getTokens()).toBeUndefined()
       expect(await nextWork.isAuthenticated()).toBe(false)
+    })
+
+    it('clears the old key even when deleting the current one throws', async () => {
+      /* A keychain-style backend that objects to a key it does not hold. For a
+         renamed provider the absent key is the *current* one, so clearing that
+         first would put the throw in front of the credential that exists. */
+      const map = new Map<string, string>()
+      const storage: AuthStorage = {
+        get: async (key) => map.get(key) ?? null,
+        set: async (key, value) => void map.set(key, value),
+        delete: async (key) => {
+          if (!map.has(key)) {
+            throw new Error(`no such key: ${key}`)
+          }
+
+          map.delete(key)
+        },
+      }
+      const provider = testProvider(server.url, { previousIds: ['legacy-test'] })
+
+      map.set('tokens:legacy-test', legacyTokens)
+
+      const client = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      await expect(client.logout()).rejects.toThrow('no such key: tokens:test')
+
+      // The failure is reported, but the live credential is gone regardless.
+      expect(map.has('tokens:legacy-test')).toBe(false)
     })
   })
 })
