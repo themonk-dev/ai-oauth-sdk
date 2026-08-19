@@ -23,6 +23,17 @@ describe('redactSecrets', () => {
     expect(redacted).toContain('3600')
   })
 
+  /*
+   * Byte-exact, because the snippet is read by a human. Redaction that leaves a
+   * stray quote behind corrupts the diagnostic it was supposed to preserve.
+   */
+  it('leaves the surrounding body intact', () => {
+    expect(redactSecrets('{"refresh_token":"abc12345","expires_in":3600}')).toBe(
+      '{"refresh_token":[redacted],"expires_in":3600}',
+    )
+    expect(redactSecrets("{'refresh_token': 'abc12345'}")).toBe("{'refresh_token': [redacted]}")
+  })
+
   it('scrubs them in form encoding too', () => {
     const redacted = redactSecrets(
       'grant_type=refresh_token&refresh_token=secret-value-here&client_id=public',
@@ -35,6 +46,40 @@ describe('redactSecrets', () => {
     const redacted = redactSecrets('code=abc123def456&code_verifier=xyz789uvw012')
     expect(redacted).not.toContain('abc123def456')
     expect(redacted).not.toContain('xyz789uvw012')
+  })
+
+  /*
+   * A gateway that echoes our request back does not always hand it back as it
+   * received it. Wrapping the body into a JSON envelope escapes every quote in
+   * it, so the parameter name is followed by `\":\"` rather than `":"`.
+   */
+  it('scrubs a credential in JSON that was embedded as a string inside JSON', () => {
+    const inner = JSON.stringify({
+      grant_type: 'refresh_token',
+      refresh_token: 'rt_live_9f3a2b7c1d4e5f60',
+    })
+    const redacted = redactSecrets(JSON.stringify({ upstream_body: inner }))
+
+    expect(redacted).not.toContain('rt_live_9f3a2b7c1d4e5f60')
+    expect(redacted).toContain(REDACTED)
+  })
+
+  it('scrubs one that was wrapped twice over', () => {
+    const inner = JSON.stringify({ refresh_token: 'rt_live_0011223344556677' })
+    const redacted = redactSecrets(JSON.stringify({ m: JSON.stringify({ upstream_body: inner }) }))
+
+    expect(redacted).not.toContain('rt_live_0011223344556677')
+    expect(redacted).toContain(REDACTED)
+  })
+
+  /*
+   * The value class has to keep accepting a backslash. Excluding it to make the
+   * escaped forms above match would fail the whole match on a value that simply
+   * contains one, and a failed match prints the credential.
+   */
+  it('does not leak a credential whose value contains a backslash', () => {
+    const redacted = redactSecrets(String.raw`{"refresh_token":"ab\cdefgh12345678"}`)
+    expect(redacted).not.toContain('cdefgh12345678')
   })
 
   it('scrubs a bare Authorization header value', () => {
@@ -146,6 +191,64 @@ describe('token errors never carry a credential', () => {
       expect((error as Error).message).toContain('502')
     } finally {
       await target.close()
+    }
+  })
+
+  /*
+   * The body above is text, so it reaches the message as it was sent. This one
+   * is valid JSON that `readTokenError` finds nothing in — no `error`, no
+   * `error_description`, no `detail`, no nested `error.message` — so it falls
+   * back to a snippet of the raw body, still escaped exactly as the gateway
+   * wrote it. That is the shape the escaped-quote case above arrives in.
+   */
+  it('does not leak the refresh token when the echo is wrapped in a JSON envelope', async () => {
+    const { createServer } = await import('node:http')
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        response.writeHead(502, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ upstream_status: 502, upstream_body: body }))
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as { port: number }
+
+    try {
+      const client = createAuthClient({
+        provider: defineProvider({
+          id: 'wrap',
+          label: 'Wrap',
+          clientId: 'c',
+          authorizationUrl: `http://127.0.0.1:${port}/authorize`,
+          tokenUrl: `http://127.0.0.1:${port}/token`,
+          scopes: [],
+          redirect: { mode: 'custom' },
+          // As `openrouter` posts, so the echoed body is JSON inside JSON.
+          tokenRequest: { style: 'json' },
+        }),
+        redirectUri: 'http://localhost/cb',
+        storage: memoryStorage(),
+      })
+
+      await client.setTokens({
+        accessToken: 'at',
+        refreshToken: 'rt_live_9f3a2b7c1d4e5f60',
+        tokenType: 'Bearer',
+        provider: 'wrap',
+        raw: {},
+      })
+
+      const error = await client.refresh().catch((caught: Error) => caught)
+      const serialized = `${(error as Error).message} ${JSON.stringify(error)}`
+
+      expect(serialized).not.toContain('rt_live_9f3a2b7c1d4e5f60')
+      expect(serialized).toContain(REDACTED)
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve())
+        server.closeAllConnections?.()
+      })
     }
   })
 

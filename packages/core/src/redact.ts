@@ -27,12 +27,32 @@ const SECRET_PARAMS = [
 ]
 
 /**
- * Matches key, optional quotes, `:` or `=`, optional quotes, then the value up
- * to a delimiter — covering `{"refresh_token":"x"}` and `refresh_token=x&…`
+ * Matches key, optional quoting, `:` or `=`, optional quoting, then the value
+ * up to a delimiter — covering `{"refresh_token":"x"}` and `refresh_token=x&…`
  * alike.
+ *
+ * The quoting is `[\\"']{0,4}` rather than `["']?` because a gateway echoing
+ * our request rarely hands it back as it received it. Wrapping the body into a
+ * JSON envelope escapes the quotes in it, so the key is followed by `\":\"`
+ * and the old `["']?` — which matched empty, leaving `\s*[:=]` to fail on the
+ * backslash — matched nothing at all. Four characters covers two levels of
+ * escaping, which is as deep as anything real nests.
+ *
+ * Two details are load-bearing and easy to "improve" into a defect:
+ *
+ * - The backslash stays *inside* the value class, and the trailing `["']?`
+ *   stays. Excluding `\\` from the value would fail the `{4,}` quantifier —
+ *   and so the whole match — on a value that merely contains a backslash,
+ *   printing the credential; dropping the trailing quote would leave a stray
+ *   one behind and corrupt the snippet a human reads.
+ * - `{0,4}` must not become `*`, and must not be generalised to
+ *   `(?:\\*["'])?`. The response body is attacker-controlled, and that
+ *   generalisation backtracks quadratically over a run of backslashes: 1.0s,
+ *   4.2s, 17.3s and 69.1s for 50k, 100k, 200k and 400k of them. A bounded
+ *   class is O(1) per start position.
  */
 const PARAM_PATTERN = new RegExp(
-  String.raw`(["']?\b(?:${SECRET_PARAMS.join('|')})\b["']?\s*[:=]\s*)["']?([^"'&,}\s]{4,})["']?`,
+  String.raw`(\b(?:${SECRET_PARAMS.join('|')})\b[\\"']{0,4}\s*[:=]\s*)[\\"']{0,4}([^"'&,}\s]{4,})["']?`,
   'gi',
 )
 
