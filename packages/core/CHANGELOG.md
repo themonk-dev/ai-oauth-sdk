@@ -1,5 +1,45 @@
 # @ai-oauth-sdk/core
 
+## 1.2.0
+
+### Minor Changes
+
+- 8b51237: Bind deep-link callbacks to the attempt that started them, and stop replaying the launch URL.
+
+  A custom URL scheme is not a private channel. Any other app on the device, and any web page the user follows a link from, can send `myapp://auth/callback?...` into the receiver, and it settled the login from anything whose path matched the redirect URI. A single unsolicited `?error=access_denied` therefore cancelled a sign-in on demand — the client's own `state` comparison only guards the success path, so a `wait()` that rejects is a failed login whatever the callback was. The loopback receiver is bound to its attempt the same way, in this release, and additionally turns away the subresource form of the same request using the `Sec-Fetch-*` headers a browser attaches; a custom scheme carries no such headers to judge by, so `state` is the whole of it here.
+
+  The same hole was reachable without anyone sending anything. `wait()` read `getInitialURL()` unconditionally, and that source does not drain: it keeps returning the URL that cold-started the app for the life of the process. A callback bound to nothing was replayed into every later login in that process.
+
+  Callbacks are now matched to the attempt by `state`, read from the authorization URL handed to `present()` so the two cannot drift, and one that disagrees is dropped rather than settling the login. A callback carrying no `state` where one was presented is dropped too: on a custom scheme "not ours" is the default, and RFC 6749 §4.1.2.1 requires `state` to be echoed on error responses as well as successful ones, so nothing legitimate is turned away. A provider that ignores that rule leaves the login pending rather than failing it, which is what `timeoutMs` and `signal` are for. A provider that sends no `state` at all leaves nothing to compare, and its callbacks are still taken as they come. The redirect URI is now compared by whole path rather than by prefix, so `myapp://auth/callbackXYZ` is no longer treated as the callback screen.
+
+  `parseQuery` is exported from core for this: a receiver reading a param back out of an authorization URL needs the same parser the URL was built with, and bare React Native cannot reliably reach for `URLSearchParams` to do it.
+
+  The documented cold-start resume was corrected rather than kept. It could not work and never could: the relaunched app calls `createAuthorization()` again, which mints a fresh `state`, so the URL from before the kill belongs to an attempt that no longer exists. Finishing a flow the OS interrupted means handing the URL to `completeAuthorization({ callbackUrl })` yourself, with storage that survives the restart and within the authorization TTL.
+
+### Patch Changes
+
+- 8b51237: Key the exchanged-credential cache on the token it was derived from, and redact the device flow's `error` code before printing it.
+
+  **`createAuthenticatedFetch()` cached the exchanged credential on nothing at all.** For a provider that declares `exchangeCredential` — GitHub Copilot is the one in the box — the stored OAuth token is not the API credential, so the fetch trades it for a short-lived one and holds that for its ~25-minute life rather than paying a round trip per request. The cache was a closure variable holding the credential and its expiry, and no record of whose it was. It was thrown away on exactly one path: the 401 retry.
+
+  Nothing else can reach it. `logout()` clears the client's in-memory tokens and the storage key, but has no handle on a fetch built from that client, and the fetch never asks whether the token underneath it is the one it exchanged. So a sign-in, one Copilot call, a `logout()`, and a second sign-in on the same `AuthClient` left the second account's requests carrying the first account's credential — and going to the first account's host, because Copilot only learns its API host from the exchange and an enterprise account gets a different one. Requests made by user B went out as `Bearer EX(USER-A)` to A's host, for as long as A's credential remained valid. No 401 ever corrected it, since A's credential was not expired or revoked — merely not B's.
+
+  Reusing one fetch across calls is the documented shape, not misuse: it is presented as a long-lived object to hand to an SDK, and holding one for the process is the point of it. The library never told the caller to rebuild it after a logout, and nothing in the type says it is bound to an account.
+
+  The cache now records the stored access token the credential came from and is only read while that token still matches. A changed token — a different account, or any other reason the stored value moved — misses and re-exchanges, which also picks up the new account's `baseUrl`. Reuse across calls for one unchanging token, the renewal window, and the 401 discard are all unchanged, and there is no public API change.
+
+  **On the device flow, the provider's `error` code was interpolated verbatim** into the failure message and stored on `providerError`, unbounded, while `error_description` and the raw body beside it both went through `safeSnippet`. A gateway that reflects the request into that field — the same misconfiguration the redaction exists for — put a live `device_code` and PKCE `code_verifier` straight into the error message, and from there into logs and terminal scrollback. The identical body handled by the token endpoint's path came out redacted, because `readTokenError` sends `error` through `safeSnippet` like everything else; this was the one call site that did not. It now does, at the throw only: the `authorization_pending` and `slow_down` comparisons that drive the poll loop keep matching the raw value rather than depending on a spec code happening to survive redaction unchanged.
+
+- 8b51237: Serialise `AuthorizationRegistry.consume()` per state, so concurrent callers cannot all be handed the same PKCE verifier.
+
+  `consume()` read the pending record and then deleted it, with two awaits into storage in between and nothing holding the interval. Callers arriving together therefore all completed their read before any of them reached the delete, and all of them were handed the same record — the same authorization `state` and the same `codeVerifier`. Three concurrent `consume()` calls for one state all resolved, against memory storage and against the file storage the CLI uses; two concurrent `completeAuthorization()` calls both reached the token endpoint with byte-identical bodies. Replaying a state _sequentially_ was refused correctly the whole time, which is precisely what made the concurrent case easy to miss.
+
+  The consequence is narrower than a replayed exchange. The verifier never leaves the process, and only one redemption of an authorization code can succeed at the authorization server, so no extra token is minted. What the duplicate buys is the code reuse itself: an authorization server following RFC 6749 §4.1.2 revokes every token it has already issued for a code it sees a second time, so the request that lost the race takes down the session the request that won had just established. It does not take an attacker holding a captured callback to get there — a browser resending a callback on a double submit, or a link scanner prefetching the redirect URI, is enough.
+
+  Calls for one state now queue: a later arrival waits for the one in flight to finish, however it finishes, and then reads again, finding the record gone and reporting it as already used. `consumeLatest()` resolves its pointer and delegates through `consume()`, so it inherits the same guarantee. Expiry, the `state_expired` branch, and the sequential single-use behaviour are unchanged, and there is no public API change.
+
+  This covers in-process concurrency only, and deliberately stops there. `AuthStorage` exposes `get`, `set` and `delete` with no compare-and-swap, so two CLI windows sharing one `auth.json` can still both read the record before either deletes it. Closing that would mean adding an atomic primitive to the storage interface and implementing it in every backend, from a file to `SecureStore` — a much larger change than this defect justifies.
+
 ## 1.1.3
 
 ### Patch Changes

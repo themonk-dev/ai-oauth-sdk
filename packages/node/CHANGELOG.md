@@ -1,5 +1,38 @@
 # @ai-oauth-sdk/node
 
+## 1.2.0
+
+### Patch Changes
+
+- 8b51237: Propagate the loopback receiver's refusal through `hybridReceiver()`, so `--paste` is not a way around a squatted port.
+
+  `loopbackReceiver()` refuses to start when the address it is about to advertise is already held — a fixed published port taken outright, or the sibling address that a name like `localhost` also resolves to. `hybridReceiver()` started that receiver inside a bare `catch` and dropped it on any failure, on the reasoning that a port that cannot be bound is one of the conditions `--paste` exists for. That reasoning predates the refusal: the sibling case was added later, and the comment was never revisited.
+
+  Discarding the loopback half does not leave the login without a redirect URI. `manualReceiver()` synthesises one from the provider, which for a loopback provider with a declared port is exactly the URI that just failed to bind. So a local unprivileged process holding `127.0.0.1:56121` (`xai`) or `[::1]:1455` (`openai`) turned a refusal back into a login: the CLI routes every provider without a hosted callback page through this receiver under `--paste`, printed an authorization URL naming the squatter's socket, and waited at the paste prompt while the browser delivered the code to them and they served whatever page they liked on a URL the user had just been told to trust. As elsewhere, PKCE is what keeps the captured code from being redeemed — the verifier never leaves the victim's process — so this is disclosure, interception and a stalled login rather than token theft, and it is not even that for a descriptor built with `usePkce: false`.
+
+  The two failures are now told apart by type: a refusal is an `OAuthError` and is rethrown, and anything else — the EPERM/EACCES/ENOTSUP a sandbox that forbids `listen()` reports — still degrades to the prompt alone. That is deliberately coarser than matching a specific error code, which would be public surface: `start()` throws an `OAuthError` only when it has decided the login should not proceed, and any later reason it decides that propagates without this needing to be revisited again.
+
+  `hybridReceiver().start()` therefore gains a rejection case, and `ai-oauth-sdk login <provider> --paste` on a provider with a fixed port now reports the contested port instead of prompting. The sandbox fallback, the race semantics, and providers that paste against a hosted page are unchanged.
+
+- 8b51237: Bind loopback callbacks to the attempt that started them, in `loopbackReceiver()` and through `hybridReceiver()`.
+
+  The loopback server decided whether a request could settle the pending callback from the `Sec-Fetch-*` headers alone, and never compared `state`. A cross-site _top-level navigation_ passes that gate by design, because the provider's real redirect is one. So any web page the user happened to visit could settle the callback — no click, no local code, nothing to notice — by navigating them to `http://127.0.0.1:1455/callback?error=access_denied`. `openai` publishes port 1455 and `xai` 56121, so there was nothing to guess.
+
+  No tightening of the fetch-metadata check could have closed this. The genuine redirect and the drive-by are byte-identical: `Sec-Fetch-Site: cross-site`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`. `Sec-Fetch-User` is not a discriminator either — a provider that auto-approves an already-consented app redirects without a user gesture and sends none. Only `state` separates them, and the client's own comparison is too late: it guards the success path, so a `wait()` that rejects is a failed login whatever the callback was.
+
+  What that bought an attacker is denial, not a token. `completeAuthorization()` throws `state_mismatch` on a foreign `code`, and the one bundled provider that does not echo `state` uses PKCE on an ephemeral port. The damage is that settling closes the server, so the real redirect that follows a second later hits `ECONNREFUSED` and the sign-in is lost — repeatably, and for whichever login the page happens to catch.
+
+  Callbacks are now matched to the attempt by `state`, read from the authorization URL handed to `present()` so the receiver's idea of its attempt cannot drift from what it actually sent the user to, and compared with `timingSafeEqual` because it is now on a security boundary. One that disagrees — or that carries no `state` where a state was presented — gets a `403` and the server keeps listening for the real redirect. The `Sec-Fetch-*` check stays, and stays first: it is the only cover for the window between `start()` and `present()`, and for the two cases the comparison deliberately exempts.
+
+  `hybridReceiver()` now presents its loopback half as well as its prompt. Without that the half never learned the `state` and the fix was silently inert under `--paste` — the same fixed ports, the same drive-by. Presenting it is also what opens a browser, so every announcing channel is removed from that half first: `openBrowser` was already forced off, `onAuthorizationUrl` is stripped, and it is started on a context with no `openUrl`. The prompt keeps all three, so the URL is printed once and a browser opened at most once. Stripping `onAuthorizationUrl` there changes nothing today, since the half was never presented before.
+
+  The accepted cost is the same trade-off this release already took in the deep-link receiver. A provider that omits `state` on an error response — which RFC 6749 §4.1.2.1 requires it to echo — now leaves the login pending until `timeoutMs` or the `signal` fires, instead of failing fast. Two exemptions are deliberate: a provider declaring `echoesState: false` has said no `state` will come back, and a receiver driven directly through `start()` without `present()` has no attempt to compare against and still takes callbacks as they come. Unlike a deep-link scheme, a bound port does not exist before the flow does, so there is no pre-existing route for a stray callback to have arrived on — and requiring `present()` would break every caller that drives `start()` itself.
+
+- Updated dependencies [8b51237]
+- Updated dependencies [8b51237]
+- Updated dependencies [8b51237]
+  - @ai-oauth-sdk/core@1.2.0
+
 ## 1.1.3
 
 ### Patch Changes
