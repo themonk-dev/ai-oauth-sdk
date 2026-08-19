@@ -94,6 +94,43 @@ async function postToTokenEndpoint(
         ...provider.tokenRequest.headers,
       },
       body,
+      /*
+       * A credential-bearing POST must never follow a hop.
+       *
+       * `fetch` defaults to `redirect: 'follow'`. On 307 and 308 undici keeps
+       * the method and replays the body verbatim to the new origin — and this
+       * body is the whole credential set: `refresh_token`, `code`,
+       * `code_verifier`, `client_secret`. That undici strips `Authorization`
+       * and `Cookie` cross-origin buys nothing here, because no provider we
+       * ship puts a credential in `tokenRequest.headers`; it all travels in the
+       * body. On 301, 302 and 303 the request is rewritten to a bodiless GET,
+       * so nothing leaks — but the hop is still followed silently and whatever
+       * the target answers is parsed below as the token response, which is a
+       * forged `access_token` accepted and handed to the caller to store. The
+       * `!response.ok` check never sees the 3xx either way, because `fetch` has
+       * already resolved it.
+       *
+       * `providers/index.ts` spends thirty lines on the neighbouring case: Node
+       * follows an `https`→`http` hop, and an issuer behind a TLS-terminating
+       * proxy that ignores `X-Forwarded-Proto` emits `Location: http://…` with
+       * no attacker involved at all. That guard applies only to the discovery
+       * document, which carries no credential. This one does.
+       *
+       * `'error'` rather than `'manual'`: a redirect here is not something to
+       * inspect and decide about, it is something that must not happen. The
+       * opaque-redirect `Response` `'manual'` yields would fall through to the
+       * status check below and be reported as a generic token failure.
+       *
+       * Deliberately set here rather than in `fetchWithSignal`, which
+       * `createAuthenticatedFetch` also goes through to call arbitrary provider
+       * APIs — path canonicalisation, regional host moves and pre-signed blob
+       * URLs all redirect legitimately there.
+       *
+       * Known limitation: React Native's whatwg-fetch/XHR polyfill ignores the
+       * option entirely (XHR follows transparently), and a custom `FetchLike`
+       * is free to ignore it too. On those runtimes this is a no-op.
+       */
+      redirect: 'error',
     },
     signal,
     'Token request was aborted.',

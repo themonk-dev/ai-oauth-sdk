@@ -63,6 +63,15 @@ export async function revokeToken(input: RevokeTokenInput): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: encodeQuery(body),
+      /*
+       * This body carries the token being revoked and the client secret, so it
+       * refuses redirects for the reason `postToTokenEndpoint` sets out at
+       * length: a 307/308 replays it verbatim to whatever origin the `Location`
+       * names, and a 30x rewritten to a GET would let the target's answer stand
+       * in for the provider's — here, a silent "revoked" that revoked nothing.
+       * Ignored by React Native's fetch polyfill and by a custom `FetchLike`.
+       */
+      redirect: 'error',
     },
     input.signal,
     'Revocation request was aborted.',

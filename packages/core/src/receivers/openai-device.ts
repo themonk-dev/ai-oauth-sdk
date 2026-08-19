@@ -49,6 +49,12 @@ async function postJson(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(body),
+      // Both callers post a credential — `client_id` on the way out, then
+      // `device_auth_id` + `user_code` on every poll — and the approved poll's
+      // answer hands back an authorization code and OpenAI's own PKCE verifier.
+      // So no hop is followed, for the reasons on `postToTokenEndpoint` in
+      // token.ts.
+      redirect: 'error',
     },
     signal,
     abortMessage,
