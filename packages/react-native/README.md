@@ -32,6 +32,16 @@ const tokens = await client.login({
 `authSessionReceiver` uses `SFAuthenticationSession` / Custom Tabs, so the user keeps
 their provider cookies and the OS closes the sheet on redirect.
 
+Android has no native auth session, so `expo-web-browser` polyfills one: it opens a
+Custom Tab and resolves from the first `Linking` deep link that starts with your redirect
+URI — which any app on the device, or any web page the user follows a link from, can
+fire. The receiver matches the result to the attempt it presented, by `state`, and
+refuses one that disagrees or that carries none where one was presented, so a stray
+`?error=access_denied` is no longer reported as the provider's own denial. It cannot
+recover the sign-in, though: the polyfill stops listening once anything matched, so the
+real redirect has nowhere to land and `login()` has to be retried. iOS and web use the
+native session and are unaffected.
+
 ## Bare React Native
 
 ```ts
