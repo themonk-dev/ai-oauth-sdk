@@ -8,8 +8,13 @@ import type { DeviceCodeResponse, FetchLike, ProviderConfig, TokenSet } from '..
 
 export type { DeviceCodeResponse } from '../types.js'
 
-/** Reads a numeric field from an untrusted response, bounded and with a default. */
-function clamp(value: unknown, fallback: number, min: number, max: number): number {
+/**
+ * Reads a numeric field from an untrusted response, bounded and with a default.
+ *
+ * Exported for the OpenAI device flow, which bounds the same two fields off a
+ * different response shape. Not part of the package's public surface.
+ */
+export function clamp(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return fallback
   }
