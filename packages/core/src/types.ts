@@ -42,6 +42,17 @@ export interface TokenSet {
   /** The provider this token belongs to. */
   provider: string
   /**
+   * Origin of the token endpoint that issued this record, e.g.
+   * `https://oauth.example.com`.
+   *
+   * Written by `AuthClient.setTokens()`, and read only when a client considers
+   * adopting a record stored under an id it used to have: a provider id is a
+   * name, and a name a built-in has shed can be claimed by something that is
+   * not the same issuer. Absent on records written before this field existed,
+   * which is the genuine-rename window and is accepted as such.
+   */
+  tokenEndpointOrigin?: string
+  /**
    * The untouched token-endpoint response, for provider-specific fields.
    *
    * **This holds a second copy of every credential** — `access_token`,
@@ -367,6 +378,13 @@ export type ProviderInput = Omit<ProviderConfig, 'usePkce' | 'pkceMethod' | 'tok
 export interface PendingAuthorization {
   state: string
   provider: string
+  /**
+   * Origin of the token endpoint the flow will be redeemed at. Same field, same
+   * reason, as {@link TokenSet.tokenEndpointOrigin}: `provider` alone is a name,
+   * and a client that honours a previous name has to agree on more than that
+   * before it exchanges the code.
+   */
+  tokenEndpointOrigin?: string
   redirectUri: string
   codeVerifier?: string
   createdAt: number

@@ -115,12 +115,36 @@ and are left alone. There is no issuer-equality check, which would break legitim
 deployments; an `AuthClient` is bound to one provider at construction, so it has nothing to be
 mixed up with.
 
+**A provider id a built-in has shed is a name, not an identity.** Three built-ins were renamed —
+`claude` was `anthropic`, `gemini` was `google`, `azureAi` was `microsoft` — and each still honours
+its old id, so a credential stored under it is adopted and a flow started under it can still be
+completed. Nothing about a name says who issued what sits under it, and the ids the built-ins let go
+of are free for anything to claim: a descriptor of your own, or, before this was fixed, one command
+of the shipped CLI. So a record found under a previous id now has to agree on the token endpoint as
+well. Records that name no endpoint — everything written before the field existed, which is exactly
+the version the rename migrates from — are still accepted, so upgrading does not sign anyone out.
+The current id is matched on the name alone: that key is the client's own, and pointing a provider
+at your own staging endpoint is a supported thing to do. Every id the built-ins answer to, current
+and shed, is exported as `reservedProviderIds`; the CLI refuses all of them for
+`--authorize-url`/`--token-url`, and it is worth consulting before you name a provider of your own.
+
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis, but that body is not ours and a misconfigured
 gateway echoing the request back would put a live refresh token straight into your logs. Snippets
 pass through `redactSecrets()` first. Treat that as defence in depth rather than a guarantee: it
 scrubs the OAuth parameters and the token shapes the supported providers issue, not arbitrary
 secrets.
+
+**`logout()` beats a refresh that is already on the wire.** Clearing the local record is
+synchronous, but a token request dispatched a moment earlier cannot be recalled, and a provider that
+rotates answers it with a new access *and* refresh token one round trip later — which, written back,
+would restore the session in memory and on disk, where the next process reads it as an ordinary
+sign-in. So a refresh is bound to the sign-out generation it started in: one that returns after a
+`logout()` writes nothing and rejects with `aborted` rather than handing back a credential the
+client has disowned, and a call arriving after the sign-out starts fresh instead of joining it.
+`logout()` itself still never waits for the network and still clears local state either way. This
+does not reach across processes: another process refreshing the same stored credential has its own
+client and its own sign-out state, and `AuthStorage` has no compare-and-swap to coordinate them.
 
 **`TokenSet.raw` holds a second copy of every credential**, because it is the token endpoint's
 response verbatim. Do not log it or ship it to telemetry. The named fields are what you want.

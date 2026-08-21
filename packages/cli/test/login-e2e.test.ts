@@ -328,6 +328,28 @@ describe('custom provider validation', () => {
       expect((await storedGemini()).refreshToken).toBe('VICTIM-REFRESH-TOKEN')
     })
 
+    /**
+     * The guard tested above read `providers`, which is keyed by *current* id,
+     * so it answered "not a built-in" for the three names the built-ins have
+     * shed. `claude` still reads `tokens:anthropic` and moves what it finds
+     * onto its own key, so one command was enough to write a credential the
+     * built-in would then adopt, refresh against the named endpoint under
+     * Claude's client id, and print from `token claude`.
+     */
+    it('refuses an id a built-in has shed, and leaves it signed out', async () => {
+      expect(await run(['login', 'anthropic', ...customFlags(server, ['--port', '0'])])).toBe(1)
+      expect(err()).toContain('built-in provider')
+      expect(err()).toContain('anthropic')
+      expect(server.requests).toHaveLength(0)
+
+      const stored = await readFile(join(dir, 'auth.json'), 'utf8').catch(() => '{}')
+      expect(stored).not.toContain('tokens:anthropic')
+
+      stdout = []
+      expect(await run(['token', 'claude', '--auth-dir', dir])).toBe(1)
+      expect(out()).toBe('')
+    })
+
     it('leaves the built-in alone when no endpoint flags are given', async () => {
       await writeFile(
         join(dir, 'auth.json'),

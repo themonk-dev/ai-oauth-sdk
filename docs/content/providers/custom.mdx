@@ -29,6 +29,15 @@ const client = createAuthClient({ provider: acme })
 request with the client id in the body, `/callback` as the loopback path, and `localhost` as the
 loopback host. State only what makes yours different.
 
+<Callout title="Pick an id no built-in answers to">
+  The id is what stored credentials are keyed on, and three built-ins also answer to an id they used
+  to have — `anthropic`, `google` and `microsoft`. Nothing stops you naming a provider of your own
+  after one of those, and a client for the built-in will not adopt its tokens, since a credential
+  found under a shed id has to name the same token endpoint to be taken. What you do get is two
+  providers sharing one storage key, where yours overwrites any legacy record the built-in had not
+  migrated yet. `reservedProviderIds` is the full set to check against.
+</Callout>
+
 ## From an OIDC discovery document
 
 ```ts

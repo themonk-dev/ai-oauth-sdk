@@ -5,7 +5,7 @@ import { isOAuthError, OAuthError } from '../src/errors.js'
 import { defineProvider } from '../src/providers/define.js'
 import { providers, publicClientIds } from '../src/providers/index.js'
 import { memoryStorage } from '../src/storage.js'
-import type { CallbackReceiver, ProviderConfig } from '../src/types.js'
+import type { CallbackReceiver, FetchLike, ProviderConfig } from '../src/types.js'
 import { startFakeAuthServer, type FakeAuthServer } from './helpers/fakeAuthServer.js'
 
 let server: FakeAuthServer
@@ -236,6 +236,44 @@ describe('pending authorizations are bound to their provider', () => {
     const tokens = await after.completeAuthorization({ code, state })
     expect(tokens.accessToken).toBe('access-1')
     expect(server.requests[0]?.['code_verifier']).toBe(authorization.codeVerifier)
+  })
+
+  /**
+   * The same shape as the rename above, and indistinguishable from it on the id
+   * alone: a shed name is a name anything can take, including a descriptor a
+   * user built themselves. What separates the two is where the flow is redeemed
+   * — here the `code` and `code_verifier` were minted by a different
+   * authorization server, and completing the flow would post them to this one,
+   * under this provider's client id.
+   */
+  it('refuses a flow started under a shed id at a different token endpoint', async () => {
+    const elsewhere = await startFakeAuthServer()
+
+    try {
+      const storage = memoryStorage()
+      const impostor = createAuthClient({
+        provider: testProvider(elsewhere.url, { id: 'legacy-test' }),
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      const client = createAuthClient({
+        provider: testProvider(server.url, { id: 'test', previousIds: ['legacy-test'] }),
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+
+      const authorization = await impostor.createAuthorization()
+      const { code, state } = await followAuthorization(authorization.url)
+
+      await expect(client.completeAuthorization({ code, state })).rejects.toMatchObject({
+        code: 'state_mismatch',
+      })
+      // The half that matters: neither endpoint saw the code or the verifier.
+      expect(server.requests).toHaveLength(0)
+      expect(elsewhere.requests).toHaveLength(0)
+    } finally {
+      await elsewhere.close()
+    }
   })
 })
 
@@ -489,6 +527,86 @@ describe('token refresh', () => {
       // refresh must go ahead.
       await client.getAccessToken()
       expect(shortLived.refreshCount).toBe(1)
+    } finally {
+      await shortLived.close()
+    }
+  })
+
+  /**
+   * The window is the round trip and nothing else: `logout()` clears the cache
+   * synchronously, so a refresh that has not yet read it fails on its own, and
+   * only a token POST already on the wire can still come back holding a
+   * session. A provider that rotates answers it with a new refresh token too,
+   * so what lands is a fully live credential for an account the user has signed
+   * out of.
+   */
+  it('does not resurrect the session when a refresh lands after logout', async () => {
+    const shortLived = await startFakeAuthServer({ expiresIn: 1 })
+
+    try {
+      let dispatched!: () => void
+      const onDispatch = new Promise<void>((resolve) => {
+        dispatched = resolve
+      })
+      let release!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+
+      /* Holds the refresh POST open from the moment it is dispatched, so the
+         sign-out lands squarely inside the round trip. */
+      const gatedFetch: FetchLike = async (input, init) => {
+        if (String(init?.body).includes('grant_type=refresh_token')) {
+          dispatched()
+          await held
+        }
+
+        return fetch(input, init)
+      }
+
+      const storage = memoryStorage()
+      const provider = testProvider(shortLived.url)
+      const client = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+        fetch: gatedFetch,
+      })
+      const authorization = await client.createAuthorization()
+      const { code, state } = await followAuthorization(authorization.url)
+      await client.completeAuthorization({ code, state })
+
+      // A background call wakes inside the skew window and starts a refresh…
+      const background = client.getAccessToken()
+      await onDispatch
+
+      // …and the user signs out while it is in flight.
+      await client.logout()
+
+      /* A caller arriving after the sign-out must not join the doomed run and
+         inherit its result. Asserted on the spot, because a refresh that does
+         not join fails immediately — there is nothing left to refresh. */
+      const afterLogout = expect(client.refresh()).rejects.toMatchObject({
+        code: 'refresh_failed',
+      })
+
+      release()
+
+      await expect(background).rejects.toMatchObject({ code: 'aborted' })
+      await afterLogout
+
+      // The provider really did issue a token; it is simply not ours to keep.
+      expect(shortLived.refreshCount).toBe(1)
+      expect(await client.isAuthenticated()).toBe(false)
+      expect(await storage.get('tokens:test')).toBeNull()
+
+      // And a new process over the same store finds nothing to read back.
+      const next = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      expect(await next.isAuthenticated()).toBe(false)
     } finally {
       await shortLived.close()
     }

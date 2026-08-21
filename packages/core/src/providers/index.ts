@@ -1,6 +1,7 @@
 import { OAuthError } from '../errors.js'
 import type { FetchLike, ProviderConfig, ProviderInput } from '../types.js'
 import { defineProvider } from './define.js'
+import { azureAiPreviousIds } from './azure-ai.js'
 import { claude } from './claude.js'
 import { githubCopilot } from './github-copilot.js'
 import { gemini } from './gemini.js'
@@ -37,6 +38,30 @@ export const providers = {
 } as const
 
 export type BuiltInProviderId = keyof typeof providers
+
+/**
+ * Every id the built-ins answer to: the current ones, plus the ones they have
+ * shed and still honour through `previousIds`.
+ *
+ * `providers` is keyed by current id alone, so `id in providers` reads as "is
+ * this name taken?" and answers no for `anthropic`, `google` and `microsoft` —
+ * names `claude`, `gemini` and `azureAi` still accept a stored credential and a
+ * started flow under. Anything reserving a name has to consult this instead:
+ * the CLI refusing to point a built-in at endpoints of your own is not doing
+ * its job if `login anthropic --token-url …` walks straight past it, since the
+ * tokens that descriptor writes are the ones `claude` reads.
+ *
+ * Consult it for the same reason before you `defineProvider()` an id of your
+ * own. Defining one is not refused — a built-in's *current* id is not refused
+ * either, that being how you point one at a staging endpoint — but a provider
+ * of yours sharing a shed name is a collision, not a rename, and is treated as
+ * one.
+ */
+export const reservedProviderIds: ReadonlySet<string> = new Set<string>([
+  ...Object.keys(providers),
+  ...Object.values(providers).flatMap((provider) => provider.previousIds ?? []),
+  ...azureAiPreviousIds,
+])
 
 /**
  * The same ids, under names you can autocomplete. Every value is the plain
