@@ -93,6 +93,75 @@ describe('providerFromDiscovery', () => {
     expect(provider.tokenUrl).toBe('https://override.test/token')
   })
 
+  /**
+   * The device endpoint used to be the one value a pin could not protect: it
+   * was spread in after `...input`, so the document won unconditionally. What
+   * the winning host gets is not the `client_id` and the PKCE challenge it is
+   * handed — both are public — but the whole device response, `user_code` and
+   * `verification_uri` included, which a CLI reads out to the user verbatim.
+   */
+  it('lets an explicit deviceAuthorizationUrl override the document', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'https://document.test/device',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      authorizationUrl: 'https://pinned.test/authorize',
+      tokenUrl: 'https://pinned.test/token',
+      deviceAuthorizationUrl: 'https://pinned.test/device',
+      redirect: { mode: 'loopback' },
+    })
+
+    expect(provider.deviceAuthorizationUrl).toBe('https://pinned.test/device')
+    expect(provider.authorizationUrl).toBe('https://pinned.test/authorize')
+    expect(provider.tokenUrl).toBe('https://pinned.test/token')
+  })
+
+  it('leaves an integrator-supplied http deviceAuthorizationUrl alone', async () => {
+    // The same rule the pinned `tokenUrl` gets below: pinned is the
+    // integrator's own config, so it is neither replaced nor validated.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'https://document.test/device',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      deviceAuthorizationUrl: 'http://internal-gateway.acme.test/device',
+      redirect: { mode: 'loopback' },
+    })
+
+    expect(provider.deviceAuthorizationUrl).toBe('http://internal-gateway.acme.test/device')
+  })
+
+  it('still checks the document when deviceAuthorizationUrl is passed as null', async () => {
+    // `??` falls through on `null`, so the document's value wins — and has to
+    // be checked. Same trap as the `tokenUrl` case at the end of this file.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'http://attacker.test/device',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, {
+        id: 'acme',
+        label: 'Acme',
+        deviceAuthorizationUrl: null as unknown as undefined,
+        redirect: { mode: 'loopback' },
+      }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/device_authorization_endpoint.*"http:\/\/attacker\.test\/device"/),
+    })
+  })
+
   it('defaults scopes to openid when the document lists none', async () => {
     const issuer = await startDiscoveryServer({
       authorization_endpoint: 'https://acme.test/authorize',

@@ -111,9 +111,12 @@ redirects, and outside a browser nothing bars an `https`→`http` hop, so an iss
 down to cleartext would otherwise let whoever is on the path write the document and choose
 endpoints that pass every remaining check. Loopback is exempt throughout, so a local authorization
 server on `http://127.0.0.1:<port>` still works. Endpoints you pass explicitly are your own config
-and are left alone. There is no issuer-equality check, which would break legitimate multi-tenant
-deployments; an `AuthClient` is bound to one provider at construction, so it has nothing to be
-mixed up with.
+and are left alone — all of them, including `deviceAuthorizationUrl`, which the document used to
+override no matter what you pinned. Pinning it back is worth doing: the device endpoint chooses the
+`user_code` and `verification_uri` a CLI then reads out to the user verbatim, which is a
+device-code relay handed to whoever wrote the document. There is no issuer-equality check, which
+would break legitimate multi-tenant deployments; an `AuthClient` is bound to one provider at
+construction, so it has nothing to be mixed up with.
 
 **A provider id a built-in has shed is a name, not an identity.** Three built-ins were renamed —
 `claude` was `anthropic`, `gemini` was `google`, `azureAi` was `microsoft` — and each still honours
@@ -134,6 +137,13 @@ gateway echoing the request back would put a live refresh token straight into yo
 pass through `redactSecrets()` first. Treat that as defence in depth rather than a guarantee: it
 scrubs the OAuth parameters and the token shapes the supported providers issue, not arbitrary
 secrets.
+
+OpenAI's device flow gets one extra step, because its `device_auth_id` and `user_code` are not
+identifiers: posted back as a pair they return an authorization code *and* the PKCE verifier that
+redeems it, so between them they are the whole approval credential. Name-based redaction is not
+enough for a value a provider mentions in prose rather than as a parameter, so a failed poll scrubs
+those two values out of the snippet by value before quoting it. That works only because they are
+this process's own codes — it does nothing for a credential the library never held.
 
 **`logout()` beats a refresh that is already on the wire.** Clearing the local record is
 synchronous, but a token request dispatched a moment earlier cannot be recalled, and a provider that
@@ -169,10 +179,26 @@ Pluggable, and defaults to memory.
 planted at the temp path is refused rather than followed. It cannot do more than that. A directory
 that already exists keeps the permissions it already had, so if you point `dir` at a location other
 local users can write to, they can still replace the credential file itself. Keep the credential
-directory owned by, and writable only by, the user running the CLI.
+directory owned by, and writable only by, the user running the CLI. An empty `dir`, or an empty
+`AI_OAUTH_SDK_HOME`, is read as unset and falls back to `~/.ai-oauth-sdk` rather than being treated
+as a directory: joining an empty directory with the file name yields the relative path `auth.json`,
+which would put the credential file wherever the process happened to start — in CI, the checked-out
+repository. The file would still be `0600`, so that was a credential written somewhere nobody chose
+rather than one exposed to other local users; the cost is that it outlives the job in a git tree or
+a build artifact, and that the path the CLI reported back does not exist to go and delete.
 
 Prefer `secureStoreAdapter` for refresh tokens on mobile. In a browser, any XSS on your origin can
 read whatever web storage you chose. On a server, encrypt at rest.
+
+`localStorageAdapter()` and `sessionStorageAdapter()` fall back to memory where the browser throws
+on access — Safari private mode, a sandboxed iframe — and in a browser Web Worker, which has no web
+storage but is still one user's browser. Off a browser they refuse instead, because an in-memory
+store on a server is a single `Map` shared by every request it serves. Cloudflare Workers and other
+workerd-based runtimes count as servers here, not as browsers. Their global exposes
+`WorkerGlobalScope`, but one isolate serves many users' requests, so an in-memory store there is a
+single `Map` holding every one of their tokens. `localStorageAdapter()` and
+`sessionStorageAdapter()` refuse on any runtime they cannot positively identify as a browser Web
+Worker; supply `storage:` explicitly if you are on one they do not recognise.
 
 ## Client credentials
 

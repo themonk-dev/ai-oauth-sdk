@@ -349,6 +349,11 @@ function assertSecureDiscoveryResponse(
  * the discovery document supplies them. They are re-declared rather than
  * intersected with `Partial<Pick<…>>`, which would not work — a required
  * property intersected with an optional one stays required.
+ *
+ * Anything you pass explicitly wins over the document, endpoints included —
+ * that is how you pin your way around a value you do not want to take on
+ * trust — and is left unvalidated, being your own config rather than a remote
+ * party's.
  */
 export async function providerFromDiscovery(
   issuer: string,
@@ -380,6 +385,8 @@ export async function providerFromDiscovery(
   const document = (await response.json()) as DiscoveryDocument
   const authorizationUrl = input.authorizationUrl ?? document.authorization_endpoint
   const tokenUrl = input.tokenUrl ?? document.token_endpoint
+  const deviceAuthorizationUrl =
+    input.deviceAuthorizationUrl ?? document.device_authorization_endpoint
 
   if (!authorizationUrl || !tokenUrl) {
     throw new OAuthError(
@@ -406,12 +413,25 @@ export async function providerFromDiscovery(
     assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url)
   }
 
-  // The document's device endpoint always wins over `input.deviceAuthorizationUrl`
-  // below, so it is always document-sourced when present.
-  if (document.device_authorization_endpoint) {
+  // The device endpoint gets the same treatment, and for a sharper reason than
+  // the two above. It used to be spread in *after* `...input`, so the document
+  // overrode an explicitly pinned `deviceAuthorizationUrl` — an integrator who
+  // pinned all three endpoints precisely so as not to trust the document still
+  // ran their device flow against whatever host it named. That endpoint chooses
+  // the entire device response, `user_code` and `verification_uri` included,
+  // and a CLI prints both verbatim: the classic device-code relay, where the
+  // user is shown a code the attacker opened at the real IdP, approves it, and
+  // the attacker redeems the tokens. Our own poll then goes to the pinned token
+  // endpoint and fails, so the user sees nothing worse than a broken login.
+  //
+  // `??` rather than a spread ordering: object spread copies an own key whose
+  // value is `undefined`, so hoisting the document above `...input` would have
+  // let an `input` carrying an explicit `deviceAuthorizationUrl: undefined`
+  // clobber a perfectly good document value.
+  if (input.deviceAuthorizationUrl == null && deviceAuthorizationUrl) {
     assertSecureDiscoveredEndpoint(
       'device_authorization_endpoint',
-      document.device_authorization_endpoint,
+      deviceAuthorizationUrl,
       url,
     )
   }
@@ -421,8 +441,6 @@ export async function providerFromDiscovery(
     authorizationUrl,
     tokenUrl,
     scopes: input.scopes ?? document.scopes_supported ?? ['openid'],
-    ...(document.device_authorization_endpoint
-      ? { deviceAuthorizationUrl: document.device_authorization_endpoint }
-      : {}),
+    ...(deviceAuthorizationUrl ? { deviceAuthorizationUrl } : {}),
   })
 }
