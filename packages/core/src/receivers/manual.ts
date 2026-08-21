@@ -1,5 +1,5 @@
 import { buildLoopbackRedirectUri, defaultRedirectUri } from '../authorize.js'
-import { OAuthError } from '../errors.js'
+import { isOAuthError, OAuthError } from '../errors.js'
 import { parseStandardCallback } from '../providers/define.js'
 import type { CallbackReceiver, CallbackResult, ReceiverContext } from '../types.js'
 
@@ -14,6 +14,21 @@ export interface ManualReceiverOptions {
   prompt: (url: string, context: ReceiverContext) => Promise<string>
   /** Fixed redirect URI. Defaults to whatever the provider's mode implies. */
   redirectUri?: string
+  /**
+   * Asked whether to run `prompt()` again when a paste could not be turned into
+   * a code, with the error that would otherwise reach `wait()` and the number of
+   * attempts made so far. Returning false rethrows it.
+   *
+   * Opt-in, and deliberately so: without it one paste is one answer, which is
+   * the only safe default here. A retry loop is only escapable when something
+   * other than the user can end it — a receiver racing this one, or an abort
+   * signal `prompt()` honours. Supplied where neither exists, it turns a
+   * mistyped paste into a login that can only be left with Ctrl-C.
+   *
+   * A `prompt()` that rejects is not a rejected paste and is never retried:
+   * that is how the abort gets out.
+   */
+  retry?: (error: OAuthError, attempts: number) => boolean | Promise<boolean>
 }
 
 /**
@@ -62,6 +77,10 @@ function resolveRedirectUri(context: ReceiverContext): string | undefined {
  * `catch` because `wait()` may never be called — the caller gives up, or
  * another receiver wins a race — and a rejection would otherwise surface as an
  * unhandled one. `wait()` still sees it.
+ *
+ * One paste is one answer unless a `retry` is supplied: a value that cannot be
+ * parsed rejects `wait()` and the caller decides what happens next. See the
+ * option for why asking again is the opt-in rather than the default.
  */
 export function manualReceiver(options: ManualReceiverOptions): CallbackReceiver {
   return {
@@ -80,35 +99,65 @@ export function manualReceiver(options: ManualReceiverOptions): CallbackReceiver
 
       let pending: Promise<CallbackResult> | undefined
 
+      /** One pasted value, turned into a result or into the reason it is not one. */
+      const parsePaste = (input: string): CallbackResult => {
+        const parse = context.provider.parseCallback ?? parseStandardCallback
+        const parsed = parse(input)
+
+        if (parsed.error) {
+          throw new OAuthError(
+            'authorization_denied',
+            `Authorization denied: ${parsed.errorDescription ?? parsed.error}`,
+            {
+              providerError: parsed.error,
+              ...(parsed.errorDescription
+                ? { providerErrorDescription: parsed.errorDescription }
+                : {}),
+            },
+          )
+        }
+
+        if (!parsed.code) {
+          throw new OAuthError(
+            'invalid_token_response',
+            'Could not find an authorization code in the pasted value.',
+          )
+        }
+
+        return { code: parsed.code, ...(parsed.state ? { state: parsed.state } : {}) }
+      }
+
+      /**
+       * Asks until a paste parses, or until `retry` — absent by default — says
+       * to stop.
+       *
+       * Only a paste that failed to *parse* is retried. A `prompt()` that
+       * rejects has not produced an answer to reject: it is the read being
+       * abandoned, by an abort signal or a stdin that ended, and reopening it
+       * would be how a race that this half already lost never finishes.
+       */
+      const collect = async (url: string): Promise<CallbackResult> => {
+        for (let attempts = 1; ; attempts++) {
+          const input = await options.prompt(url, context)
+
+          try {
+            return parsePaste(input)
+          } catch (error) {
+            if (
+              !options.retry ||
+              !isOAuthError(error) ||
+              !(await options.retry(error, attempts))
+            ) {
+              throw error
+            }
+          }
+        }
+      }
+
       return {
         redirectUri,
         async present(url) {
-          const collected = options.prompt(url, context).then((input) => {
-            const parse = context.provider.parseCallback ?? parseStandardCallback
-            const parsed = parse(input)
-
-            if (parsed.error) {
-              throw new OAuthError(
-                'authorization_denied',
-                `Authorization denied: ${parsed.errorDescription ?? parsed.error}`,
-                {
-                  providerError: parsed.error,
-                  ...(parsed.errorDescription
-                    ? { providerErrorDescription: parsed.errorDescription }
-                    : {}),
-                },
-              )
-            }
-
-            if (!parsed.code) {
-              throw new OAuthError(
-                'invalid_token_response',
-                'Could not find an authorization code in the pasted value.',
-              )
-            }
-
-            return { code: parsed.code, ...(parsed.state ? { state: parsed.state } : {}) }
-          })
+          const collected = collect(url)
           collected.catch(() => {})
           pending = collected
           await context.openUrl?.(url)

@@ -576,6 +576,60 @@ describe('manualReceiver', () => {
     expect(opened).toEqual(['https://provider.test/authorize?x=1'])
   })
 
+  /*
+   * The retry hook is opt-in, and the two tests above are why: a receiver that
+   * is the only way a login can finish must not loop on a value the user cannot
+   * fix. Without `retry` a paste is asked for exactly once.
+   */
+  it('asks once when no retry is supplied', async () => {
+    let asked = 0
+    const started = await manualReceiver({
+      prompt: async () => {
+        asked += 1
+
+        return 'nothing parseable'
+      },
+    }).start({ provider })
+
+    await started.present('https://provider.test/authorize')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'invalid_token_response' })
+    expect(asked).toBe(1)
+  })
+
+  it('asks again while retry says to, and reports why each time', async () => {
+    const pastes = ['nothing parseable', 'https://provider.test/callback?error=access_denied']
+    const reported: string[] = []
+    const started = await manualReceiver({
+      prompt: async () => pastes.shift() ?? 'https://provider.test/callback?code=third',
+      retry: (error, attempts) => {
+        reported.push(`${attempts}:${error.code}`)
+
+        /* The caller decides per error, which is how a denial ends the login
+           and a slip does not. */
+        return error.code === 'invalid_token_response'
+      },
+    }).start({ provider })
+
+    await started.present('https://provider.test/authorize')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'authorization_denied' })
+    expect(reported).toEqual(['1:invalid_token_response', '2:authorization_denied'])
+  })
+
+  it('never retries a prompt that rejected, so an abandoned read stays abandoned', async () => {
+    let asked = 0
+    const started = await manualReceiver({
+      prompt: async () => {
+        asked += 1
+        throw new Error('aborted')
+      },
+      retry: () => true,
+    }).start({ provider })
+
+    await started.present('https://provider.test/authorize')
+    await expect(started.wait()).rejects.toThrow('aborted')
+    expect(asked).toBe(1)
+  })
+
   it('does not leak an unhandled rejection when wait() is never called', async () => {
     const rejections: unknown[] = []
     const onRejection = (reason: unknown) => rejections.push(reason)
