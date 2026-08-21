@@ -1,8 +1,9 @@
 import { OAuthError } from '../errors.js'
 import { fetchWithSignal } from '../http.js'
-import { safeSnippet } from '../redact.js'
+import { REDACTED, safeSnippet } from '../redact.js'
 import { exchangeCode } from '../token.js'
 import type { DeviceFlow, DeviceFlowPollInput, DeviceFlowStartInput, FetchLike } from '../types.js'
+import { clamp } from './device.js'
 
 /**
  * OpenAI's headless sign-in — the one behind `codex login --device-auth`.
@@ -27,6 +28,46 @@ const DEVICE_REDIRECT_URI = `${ISSUER}/deviceauth/callback`
 
 const DEFAULT_INTERVAL_SECONDS = 5
 const DEFAULT_EXPIRY_SECONDS = 15 * 60
+const MIN_INTERVAL_SECONDS = 1
+const MAX_INTERVAL_SECONDS = 60
+const MAX_EXPIRY_SECONDS = 24 * 60 * 60
+
+/**
+ * Shortest value worth scrubbing out of a snippet by value.
+ *
+ * A blank or near-blank code would otherwise match everywhere and blanket the
+ * message, which destroys the diagnostic and tells the reader nothing. Matches
+ * the minimum the parameter-name redaction already applies.
+ */
+const MIN_SCRUBBED_LENGTH = 4
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&')
+
+/**
+ * Removes this attempt's own device codes from an untrusted snippet.
+ *
+ * `device_auth_id` + `user_code` are together the approval credential: posted
+ * as a pair to the poll endpoint, they return an authorization code *and* the
+ * verifier that redeems it, so anyone reading them out of a log can finish the
+ * sign-in. Name-based redaction alone is not enough here, because it needs a
+ * `key: value` shape and the leak arrives just as often in the provider's own
+ * prose — "device authorization da_01J… for user_code WXYZ-1234 is in an
+ * invalid state". We know both literals, so they go by value, before
+ * {@link safeSnippet} collapses and truncates.
+ */
+function scrubDeviceValues(text: string, ...values: string[]): string {
+  let out = text
+
+  for (const value of values) {
+    if (value.length < MIN_SCRUBBED_LENGTH) {
+      continue
+    }
+
+    out = out.replace(new RegExp(escapeRegExp(value), 'gi'), REDACTED)
+  }
+
+  return out
+}
 
 interface UserCodeResponse {
   device_auth_id?: unknown
@@ -115,16 +156,34 @@ async function start(input: DeviceFlowStartInput) {
 
   const interval = Number(raw['interval'])
   const expiresAt = Date.parse(String(raw['expires_at'] ?? ''))
+  const now = Date.now()
+  // Both fields come from the server, and the RFC 8628 side of the house
+  // already bounds its equivalents. A missing or non-positive `interval` keeps
+  // falling back to the default, as before; the floor is what stops a tiny
+  // positive one (`0.001`) polling flat out, and the ceiling stops a huge one
+  // overflowing `setTimeout`'s 32-bit delay, which fires immediately instead of
+  // waiting. `expires_at` is bounded the same way for the same reason: it is
+  // the poll loop's only exit, so a date in 2099 means the loop never ends.
+  const intervalSeconds = clamp(
+    interval > 0 ? interval : DEFAULT_INTERVAL_SECONDS,
+    DEFAULT_INTERVAL_SECONDS,
+    MIN_INTERVAL_SECONDS,
+    MAX_INTERVAL_SECONDS,
+  )
+  const expirySeconds = clamp(
+    Number.isFinite(expiresAt) ? (expiresAt - now) / 1000 : DEFAULT_EXPIRY_SECONDS,
+    DEFAULT_EXPIRY_SECONDS,
+    0,
+    MAX_EXPIRY_SECONDS,
+  )
 
   return {
     deviceCode: deviceAuthId,
     userCode,
     verificationUri: VERIFICATION_URI,
     verificationUriComplete: `${VERIFICATION_URI}?user_code=${encodeURIComponent(userCode)}`,
-    expiresAt: Number.isFinite(expiresAt)
-      ? expiresAt
-      : Date.now() + DEFAULT_EXPIRY_SECONDS * 1000,
-    intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : DEFAULT_INTERVAL_SECONDS) * 1000,
+    expiresAt: now + expirySeconds * 1000,
+    intervalMs: intervalSeconds * 1000,
   }
 }
 
@@ -157,7 +216,8 @@ async function poll(input: DeviceFlowPollInput) {
     }
 
     if (!response.ok) {
-      const detail = safeSnippet(await response.text().catch(() => ''))
+      const body = await response.text().catch(() => '')
+      const detail = safeSnippet(scrubDeviceValues(body, device.deviceCode, device.userCode))
       throw new OAuthError(
         'device_flow_failed',
         `Device authorization failed (HTTP ${response.status})${detail ? `: ${detail}` : '.'}`,

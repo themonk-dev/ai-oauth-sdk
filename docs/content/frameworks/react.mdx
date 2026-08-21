@@ -85,6 +85,9 @@ The store is rebuilt only when something that changes the client's behaviour cha
 the client id, the redirect URI, the scopes, or the account key. Rebuilding it on every render
 would drop in-flight flows and the token cache.
 
+`storage` is deliberately not on that list: to switch accounts, change `accountKey` — see
+[a multi-user app](/docs/recipes/multi-user) — rather than swapping the storage adapter underneath the hook.
+
 Your callbacks are read through a ref, so `onSuccess` and `onError` stay current without joining
 that identity. You do not need to memoise them.
 

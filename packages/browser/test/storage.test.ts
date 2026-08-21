@@ -116,8 +116,28 @@ describe('without web storage', () => {
    * `'undefined'` for the same reason: there is no browser here.
    */
   function hide(name: 'localStorage' | 'sessionStorage') {
+    return define(name, undefined)
+  }
+
+  /**
+   * Installs a global, restoring whatever was there when the returned function
+   * is called. `location` and `navigator` already exist under jsdom, so the
+   * worker-shaped and workerd-shaped scopes below have to replace them rather
+   * than merely define them.
+   *
+   * `undefined` removes the property outright rather than setting it to
+   * `undefined`, because the two are not the same global: `'x' in globalThis`
+   * is still true for a property that exists and holds `undefined`, and a
+   * runtime that does not implement `x` at all is what these fakes model.
+   */
+  function define(name: string, value: unknown) {
     const original = Object.getOwnPropertyDescriptor(globalThis, name)
-    Object.defineProperty(globalThis, name, { value: undefined, configurable: true })
+
+    if (value === undefined) {
+      Reflect.deleteProperty(globalThis, name)
+    } else {
+      Object.defineProperty(globalThis, name, { value, configurable: true })
+    }
 
     return () => {
       if (original) {
@@ -129,17 +149,64 @@ describe('without web storage', () => {
   }
 
   /**
-   * Stands in for a Web Worker scope: no web storage and no `window`, exactly
-   * as on a server, and told apart from one only by `WorkerGlobalScope` — which
-   * is why the adapters look for that rather than for the storage global.
+   * Applies several globals at once and hands back a single undo, so a test
+   * that models a whole scope reads as one setup line and one teardown line.
+   */
+  function defineAll(globals: Record<string, unknown>) {
+    const undos = Object.entries(globals).map(([name, value]) => define(name, value))
+
+    return () => {
+      for (const undo of undos.reverse()) {
+        undo()
+      }
+    }
+  }
+
+  /**
+   * Stands in for a real browser Web Worker scope: no web storage and no
+   * `window`, exactly as on a server, and separated from one by the things the
+   * HTML spec requires of a worker global — `globalThis` really being a
+   * `WorkerGlobalScope`, `WorkerNavigator` exposed, and a `location`.
+   *
+   * `globalThis` cannot be reparented onto a fake prototype under jsdom without
+   * breaking the environment, so `Symbol.hasInstance` reproduces the one thing
+   * that reparenting would be for: `globalThis instanceof WorkerGlobalScope` is
+   * true, and true of nothing else. Measured against Chromium, where that holds
+   * in both a dedicated worker and a service worker.
    */
   function pretendWorker() {
-    Object.defineProperty(globalThis, 'WorkerGlobalScope', {
-      value: class WorkerGlobalScope {},
-      configurable: true,
-    })
+    class FakeWorkerGlobalScope {
+      static [Symbol.hasInstance](value: unknown) {
+        return value === globalThis
+      }
+    }
 
-    return () => Reflect.deleteProperty(globalThis, 'WorkerGlobalScope')
+    return defineAll({
+      WorkerGlobalScope: FakeWorkerGlobalScope,
+      WorkerNavigator: class WorkerNavigator {},
+      location: { href: 'https://app.test/worker.js' },
+      navigator: { userAgent: 'Mozilla/5.0 (worker)' },
+    })
+  }
+
+  /**
+   * Stands in for a workerd isolate — Cloudflare Workers and Pages Functions,
+   * `@cloudflare/next-on-pages`, `adapter-cloudflare`, Nitro's
+   * `cloudflare_module` — which is a *server*, whatever its global is called.
+   *
+   * Every value here was measured in the real `workerd` binary:
+   * `WorkerGlobalScope` is exposed but `globalThis` is not an instance of it,
+   * the global's own constructor is named `ServiceWorkerGlobalScope`, there is
+   * no `WorkerNavigator` and no `location`, and the user agent is
+   * `Cloudflare-Workers`.
+   */
+  function pretendWorkerd() {
+    return defineAll({
+      WorkerGlobalScope: class WorkerGlobalScope {},
+      WorkerNavigator: undefined,
+      location: undefined,
+      navigator: { userAgent: 'Cloudflare-Workers' },
+    })
   }
 
   it('localStorageAdapter does not throw on construction', () => {
@@ -229,6 +296,102 @@ describe('without web storage', () => {
       expect(await session.get('k')).toBe('session')
     } finally {
       restoreWorker()
+      restoreSession()
+      restoreLocal()
+    }
+  })
+
+  it('refuses on workerd, which exposes WorkerGlobalScope but is a server', async () => {
+    // Cloudflare Workers and everything else on workerd answer yes to
+    // `'WorkerGlobalScope' in globalThis`, and are a server: one isolate
+    // serves every request, so an in-memory store there is one Map holding
+    // every user's tokens. Reproduced in the real binary — three requests on
+    // three connections, and requests two and three read request one's access
+    // token straight out of the shared store.
+    const restoreLocal = hide('localStorage')
+    const restoreSession = hide('sessionStorage')
+    const restoreWorkerd = pretendWorkerd()
+
+    try {
+      await expect(localStorageAdapter().set('k', 'v')).rejects.toThrow(/shared/i)
+      await expect(sessionStorageAdapter().set('k', 'v')).rejects.toThrow(/shared/i)
+      await expect(localStorageAdapter().get('k')).rejects.toMatchObject({
+        code: 'unsupported_runtime',
+      })
+    } finally {
+      restoreWorkerd()
+      restoreSession()
+      restoreLocal()
+    }
+  })
+
+  it('refuses a workerd-alike that does not name itself Cloudflare', async () => {
+    // The user agent is a legible deny for the host we know about, not the
+    // test. Any other embedder of workerd — or a future release of it — is
+    // free to report something else, and must still be refused.
+    const restoreLocal = hide('localStorage')
+    const restoreSession = hide('sessionStorage')
+    const restoreWorkerd = pretendWorkerd()
+    const restoreAgent = define('navigator', { userAgent: 'SomeEdgeRuntime/1.0' })
+
+    try {
+      await expect(localStorageAdapter().set('k', 'v')).rejects.toThrow(/shared/i)
+      await expect(sessionStorageAdapter().set('k', 'v')).rejects.toThrow(/shared/i)
+    } finally {
+      restoreAgent()
+      restoreWorkerd()
+      restoreSession()
+      restoreLocal()
+    }
+  })
+
+  it('refuses a scope that is a WorkerGlobalScope but has no worker API surface', async () => {
+    // `globalThis instanceof WorkerGlobalScope` is false on workerd today only
+    // because of how workerd wires that binding up, which it never promised
+    // and could change. If it ever becomes true, the spec-mandated members it
+    // does not implement — `WorkerNavigator`, `location` — still have to keep
+    // the refusal, so this pins the case where instanceof alone would pass.
+    const restoreLocal = hide('localStorage')
+    const restoreSession = hide('sessionStorage')
+    const restoreWorkerd = pretendWorkerd()
+    const restoreScope = defineAll({
+      WorkerGlobalScope: class WorkerGlobalScope {
+        static [Symbol.hasInstance](value: unknown) {
+          return value === globalThis
+        }
+      },
+      navigator: { userAgent: 'SomeEdgeRuntime/1.0' },
+    })
+
+    try {
+      await expect(localStorageAdapter().set('k', 'v')).rejects.toThrow(/shared/i)
+      await expect(sessionStorageAdapter().set('k', 'v')).rejects.toThrow(/shared/i)
+    } finally {
+      restoreScope()
+      restoreWorkerd()
+      restoreSession()
+      restoreLocal()
+    }
+  })
+
+  it('refuses an unrecognised runtime rather than guessing it is a worker', async () => {
+    // Fail closed. A developer genuinely inside an exotic worker can pass
+    // `storage:` explicitly and the refusal says so; a developer whose
+    // deployment silently pools its users' tokens has no way to find out.
+    const restoreLocal = hide('localStorage')
+    const restoreSession = hide('sessionStorage')
+    const restoreScope = defineAll({
+      WorkerGlobalScope: class WorkerGlobalScope {},
+      WorkerNavigator: class WorkerNavigator {},
+      location: undefined,
+      navigator: undefined,
+    })
+
+    try {
+      await expect(localStorageAdapter().get('k')).rejects.toThrow(/shared/i)
+      await expect(sessionStorageAdapter().get('k')).rejects.toThrow(/shared/i)
+    } finally {
+      restoreScope()
       restoreSession()
       restoreLocal()
     }

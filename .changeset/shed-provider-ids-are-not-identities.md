@@ -1,0 +1,16 @@
+---
+'@ai-oauth-sdk/core': patch
+'@ai-oauth-sdk/cli': patch
+---
+
+Reserve the provider ids the built-ins have shed, and match a renamed provider on more than its name.
+
+Three built-ins were renamed and still answer to their old ids so that a rename does not sign anyone out: `claude` ← `anthropic`, `gemini` ← `google`, `azureAi` ← `microsoft`. Both places that honoured `previousIds` compared the id string alone — the credential lookup, which adopts a token stored under an old key and moves it onto the current one, and the ownership check on a pending authorization. A provider id is a name, though, and a name a provider let go of is free for anything else to take.
+
+From the shipped CLI that was one command. `customProvider()` refuses to point a built-in at endpoints of your own precisely because the descriptor keeps the id everything is keyed on, but its guard tested `id in providers`, which holds the *current* ids only. So `ai-oauth-sdk login anthropic --authorize-url … --token-url …` was accepted, ran a real flow against the named endpoints and wrote the result to `tokens:anthropic` — where `claude` reads it. `ai-oauth-sdk token claude` then exited 0 printing a token nobody had signed in for, `tokens:anthropic` was consumed and deleted by the move, and a later refresh POSTed that token to the endpoint from the flags under Claude's published client id. The same shed name also slipped past the provider-ownership check on a pending record, so a `code` and `code_verifier` minted by one authorization server could be exchanged at another's token endpoint — the mix-up of OAuth 2.0 Security BCP §4.4, which that check exists to prevent.
+
+Two changes, and both are wanted. `reservedProviderIds` is a new export holding every id the built-ins answer to, current and shed; the CLI consults it wherever it used to consult `providers`, so all three shed names are refused for `--authorize-url`/`--token-url`, are never remembered as a custom descriptor, and never resolve a remembered one. Consult it before naming a provider of your own.
+
+And the `previousIds` allowance now requires agreement on the token endpoint, not just the name. `TokenSet` and `PendingAuthorization` gain an optional `tokenEndpointOrigin`, recorded by `setTokens()` and when a flow is started. On a previous-id match the record is accepted when it names this provider's token endpoint, or names none at all — which is every record written before this release, and therefore exactly the genuine-rename window a `previousIds` migration is for, so upgrading signs nobody out. One naming a different endpoint is refused and left where it is rather than adopted, moved and refreshed here. A record under the provider's *current* id is matched on the name as before: that key is the client's own, and pointing a provider at your own staging endpoint stays supported.
+
+`defineProvider()` deliberately still accepts any id. It accepts a built-in's current id today — that being how a built-in gets pointed at another endpoint — so refusing only the shed ones would be both inconsistent and a breaking change for anyone whose own provider is legitimately called `google`. The reservation is a CLI policy, because the CLI is what keys storage by id and supplies published client ids; the library's protection is the endpoint agreement above, which holds however the descriptor was built.

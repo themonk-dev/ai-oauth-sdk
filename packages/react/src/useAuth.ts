@@ -6,6 +6,7 @@ import {
   type AuthClient,
   type AuthClientOptions,
   type AuthState,
+  type AuthStore,
   type CallbackReceiver,
   type TokenSet,
 } from '@ai-oauth-sdk/core'
@@ -107,10 +108,32 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
     [clientKey],
   )
 
-  const [state, setState] = useState<AuthState>(() => store.getState())
+  // State is held together with the store it came from. Keeping them in one
+  // value is what lets a rebuilt store discard the previous one's state during
+  // the same render: held apart, the render that first returns the new store
+  // still returns the old store's `tokens`, and the commit in between pairs the
+  // new client's identity with the previous session's credentials on screen.
+  // The subscription in the effect below would correct that, but only a frame
+  // later.
+  const [snapshot, setSnapshot] = useState<{ store: AuthStore; state: AuthState }>(() => ({
+    store,
+    state: store.getState(),
+  }))
+
+  if (snapshot.store !== store) {
+    setSnapshot({ store, state: store.getState() })
+  }
+
+  const state = snapshot.store === store ? snapshot.state : store.getState()
 
   useEffect(() => {
-    const unsubscribe = store.subscribe(setState)
+    // Re-using the previous snapshot when nothing moved keeps the store's own
+    // "notify only on a real change" guarantee from costing a render here.
+    const unsubscribe = store.subscribe((next) => {
+      setSnapshot((previous) =>
+        previous.store === store && previous.state === next ? previous : { store, state: next },
+      )
+    })
 
     if (restoreOnMount) {
       void store.restore()

@@ -7,6 +7,7 @@ import {
   providers,
   publicClientIds,
   publicClientSecrets,
+  reservedProviderIds,
   resolveProvider,
   type AuthClient,
   type ProviderConfig,
@@ -57,6 +58,15 @@ interface CommandContext {
  * its own. The rest of the file already draws that line — `recallProvider` is
  * guarded by the same check on the next line, and `login` refuses to
  * `rememberProvider` a built-in id — so this closes the one path that was not.
+ *
+ * The reserved set is `reservedProviderIds`, not `providers`, because a name a
+ * built-in has *shed* buys the same thing. `claude` reads `tokens:anthropic`
+ * and completes a flow started as `anthropic`, so `login anthropic
+ * --authorize-url … --token-url …` built exactly the descriptor above under a
+ * key `claude` answers to: `token claude` then printed a token nobody signed in
+ * for, and a refresh POSTed the app's refresh token to the named endpoint.
+ * `id in providers` holds only the current ids, so all three shed ones sailed
+ * through.
  */
 function customProvider(providerId: string, args: ParsedArgs): ProviderConfig | undefined {
   const authorizationUrl = flagString(args.flags, 'authorize-url')
@@ -66,9 +76,9 @@ function customProvider(providerId: string, args: ParsedArgs): ProviderConfig | 
     return undefined
   }
 
-  if (providerId in providers) {
+  if (reservedProviderIds.has(providerId)) {
     throw new CliError(
-      `"${providerId}" is a built-in provider — --authorize-url/--token-url would point it at ` +
+      `"${providerId}" is a built-in provider id — --authorize-url/--token-url would point it at ` +
         'different endpoints while it still uses the credentials stored under that id.',
       `Give the custom provider an id of its own, e.g. ai-oauth-sdk login ${providerId}-staging --authorize-url … --token-url …`,
     )
@@ -176,7 +186,7 @@ async function clientFor(providerId: string, args: ParsedArgs): Promise<AuthClie
 
   const custom =
     customProvider(providerId, args) ??
-    (providerId in providers ? undefined : await recallProvider(providerId, args))
+    (reservedProviderIds.has(providerId) ? undefined : await recallProvider(providerId, args))
 
   try {
     return createNodeAuthClient({
@@ -258,7 +268,7 @@ export async function login({ args, json }: CommandContext): Promise<void> {
     warn(`${provider.label} support is experimental — endpoints may change.`)
   }
 
-  if (!(providerId in providers)) {
+  if (!reservedProviderIds.has(providerId)) {
     await rememberProvider(provider, args)
   }
 

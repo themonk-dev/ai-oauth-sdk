@@ -163,6 +163,10 @@ already dead, so a usable stored token is taken instead.
   once.
 </Callout>
 
+A `logout()` while a refresh is in flight abandons it: the response is discarded rather than stored,
+and the call rejects with `aborted`. `AuthStore.refresh()` reads that as a user action and reports
+no error, the same way it treats a cancelled login.
+
 ### getTokens() and setTokens(tokens)
 
 Read and write the stored `TokenSet` directly. `setTokens` is what you want when migrating
@@ -201,6 +205,10 @@ await client.logout({ revoke: true }) // tell the provider too, where supported
 
 Local state is cleared either way. A failed revocation must not leave the user apparently still
 signed in.
+
+A refresh already on the wire is abandoned rather than waited for, so a response that lands
+afterwards cannot put the session back. `logout()` never waits for the network on that account and
+never throws because of it.
 
 ## Properties
 

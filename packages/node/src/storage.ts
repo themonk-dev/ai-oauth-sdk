@@ -12,9 +12,23 @@ export interface FileStorageOptions {
   file?: string
 }
 
-/** Default location, overridable with `AI_OAUTH_SDK_HOME`. */
+/**
+ * Default location, overridable with `AI_OAUTH_SDK_HOME`.
+ *
+ * Empty counts as unset, not as a directory. `AI_OAUTH_SDK_HOME=""` is what a
+ * compose file, a workflow `env:` block or `export AI_OAUTH_SDK_HOME="$UNSET"`
+ * produces when the value behind it is missing, and `join('', 'auth.json')` is
+ * the relative path `auth.json` — so the refresh token would land in whatever
+ * directory the process happened to start in, which in CI is the checked-out
+ * repository. `--auth-dir` has always treated an empty value as absent; this is
+ * the same test, so the env var really is "same as --auth-dir" as it is
+ * documented to be.
+ *
+ * A relative value that is not empty is still honoured: `AI_OAUTH_SDK_HOME=.creds`
+ * means `.creds`, because someone who wrote that chose it.
+ */
 export function defaultAuthDir(): string {
-  return process.env['AI_OAUTH_SDK_HOME'] ?? join(homedir(), '.ai-oauth-sdk')
+  return process.env['AI_OAUTH_SDK_HOME'] || join(homedir(), '.ai-oauth-sdk')
 }
 
 /**
@@ -31,7 +45,11 @@ export function defaultAuthDir(): string {
  * adapter can defend.
  */
 export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
-  const dir = options.dir ?? defaultAuthDir()
+  /* `||`, not `??`: an empty `dir` is a value that went missing somewhere up the
+     call chain, and it would put the credential file in the process CWD. Every
+     other channel — `--auth-dir`, `AI_OAUTH_SDK_HOME` — already reads empty as
+     absent, so this one does too rather than being the odd one out. */
+  const dir = options.dir || defaultAuthDir()
   const path = join(dir, options.file ?? 'auth.json')
   let queue: Promise<unknown> = Promise.resolve()
 

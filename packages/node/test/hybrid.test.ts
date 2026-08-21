@@ -217,6 +217,69 @@ describe('hybridReceiver', () => {
   })
 
   /*
+   * ...and the user gets to try again. Ignoring the failed paste used to also
+   * mean closing the readline it was read on, so the *next* line the user typed
+   * went nowhere: no error, no second prompt, and a process the loopback server
+   * kept alive indefinitely. One stray newline before the real paste was enough,
+   * and there is no default timeout to end it.
+   *
+   * Timed out well under the suite default so a regression fails here rather
+   * than hanging CI for twenty seconds.
+   */
+  it(
+    'asks again after an unparseable paste, and reads the next one',
+    async () => {
+      const started = await hybridReceiver(silent).start({ provider })
+
+      try {
+        await started.present('https://provider.test/authorize?state=s')
+
+        const pending = started.wait()
+        process.stdin.push('not a redirect url at all\n')
+
+        /* Long enough for the failed paste to be read, reported, and re-asked;
+           pushing both lines at once would deliver the second one while no
+           question was pending. */
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        process.stdin.push('https://provider.test/callback?code=second&state=s\n')
+
+        await expect(pending).resolves.toEqual({ code: 'second', state: 's' })
+      } finally {
+        await started.close()
+      }
+    },
+    5_000,
+  )
+
+  /*
+   * The same wedge with no user error in it at all: the user clicks Deny at the
+   * provider and pastes the `?error=access_denied` URL it hands back. That is an
+   * answer, not a slip, so it ends the login — the way the identical denial
+   * already does when it arrives on the loopback port instead.
+   */
+  it(
+    'ends the login when the paste is the provider saying no',
+    async () => {
+      const started = await hybridReceiver(silent).start({ provider })
+
+      try {
+        await started.present('https://provider.test/authorize?state=s')
+
+        const pending = started.wait()
+        process.stdin.push('https://provider.test/callback?error=access_denied&state=s\n')
+
+        await expect(pending).rejects.toMatchObject({
+          code: 'authorization_denied',
+          providerError: 'access_denied',
+        })
+      } finally {
+        await started.close()
+      }
+    },
+    5_000,
+  )
+
+  /*
    * The sandbox case --paste exists for: this process cannot listen at all, so
    * the redirect URI it advertises is unclaimed by anyone and the worst that
    * happens is the user copies a code. `listen()` refused by seccomp or by a

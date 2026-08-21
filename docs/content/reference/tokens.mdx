@@ -19,6 +19,7 @@ interface TokenSet {
   accountId?: string
   email?: string
   provider: string
+  tokenEndpointOrigin?: string
   raw: Record<string, unknown>
 }
 ```
@@ -34,6 +35,7 @@ interface TokenSet {
 | `accountId` | `string` | Provider account identifier, when derivable. |
 | `email` | `string` | Account email, when the provider returns or encodes one. |
 | `provider` | `string` | The provider id this token belongs to. |
+| `tokenEndpointOrigin` | `string` | Origin of the token endpoint that issued it. Recorded by `setTokens()`; absent on records written before this field existed. |
 | `raw` | `Record<string, unknown>` | The untouched token-endpoint response. |
 
 <Callout type="error" title="raw holds a second copy of every credential">
@@ -42,6 +44,14 @@ interface TokenSet {
   you want. Reach into `raw` only for something a provider returns that this interface has no name
   for.
 </Callout>
+
+## Where it came from
+
+`tokenEndpointOrigin` records the origin of the endpoint that issued the token set. You do not write
+it — `setTokens()` stamps it — and you rarely read it. It exists so a provider that has been renamed
+can tell a credential it minted under its old id from one that merely sits under a name it used to
+have, which is a name anything can claim; see [Security](/docs/resources/security). A record written
+by an older version carries no origin and is taken as the rename it is.
 
 ## Expiry
 

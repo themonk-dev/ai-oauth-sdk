@@ -54,6 +54,21 @@ callback taken by the wrong tab fails rather than completing. Use it on redirect
 — an authorization page that severs `window.opener` leaves no alternative — and prefer
 `postCallbackToOpener` wherever the opener survived.
 
+**`logout()` beats a refresh already on the wire.** Clearing the local record is synchronous, but a
+token request dispatched a moment earlier cannot be recalled, and a provider that rotates answers it
+with a new access *and* refresh token a round trip later. Written back, that would restore the
+session in memory and on disk. A refresh that returns after a `logout()` therefore writes nothing
+and rejects with `aborted`, and a call arriving after the sign-out starts fresh rather than joining
+it. `logout()` itself still never waits for the network.
+
+**A provider id a built-in has shed is a name, not an identity.** `claude` was `anthropic`, `gemini`
+was `google`, `azureAi` was `microsoft`, and each still adopts a credential stored under its old id
+and completes a flow started under one. Since anything can claim a name a provider let go of, such a
+record now has to agree on the token endpoint too. Records naming no endpoint — everything written
+before the field existed, which is the version a rename migrates from — are still accepted, so
+upgrading signs nobody out. `reservedProviderIds` exports every id the built-ins answer to, current
+and shed; the CLI refuses all of them for `--authorize-url`/`--token-url`.
+
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis. But that body is not ours, and a misconfigured
 gateway echoing the request back would put a live refresh token straight into your logs. Snippets
@@ -63,6 +78,13 @@ pass through `redactSecrets()` first.
   It scrubs the OAuth credential parameters and the token shapes the supported providers issue. Do
   not rely on it to make an arbitrary secret safe to print.
 </Callout>
+
+OpenAI's device flow gets one extra step, because its `device_auth_id` and `user_code` are not
+identifiers: posted back as a pair they return an authorization code *and* the PKCE verifier that
+redeems it, so between them they are the whole approval credential. Name-based redaction is not
+enough for a value a provider mentions in prose rather than as a parameter, so a failed poll scrubs
+those two values out of the snippet by value before quoting it. That works only because they are
+this process's own codes — it does nothing for a credential the library never held.
 
 ## Left to you
 
@@ -76,8 +98,26 @@ pass through `redactSecrets()` first.
 | `secureStoreAdapter()`, Expo | Keychain, EncryptedSharedPreferences |
 | `asyncStorageAdapter()`, React Native | **Not encrypted at rest** |
 
+`fileStorage()` reads an empty `dir`, or an empty `AI_OAUTH_SDK_HOME`, as unset and falls back to
+`~/.ai-oauth-sdk` rather than treating it as a directory: joining an empty directory with the file
+name yields the relative path `auth.json`, which would put the credential file wherever the process
+happened to start — in CI, the checked-out repository. The file would still be `0600`, so that was
+a credential written somewhere nobody chose rather than one exposed to other local users; the cost
+is
+that it outlives the job in a git tree or a build artifact, and that the path the CLI reported back
+does not exist to go and delete.
+
 Prefer `secureStoreAdapter` for refresh tokens on mobile. In a browser, remember that any XSS on
 your origin can read whatever web storage you chose.
+
+The web storage adapters fall back to memory where the browser throws on access, and in a browser
+Web Worker, but refuse off a browser entirely — see [Storage](/docs/reference/storage). Cloudflare
+Workers and other workerd-based runtimes count as
+servers here, not as browsers. Their global exposes `WorkerGlobalScope`, but one isolate serves many
+users' requests, so an in-memory store there is a single `Map` holding every one of their tokens.
+`localStorageAdapter()` and `sessionStorageAdapter()` refuse on any runtime they cannot positively
+identify as a browser Web Worker; supply `storage:` explicitly if you are on one they do not
+recognise.
 
 **`TokenSet.raw`** holds a second copy of every credential, because it is the token endpoint's
 response verbatim. Do not log it or ship it to telemetry.

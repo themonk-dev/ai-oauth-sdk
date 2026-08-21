@@ -5,7 +5,7 @@ import { OAuthError } from '../src/errors.js'
 import { defineProvider } from '../src/providers/define.js'
 import { createAuthStore, type AuthState } from '../src/store.js'
 import { memoryStorage } from '../src/storage.js'
-import type { AuthStorage, CallbackReceiver, ProviderConfig } from '../src/types.js'
+import type { AuthStorage, CallbackReceiver, FetchLike, ProviderConfig } from '../src/types.js'
 import { startFakeAuthServer, type FakeAuthServer } from './helpers/fakeAuthServer.js'
 
 let server: FakeAuthServer
@@ -218,6 +218,53 @@ describe('createAuthStore', () => {
     const refreshed = await store.refresh()
     expect(refreshed?.accessToken).toBe('access-2')
     expect(store.getState().tokens?.accessToken).toBe('access-2')
+  })
+
+  /**
+   * Signing out mid-refresh is a user action, so what the observers see is a
+   * sign-out — not an error banner about the refresh the sign-out cancelled.
+   */
+  it('reports no error when a refresh is abandoned by a logout', async () => {
+    const shortLived = await startFakeAuthServer({ expiresIn: 1 })
+
+    try {
+      let dispatched!: () => void
+      const onDispatch = new Promise<void>((resolve) => {
+        dispatched = resolve
+      })
+      let release!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const gatedFetch: FetchLike = async (input, init) => {
+        if (String(init?.body).includes('grant_type=refresh_token')) {
+          dispatched()
+          await held
+        }
+
+        return fetch(input, init)
+      }
+
+      const client = createAuthClient({
+        provider: testProvider(shortLived.url),
+        storage: memoryStorage(),
+        fetch: gatedFetch,
+      })
+      const store = createAuthStore({ client, receiver: scriptedReceiver() })
+      await store.login()
+
+      const refreshing = store.refresh()
+      await onDispatch
+      await store.logout()
+      release()
+
+      await expect(refreshing).resolves.toBeUndefined()
+      expect(store.getState().error).toBeUndefined()
+      expect(store.getState().isAuthenticated).toBe(false)
+      expect(store.getState().isLoading).toBe(false)
+    } finally {
+      await shortLived.close()
+    }
   })
 
   it('records a refresh failure in state', async () => {

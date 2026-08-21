@@ -46,6 +46,13 @@ started it is indistinguishable from a forged one.
 | `openBrowser` | `boolean` | Also try to open a browser locally, in case there is one. Defaults to `true`. |
 | `message` | `(url: string) => string` | Replaces the printed instructions. |
 | `signal` | `AbortSignal` | Abandons the pending read. Used when racing this against another receiver. |
+| `retryOnInvalidPaste` | `boolean` | Report the problem and ask again instead of failing the login. Defaults to `false`. |
+
+`retryOnInvalidPaste` is off by default because the prompt is usually the only way the login can
+finish, and a user holding a value that will never parse would have nothing left but Ctrl-C. Turn it
+on where something else can end the wait — a receiver racing this one, or `signal`. `hybridReceiver`
+turns it on for you, and only when its loopback half actually bound. A pasted *denial* is never
+retried either way: the provider answered, and the answer was no.
 
 ## Do not make users choose
 
@@ -76,9 +83,13 @@ Three details keep that race honest:
   `start()` rejects, and `ai-oauth-sdk login <provider> --paste` reports the contested port rather
   than prompting. The two are told apart by type: a refusal is an `OAuthError`, and a kernel saying
   no is not.
-- **Only the prompt's success competes.** A blank line or a mistyped paste rejects that half, and
-  letting a rejection win would tear down a server that was about to receive a perfectly good
-  callback.
+- **A slip at the prompt does not compete. An answer does, either way.** A blank line or a mistyped
+  paste is not an answer, and letting it win would tear down a server that was about to receive a
+  perfectly good callback. It is not discarded either: the prompt says what was wrong and asks
+  again, on the same open readline, for as long as the server is still listening. What still travels
+  is the provider's own refusal — the `?error=access_denied` a user copies back after clicking Deny.
+  No callback is coming after that, so the login ends with it, exactly as the same denial does when
+  it arrives on the port instead.
 - **Only the prompt announces the URL.** `present()` is what opens the browser, and two halves
   announcing means two tabs on the same authorization URL.
 
@@ -100,3 +111,28 @@ const receiver = manualReceiver({
   },
 })
 ```
+
+`prompt` is called once per attempt. To ask again after a value that could not be read as a code,
+add `retry` — it is handed the error that would otherwise have ended the login, and returning `true`
+runs `prompt` again:
+
+```ts
+const receiver = manualReceiver({
+  async prompt(url) {
+    return await showModalAndAwaitPaste(url)
+  },
+  retry(error, attempts) {
+    if (error.code !== 'invalid_token_response' || attempts >= 3) {
+      return false
+    }
+
+    showMessage(error.message)
+
+    return true
+  },
+})
+```
+
+A `prompt` that *rejects* is never retried: that is the read being abandoned — an abort, a closed
+stdin — rather than an answer to reject, and reopening it is how a race this half already lost would
+fail to finish.
