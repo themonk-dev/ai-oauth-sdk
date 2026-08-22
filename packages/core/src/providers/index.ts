@@ -107,6 +107,13 @@ export function resolveProvider(
     redirect: { ...base.redirect, ...overrides.redirect },
     extraAuthParams: { ...base.extraAuthParams, ...overrides.extraAuthParams },
     tokenRequest: { ...base.tokenRequest, ...overrides.tokenRequest },
+    // `defineProvider` already defaults these, but it is not the only way a
+    // descriptor gets here: a cast, or a plain-JavaScript caller, reaches this
+    // function having never been through it. Every client construction does pass
+    // through here, so PKCE is defaulted on at the one point that sees them all.
+    // Still `??`, so an explicit `false` on either side is honoured.
+    usePkce: overrides.usePkce ?? base.usePkce ?? true,
+    pkceMethod: overrides.pkceMethod ?? base.pkceMethod ?? 'S256',
   }
 
   if (overrides.scopes?.length) {
