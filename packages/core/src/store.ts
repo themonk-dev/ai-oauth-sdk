@@ -190,17 +190,33 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
       // one that survives is written live and un-revoked. Either way the
       // credential left at rest is the one that was never revoked.
       //
-      // Ordering is load-bearing. `client.logout({ revoke: true })` makes a
-      // network round trip, so aborting after it would leave a full round trip
-      // in which the parked login can complete and write. Aborting costs
-      // nothing when no login is pending, and `login()` already treats an abort
-      // as a user action rather than an error, so a cancelled sign-in surfaces
-      // no spurious failure in the UI.
+      // Ordering is load-bearing, though not for the obvious reason. A login
+      // that completes entirely *inside* the revoke round trip does not
+      // survive: `client.logout()` deletes the stored record after revoking,
+      // and that delete wipes the write. What survives is a login whose
+      // `setTokens` write is ordered *after* that delete — which is what the
+      // round trip buys it, by letting the attempt get past `consume()` and
+      // into the token request before the logout enqueues its delete, so the
+      // response lands while the delete is already executing. Aborting first
+      // denies it that head start; and because the signal is threaded through
+      // `completeAuthorization` into `exchangeCode`, an abort arriving any time
+      // before the token response resolves stops the write outright.
       //
-      // This covers every path through the store, which is all four UI
-      // bindings. `client.logout()` called directly and `deviceLogin()` — which
-      // the store does not wrap at all — are outside it and still race; closing
-      // those needs the client itself to disown a run it no longer owns.
+      // Aborting costs nothing when no login is pending, and `login()` already
+      // treats an abort as a user action rather than an error, so a cancelled
+      // sign-in surfaces no spurious failure in the UI.
+      //
+      // What this reaches is a login on *this* store instance. Shared through
+      // `AuthProvider` or its equivalent, that is the whole app; two components
+      // each constructing their own store hold their own controllers, and one's
+      // sign-out does not reach the other's parked login. That is already the
+      // anti-pattern `AuthProvider` warns against, but the limit is worth
+      // stating rather than implying the store covers more than it does.
+      //
+      // `client.logout()` called directly and `deviceLogin()` — which the store
+      // does not wrap at all — are outside this entirely and still race;
+      // closing those needs the client itself to disown a run it no longer
+      // owns.
       abortController?.abort()
       await client.logout(logoutOptions)
       setState({ tokens: undefined, error: undefined })

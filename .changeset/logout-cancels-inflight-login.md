@@ -29,9 +29,19 @@ opposite of what the option was asked for.
 
 `logout()` now aborts the store's controller, which is the same mechanism
 `cancel()` and a superseding `login()` already use. The abort is issued *before*
-the awaited `client.logout()`, and the ordering is load-bearing: with
-`{ revoke: true }` that call makes a network round trip, so aborting after it
-would leave a full round trip in which the parked login can complete and write.
+the awaited `client.logout()`, and that ordering is load-bearing — though not
+for the obvious reason. A login completing entirely *inside* the revoke round
+trip does not survive, because `client.logout()` deletes the stored record after
+revoking and that delete wipes the write. What survives is a login whose
+`setTokens` write is ordered *after* the delete, and the round trip is what buys
+it that: the attempt gets past `consume()` and into the token request before the
+logout enqueues its delete, so the response lands while the delete is already
+executing. Aborting first denies it the head start, and since the signal is
+threaded through `completeAuthorization` into `exchangeCode`, an abort arriving
+any time before the token response resolves stops the write outright. A test
+pins the ordering, because moving the abort after the await otherwise leaves
+every existing store test passing.
+
 Aborting costs nothing when no login is pending, and `login()` already treats an
 abort as a user action rather than an error, so a cancelled sign-in surfaces no
 spurious error and leaves `isLoading` false.
@@ -45,9 +55,16 @@ sign-out failure that leaves a long-lived refresh token at rest after the user
 asked for it to be gone, which is what makes it worth a patch on a shared or
 kiosk machine.
 
-**What this deliberately does not cover.** The fix is in the store, so it covers
-all four UI bindings — React, Vue, Svelte and Solid all delegate `logout`
-straight to it — and nothing else. Two supported patterns still race:
+**What this deliberately does not cover.** The fix is in the store, so what it
+binds is a sign-out to a login on the *same store instance*. Shared through
+`AuthProvider` or its equivalent in the other three bindings, that is the whole
+app. Two components each constructing their own store hold their own
+controllers, and one's sign-out does not reach the other's parked login —
+measured, with the token landing on disk. That is already the anti-pattern
+`AuthProvider`'s JSDoc warns against, but it is a limit worth naming rather than
+claiming the store covers every path.
+
+Two supported patterns still race outright:
 
 - `client.logout()` used directly, without the store. That is first-class in the
   docs and in the shipped examples.
@@ -60,7 +77,15 @@ than a cancellation the store happens to hold. That is a larger change to
 
 One residual window remains even on the store path: `setTokens()` is reached
 after `exchangeCode` has fully resolved, so a sign-out landing in the single
-microtask between that resolution and the storage write still writes. A click
-handler or an unmount callback is a macrotask and cannot land there; it was
-reachable only by firing the sign-out from inside a storage adapter's own
-`set()`.
+microtask between that resolution and the storage write still writes, and leaves
+inconsistent state behind it — the token on disk, the client's cache cleared, and
+the store still reporting `isAuthenticated: true`. A click handler or an unmount
+callback is a macrotask and cannot land there; it was reachable only by firing
+the sign-out from inside a storage adapter's own `set()`.
+
+Also unchanged, and pre-existing rather than introduced here: a login cancelled
+this way leaves its `pending:<state>` record — the PKCE verifier and redirect
+URI — in storage until it expires or the next `create()` prunes it. `cancel()`
+has always behaved the same way. It is not a live credential, but it is the
+record `consumeLatest` resolves a stray state-less callback against on an
+`echoesState: false` provider, so clearing it is worth a follow-up.

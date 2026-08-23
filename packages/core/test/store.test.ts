@@ -43,6 +43,23 @@ const scriptedReceiver = (redirectUri = 'http://localhost:9999/callback'): Callb
 })
 
 /**
+ * `testProvider` declares no `revocationUrl`, so `logout({ revoke: true })`
+ * skips the revoke branch on it entirely. Anything asserting on revocation
+ * behaviour has to use this instead, or it silently tests nothing.
+ */
+const revokingProvider = (url: string): ProviderConfig =>
+  defineProvider({
+    id: 'test',
+    label: 'Test',
+    clientId: 'test-client',
+    authorizationUrl: `${url}/authorize`,
+    tokenUrl: `${url}/token`,
+    revocationUrl: `${url}/revoke`,
+    scopes: ['openid'],
+    redirect: { mode: 'loopback', loopbackPort: 0 },
+  })
+
+/**
  * A receiver that obtains a real authorization code and then holds it until
  * released.
  *
@@ -53,8 +70,9 @@ const scriptedReceiver = (redirectUri = 'http://localhost:9999/callback'): Callb
  * genuinely parked login rather than one that never started.
  */
 const parkedReceiver = (
-  redirectUri = 'http://localhost:9999/callback',
+  options: { redirectUri?: string; onAbort?: () => void } = {},
 ): CallbackReceiver & { presented: Promise<void>; release: () => void } => {
+  const redirectUri = options.redirectUri ?? 'http://localhost:9999/callback'
   let openGate!: () => void
   let markPresented!: () => void
   const gate = new Promise<void>((resolve) => {
@@ -69,7 +87,11 @@ const parkedReceiver = (
     id: 'parked',
     presented,
     release: () => openGate(),
-    async start() {
+    async start(context) {
+      // Fires synchronously with `abort()`, which is what lets a test observe
+      // where in the sign-out the abort actually happened.
+      context.signal?.addEventListener('abort', () => options.onAbort?.(), { once: true })
+
       return {
         redirectUri,
         async present(url) {
@@ -392,12 +414,17 @@ describe('createAuthStore', () => {
       expect(onError).not.toHaveBeenCalled()
       expect(store.getState().error).toBeUndefined()
       expect(store.getState().isLoading).toBe(false)
+      // Without these two the test passes for the wrong reason when the fix is
+      // reverted: the login simply succeeds, and a success reports no error.
+      expect(await pending).toBeUndefined()
+      expect(store.getState().isAuthenticated).toBe(false)
     })
 
     it('leaves no live credential behind when revoking', async () => {
       const storage = memoryStorage()
       const receiver = parkedReceiver()
-      const client = createAuthClient({ provider: testProvider(server.url), storage })
+      const provider = revokingProvider(server.url)
+      const client = createAuthClient({ provider, storage })
       const store = createAuthStore({ client, receiver })
 
       // Signed in first, so `logout({ revoke: true })` has something to revoke
@@ -412,9 +439,40 @@ describe('createAuthStore', () => {
       receiver.release()
       await pending
 
+      // The revocation has to have actually been sent. On a provider with no
+      // `revocationUrl` the branch is skipped and this whole test degrades
+      // into a duplicate of the one above without saying so.
+      expect(server.revocations).toHaveLength(1)
       expect(await client.getTokens()).toBeUndefined()
-      const reader = createAuthClient({ provider: testProvider(server.url), storage })
+      const reader = createAuthClient({ provider, storage })
       expect(await reader.isAuthenticated()).toBe(false)
+    })
+
+    it('aborts before revoking rather than after', async () => {
+      // How many revocations the server had recorded at the instant the login
+      // was aborted. Abort first and it is zero; move the abort below the
+      // awaited `client.logout()` and the revoke has already been sent, so it
+      // is one. Reading it from the abort listener keeps this a statement about
+      // ordering rather than a race the local server would usually win.
+      const revocationsAtAbort: number[] = []
+      const receiver = parkedReceiver({
+        onAbort: () => revocationsAtAbort.push(server.revocations.length),
+      })
+      const provider = revokingProvider(server.url)
+      const client = createAuthClient({ provider, storage: memoryStorage() })
+      const store = createAuthStore({ client, receiver })
+
+      await createAuthStore({ client, receiver: scriptedReceiver() }).login()
+
+      const pending = store.login()
+      await receiver.presented
+
+      await store.logout({ revoke: true })
+      receiver.release()
+      await pending
+
+      expect(revocationsAtAbort).toEqual([0])
+      expect(server.revocations).toHaveLength(1)
     })
 
     it('still signs out normally when no login is pending', async () => {
