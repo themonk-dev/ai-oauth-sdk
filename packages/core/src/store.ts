@@ -48,6 +48,10 @@ export interface AuthStore {
   /** Loads any persisted session. Safe to call more than once. */
   restore(): Promise<void>
   login(overrides?: LoginOverrides): Promise<TokenSet | undefined>
+  /**
+   * Signs out, aborting any in-flight login first so it cannot write a fresh
+   * credential back over the sign-out.
+   */
   logout(options?: { revoke?: boolean }): Promise<void>
   refresh(): Promise<TokenSet | undefined>
   getAccessToken(): Promise<string>
@@ -169,6 +173,51 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
     },
 
     async logout(logoutOptions = {}) {
+      // Abort first, and before the awaited call below.
+      //
+      // `client.logout()` does not stop a login that is already in flight. It
+      // clears the client's cached tokens and deletes the stored record, but a
+      // `login()` parked on its receiver still holds a live authorization
+      // attempt, and when that callback lands `completeAuthorization` writes a
+      // fresh access *and* refresh token straight back to storage. The sign-out
+      // is then undone durably rather than transiently: a new process over the
+      // same `fileStorage()` reads the session back, `isAuthenticated()`
+      // returns true, and nothing downstream heals it.
+      //
+      // `{ revoke: true }` is the worse half. Signed out already, `revoke()`
+      // early-returns because there is nothing to read, so no revocation is
+      // sent at all; signed in, it revokes the token being replaced while the
+      // one that survives is written live and un-revoked. Either way the
+      // credential left at rest is the one that was never revoked.
+      //
+      // Ordering is load-bearing, though not for the obvious reason. A login
+      // that completes entirely *inside* the revoke round trip does not
+      // survive: `client.logout()` deletes the stored record after revoking,
+      // and that delete wipes the write. What survives is a login whose
+      // `setTokens` write is ordered *after* that delete — which is what the
+      // round trip buys it, by letting the attempt get past `consume()` and
+      // into the token request before the logout enqueues its delete, so the
+      // response lands while the delete is already executing. Aborting first
+      // denies it that head start; and because the signal is threaded through
+      // `completeAuthorization` into `exchangeCode`, an abort arriving any time
+      // before the token response resolves stops the write outright.
+      //
+      // Aborting costs nothing when no login is pending, and `login()` already
+      // treats an abort as a user action rather than an error, so a cancelled
+      // sign-in surfaces no spurious failure in the UI.
+      //
+      // What this reaches is a login on *this* store instance. Shared through
+      // `AuthProvider` or its equivalent, that is the whole app; two components
+      // each constructing their own store hold their own controllers, and one's
+      // sign-out does not reach the other's parked login. That is already the
+      // anti-pattern `AuthProvider` warns against, but the limit is worth
+      // stating rather than implying the store covers more than it does.
+      //
+      // `client.logout()` called directly and `deviceLogin()` — which the store
+      // does not wrap at all — are outside this entirely and still race;
+      // closing those needs the client itself to disown a run it no longer
+      // owns.
+      abortController?.abort()
       await client.logout(logoutOptions)
       setState({ tokens: undefined, error: undefined })
     },
