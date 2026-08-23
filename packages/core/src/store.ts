@@ -48,6 +48,10 @@ export interface AuthStore {
   /** Loads any persisted session. Safe to call more than once. */
   restore(): Promise<void>
   login(overrides?: LoginOverrides): Promise<TokenSet | undefined>
+  /**
+   * Signs out, aborting any in-flight login first so it cannot write a fresh
+   * credential back over the sign-out.
+   */
   logout(options?: { revoke?: boolean }): Promise<void>
   refresh(): Promise<TokenSet | undefined>
   getAccessToken(): Promise<string>
@@ -169,6 +173,35 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
     },
 
     async logout(logoutOptions = {}) {
+      // Abort first, and before the awaited call below.
+      //
+      // `client.logout()` does not stop a login that is already in flight. It
+      // clears the client's cached tokens and deletes the stored record, but a
+      // `login()` parked on its receiver still holds a live authorization
+      // attempt, and when that callback lands `completeAuthorization` writes a
+      // fresh access *and* refresh token straight back to storage. The sign-out
+      // is then undone durably rather than transiently: a new process over the
+      // same `fileStorage()` reads the session back, `isAuthenticated()`
+      // returns true, and nothing downstream heals it.
+      //
+      // `{ revoke: true }` is the worse half. Signed out already, `revoke()`
+      // early-returns because there is nothing to read, so no revocation is
+      // sent at all; signed in, it revokes the token being replaced while the
+      // one that survives is written live and un-revoked. Either way the
+      // credential left at rest is the one that was never revoked.
+      //
+      // Ordering is load-bearing. `client.logout({ revoke: true })` makes a
+      // network round trip, so aborting after it would leave a full round trip
+      // in which the parked login can complete and write. Aborting costs
+      // nothing when no login is pending, and `login()` already treats an abort
+      // as a user action rather than an error, so a cancelled sign-in surfaces
+      // no spurious failure in the UI.
+      //
+      // This covers every path through the store, which is all four UI
+      // bindings. `client.logout()` called directly and `deviceLogin()` — which
+      // the store does not wrap at all — are outside it and still race; closing
+      // those needs the client itself to disown a run it no longer owns.
+      abortController?.abort()
       await client.logout(logoutOptions)
       setState({ tokens: undefined, error: undefined })
     },

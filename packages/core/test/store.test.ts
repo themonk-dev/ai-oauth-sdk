@@ -42,6 +42,52 @@ const scriptedReceiver = (redirectUri = 'http://localhost:9999/callback'): Callb
   },
 })
 
+/**
+ * A receiver that obtains a real authorization code and then holds it until
+ * released.
+ *
+ * This is the state a login is in while the browser is open and the user has
+ * not yet approved — the attempt is live and its callback is still to come,
+ * which is precisely the window a sign-out has to survive. `presented`
+ * resolves once the code is in hand, so a test can be sure it is racing a
+ * genuinely parked login rather than one that never started.
+ */
+const parkedReceiver = (
+  redirectUri = 'http://localhost:9999/callback',
+): CallbackReceiver & { presented: Promise<void>; release: () => void } => {
+  let openGate!: () => void
+  let markPresented!: () => void
+  const gate = new Promise<void>((resolve) => {
+    openGate = resolve
+  })
+  const presented = new Promise<void>((resolve) => {
+    markPresented = resolve
+  })
+  let result: Promise<{ code: string; state: string }> | undefined
+
+  return {
+    id: 'parked',
+    presented,
+    release: () => openGate(),
+    async start() {
+      return {
+        redirectUri,
+        async present(url) {
+          result = fetch(url, { redirect: 'manual' }).then(async (response) => {
+            const params = new URL(response.headers.get('location')!).searchParams
+            markPresented()
+            await gate
+
+            return { code: params.get('code')!, state: params.get('state')! }
+          })
+        },
+        wait: () => result!,
+        async close() {},
+      }
+    },
+  }
+}
+
 /** A receiver that never completes, for testing cancellation. */
 const hangingReceiver = (): CallbackReceiver => ({
   id: 'hanging',
@@ -285,6 +331,116 @@ describe('createAuthStore', () => {
     await store.login()
     expect(a.mock.calls.length).toBeGreaterThan(1)
     expect(b.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  describe('logout against an in-flight login', () => {
+    it('does not let a parked login write the session back over the sign-out', async () => {
+      const storage = memoryStorage()
+      const receiver = parkedReceiver()
+      const client = createAuthClient({ provider: testProvider(server.url), storage })
+      const store = createAuthStore({ client, receiver })
+
+      const pending = store.login()
+      await receiver.presented
+
+      await store.logout()
+      expect(store.getState().isAuthenticated).toBe(false)
+
+      // Releasing the callback is where the unguarded version completes the
+      // exchange and writes a fresh access *and* refresh token back to storage.
+      receiver.release()
+      await pending
+
+      expect(store.getState().isAuthenticated).toBe(false)
+      expect(await client.getTokens()).toBeUndefined()
+
+      // Durability is the part that matters: a separate client over the same
+      // storage must not read the session back.
+      const reader = createAuthClient({ provider: testProvider(server.url), storage })
+      expect(await reader.isAuthenticated()).toBe(false)
+    })
+
+    it('does not fire onSuccess for a login the sign-out cancelled', async () => {
+      const onSuccess = vi.fn()
+      const receiver = parkedReceiver()
+      const client = createAuthClient({ provider: testProvider(server.url), storage: memoryStorage() })
+      const store = createAuthStore({ client, receiver, onSuccess })
+
+      const pending = store.login()
+      await receiver.presented
+      await store.logout()
+      receiver.release()
+      await pending
+
+      expect(onSuccess).not.toHaveBeenCalled()
+    })
+
+    it('reports no error for a login the sign-out cancelled', async () => {
+      const onError = vi.fn()
+      const receiver = parkedReceiver()
+      const client = createAuthClient({ provider: testProvider(server.url), storage: memoryStorage() })
+      const store = createAuthStore({ client, receiver, onError })
+
+      const pending = store.login()
+      await receiver.presented
+      await store.logout()
+      receiver.release()
+      await pending
+
+      // An abort the store itself issued is a user action, not a failure worth
+      // surfacing — the same treatment `login()` gives a superseding login.
+      expect(onError).not.toHaveBeenCalled()
+      expect(store.getState().error).toBeUndefined()
+      expect(store.getState().isLoading).toBe(false)
+    })
+
+    it('leaves no live credential behind when revoking', async () => {
+      const storage = memoryStorage()
+      const receiver = parkedReceiver()
+      const client = createAuthClient({ provider: testProvider(server.url), storage })
+      const store = createAuthStore({ client, receiver })
+
+      // Signed in first, so `logout({ revoke: true })` has something to revoke
+      // and the round trip it makes is part of the window under test.
+      await createAuthStore({ client, receiver: scriptedReceiver() }).login()
+      expect(await client.isAuthenticated()).toBe(true)
+
+      const pending = store.login()
+      await receiver.presented
+
+      await store.logout({ revoke: true })
+      receiver.release()
+      await pending
+
+      expect(await client.getTokens()).toBeUndefined()
+      const reader = createAuthClient({ provider: testProvider(server.url), storage })
+      expect(await reader.isAuthenticated()).toBe(false)
+    })
+
+    it('still signs out normally when no login is pending', async () => {
+      const storage = memoryStorage()
+      const store = makeStore(storage)
+
+      await store.login()
+      expect(store.getState().isAuthenticated).toBe(true)
+
+      await store.logout()
+      expect(store.getState().isAuthenticated).toBe(false)
+      expect(store.getState().error).toBeUndefined()
+      expect(await store.client.getTokens()).toBeUndefined()
+    })
+
+    it('does not stop a login started after the sign-out', async () => {
+      const store = makeStore()
+
+      await store.logout()
+      const tokens = await store.login()
+
+      // The abort must belong to the sign-out that issued it, not linger and
+      // cancel the next attempt.
+      expect(tokens?.accessToken).toBeDefined()
+      expect(store.getState().isAuthenticated).toBe(true)
+    })
   })
 
   it('stops emitting after destroy', async () => {
