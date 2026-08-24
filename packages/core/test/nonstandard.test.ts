@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { buildAuthorizationUrl } from '../src/authorize.js'
 import { createAuthClient } from '../src/client.js'
+import type { FetchLike } from '../src/types.js'
 import {
   githubCopilot,
   azureAi,
@@ -172,6 +173,59 @@ describe('Microsoft factory', () => {
 
   it('asks for offline_access so a refresh token comes back', () => {
     expect(azureAi({ clientId: 'a' }).scopes).toContain('offline_access')
+  })
+
+  /**
+   * Entra has no RFC 7009 endpoint, and `/oauth2/v2.0/logout` — which the
+   * descriptor once carried here — is the OIDC `end_session_endpoint`, not one.
+   * Declaring it made `revokeToken` POST the refresh token at a sign-out page
+   * and read the answer as success, so `logout --revoke` reported a revocation
+   * that never happened. Absent is the honest value.
+   */
+  it('declares no revocation endpoint, because Entra has none', () => {
+    expect(azureAi({ clientId: 'a' }).revocationUrl).toBeUndefined()
+    expect(azureAi({ clientId: 'a', tenant: 'contoso' }).revocationUrl).toBeUndefined()
+  })
+
+  it('refuses to revoke rather than reporting a revocation that did not happen', async () => {
+    const provider = azureAi({ clientId: 'a' })
+    const fetchImpl = vi.fn<FetchLike>()
+    const client = createAuthClient({ provider, storage: memoryStorage(), fetch: fetchImpl })
+    await client.setTokens({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      tokenType: 'Bearer',
+      provider: 'azure-ai',
+      raw: {},
+    })
+
+    await expect(client.revoke()).rejects.toMatchObject({ code: 'configuration_error' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `logout({ revoke: true })` swallows a failed revocation so a user is never
+   * left apparently signed in — which is right, and is also why the descriptor
+   * must not claim an endpoint it does not have: the swallow would hide it.
+   */
+  it('still clears the local credential when asked to revoke', async () => {
+    const provider = azureAi({ clientId: 'a' })
+    const fetchImpl = vi.fn<FetchLike>()
+    const storage = memoryStorage()
+    const client = createAuthClient({ provider, storage, fetch: fetchImpl })
+    await client.setTokens({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      tokenType: 'Bearer',
+      provider: 'azure-ai',
+      raw: {},
+    })
+
+    await client.logout({ revoke: true })
+
+    expect(await client.getTokens()).toBeUndefined()
+    expect(await storage.get('tokens:azure-ai')).toBeNull()
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
 
