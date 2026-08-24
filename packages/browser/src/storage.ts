@@ -7,12 +7,33 @@ import { OAuthError, fromSyncStorage, memoryStorage, type AuthStorage } from '@a
  * server-side rendering does, and the two want opposite answers. A worker is
  * still one user's browser: an in-memory store there is scoped to that one
  * context, exactly as the Safari-private-mode fallback is, and refusing would
- * break a sign-in driven from a worker for no gain. `WorkerGlobalScope` is
- * exposed inside worker scopes and nowhere else, which is what separates the
- * two cases.
+ * break a sign-in driven from a worker for no gain.
+ *
+ * `WorkerGlobalScope` alone does not separate the two, though it reads as if it
+ * should. Cloudflare's workerd declares it as a global class and puts it on the
+ * Worker global object too, so `'WorkerGlobalScope' in globalThis` is true
+ * there — and workerd is a server, multiplexing every request in a deployment
+ * through one isolate whose module scope outlives them all. Workers is a
+ * runtime this package documents as supported, so that probe handed back
+ * `memoryStorage()` for precisely the case {@link unavailableStorage} exists to
+ * refuse: one `Map`, every user's tokens. `globalThis instanceof
+ * WorkerGlobalScope` does not help either, since workerd's global really is
+ * one.
+ *
+ * So the test is positive evidence of a *browser* worker rather than absence of
+ * a server. `WorkerNavigator` is `[Exposed=Worker]`, so every real worker scope
+ * has it; workerd has no such global, and neither do Node, Deno or Bun. Both
+ * signals are required.
+ *
+ * A browser that somehow offered `WorkerGlobalScope` without `WorkerNavigator`
+ * would get the refusal rather than a silent in-memory store — a failed
+ * sign-in with a message naming the reason, which is the direction this
+ * decision should fail in.
  */
 function inWebWorker(): boolean {
-  return 'WorkerGlobalScope' in globalThis
+  const scope = globalThis as { WorkerGlobalScope?: unknown; WorkerNavigator?: unknown }
+
+  return typeof scope.WorkerGlobalScope === 'function' && typeof scope.WorkerNavigator === 'function'
 }
 
 /**
