@@ -13,24 +13,37 @@ import type {
  */
 export function parseStandardCallback(input: string): CallbackParseResult {
   const trimmed = input.trim()
-  let query = trimmed
 
-  const questionMark = trimmed.indexOf('?')
+  // The fragment is separated off first, before anything looks for a `code`.
+  // Doing it the other way round is what made the fragment branch unreachable:
+  // the old guard asked whether the string still contained `code=` while that
+  // string *was* the fragment, so a fragment carrying a code answered "yes" and
+  // the fragment was never split off — `#code=abc&state=xyz` parsed to a key of
+  // `https://app.example/cb#code`, with only `state` surviving, by accident of
+  // sitting after the first `&`. It also required a `?` to be present at all,
+  // so `myapp://cb#code=…` never reached the branch either. The asymmetry was
+  // visible from the outside: a fragment-borne `error=` parsed fine, because
+  // there was no `code=` anywhere to fool the test, while a fragment-borne
+  // success did not.
+  const hashIndex = trimmed.indexOf('#')
+  const beforeHash = hashIndex >= 0 ? trimmed.slice(0, hashIndex) : trimmed
+  const fragment = hashIndex >= 0 ? trimmed.slice(hashIndex + 1) : ''
 
-  if (questionMark >= 0) {
-    query = trimmed.slice(questionMark + 1)
-  } else if (trimmed.startsWith('#')) {
-    query = trimmed.slice(1)
-  }
+  const questionMark = beforeHash.indexOf('?')
 
-  /* Some providers return params in the fragment rather than the query. */
-  const hashIndex = query.indexOf('#')
+  // With no `?`, the whole thing is treated as the query — that is what makes a
+  // bare `code=…&state=…` string work. A full URL with no query lands here too
+  // and parses to nonsense keys, which is harmless: it yields no `code` and no
+  // `error`, so the fragment below gets its turn.
+  const search = questionMark >= 0 ? beforeHash.slice(questionMark + 1) : beforeHash
 
-  if (questionMark >= 0 && hashIndex >= 0 && !query.includes('code=')) {
-    query = query.slice(hashIndex + 1)
-  }
-
-  const params = parseQuery(query)
+  // Some providers return the params in the fragment rather than the query.
+  // Which half won is decided by what was actually found, not by where a `#`
+  // happened to be: the query is authoritative when it carries the response,
+  // and the fragment is read only when it does not.
+  const fromSearch = parseQuery(search)
+  const params =
+    fragment && !fromSearch['code'] && !fromSearch['error'] ? parseQuery(fragment) : fromSearch
   const result: CallbackParseResult = {}
   const code = params['code']
   const state = params['state']
