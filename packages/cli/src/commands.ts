@@ -42,6 +42,30 @@ interface CommandContext {
 }
 
 /**
+ * Own-property lookups against the built-in maps.
+ *
+ * `providers`, `publicClientIds` and `publicClientSecrets` are plain object
+ * literals, so `providerId in providers` and `publicClientIds[providerId]`
+ * both walk `Object.prototype`. A provider id is a string a user typed, and
+ * `constructor`, `toString`, `valueOf` and `__proto__` are all names someone
+ * can type: with a bare read `resolveClientId('constructor')` hands back the
+ * `Object` *function* where the signature promises a string, and
+ * `logout constructor` reported "✓ Signed out of undefined." instead of
+ * refusing an id nobody has ever registered. Neither map fails safe on its own,
+ * so every lookup goes through these two helpers, and a name that is not a key
+ * somebody wrote is treated as absent — the same way `frobnicate` is.
+ */
+function isBuiltIn(providerId: string): boolean {
+  return Object.hasOwn(providers, providerId)
+}
+
+function lookup(map: object, providerId: string): string | undefined {
+  return Object.hasOwn(map, providerId)
+    ? (map as Record<string, string | undefined>)[providerId]
+    : undefined
+}
+
+/**
  * Builds a provider from `--authorize-url`/`--token-url`, so the CLI works with
  * any OAuth 2.0 provider, not only the built-ins.
  *
@@ -66,7 +90,7 @@ function customProvider(providerId: string, args: ParsedArgs): ProviderConfig | 
     return undefined
   }
 
-  if (providerId in providers) {
+  if (isBuiltIn(providerId)) {
     throw new CliError(
       `"${providerId}" is a built-in provider — --authorize-url/--token-url would point it at ` +
         'different endpoints while it still uses the credentials stored under that id.',
@@ -148,10 +172,7 @@ async function recallProvider(
  * choice once, here, on the user's behalf. `--client-id` always wins.
  */
 function resolveClientId(providerId: string, args: ParsedArgs): string | undefined {
-  return (
-    flagString(args.flags, 'client-id') ??
-    (publicClientIds as Record<string, string | undefined>)[providerId]
-  )
+  return flagString(args.flags, 'client-id') ?? lookup(publicClientIds, providerId)
 }
 
 /**
@@ -169,14 +190,14 @@ async function clientFor(providerId: string, args: ParsedArgs): Promise<AuthClie
   const clientSecret =
     flagString(args.flags, 'client-secret') ??
     process.env['AI_OAUTH_SDK_CLIENT_SECRET'] ??
-    (publicClientSecrets as Record<string, string | undefined>)[providerId]
+    lookup(publicClientSecrets, providerId)
   const accountKey = flagString(args.flags, 'account')
   const authDir = flagString(args.flags, 'auth-dir')
   const scopes = flagString(args.flags, 'scopes')
 
   const custom =
     customProvider(providerId, args) ??
-    (providerId in providers ? undefined : await recallProvider(providerId, args))
+    (isBuiltIn(providerId) ? undefined : await recallProvider(providerId, args))
 
   try {
     return createNodeAuthClient({
@@ -258,7 +279,7 @@ export async function login({ args, json }: CommandContext): Promise<void> {
     warn(`${provider.label} support is experimental — endpoints may change.`)
   }
 
-  if (!(providerId in providers)) {
+  if (!isBuiltIn(providerId)) {
     await rememberProvider(provider, args)
   }
 
@@ -533,6 +554,19 @@ export async function list({ args, json }: CommandContext): Promise<void> {
  * A custom provider's descriptor is written at login so later commands can
  * resolve the id. Once the tokens are gone it is orphaned, so it goes too —
  * otherwise `logout` leaves the credential file dirtier than it found it.
+ *
+ * "Once the tokens are gone" is the condition, and it is asked of the store
+ * rather than of the flags. The guard used to stand in `--account` for it, on
+ * the reasoning that a named account means other accounts are still around.
+ * That is wrong in both directions. `client.logout()` only ever deletes its own
+ * account's record, so `logout acme` with no `--account` clears `tokens:acme`
+ * and leaves `tokens:acme:work` sitting there with a live refresh token, while
+ * deleting the one descriptor every account slot shares: the surviving session
+ * is then unreachable, since `token acme --account work` can no longer resolve
+ * the id, though `list` still shows it. And `logout acme --account work` on the
+ * last remaining session keeps the descriptor forever, because a flag was
+ * passed. Enumerating what actually survives — the same enumeration `list`
+ * reads — answers the question the comment above has always been asking.
  */
 export async function logout({ args, json }: CommandContext): Promise<void> {
   const providerId = requireProvider(args, 'logout')
@@ -545,8 +579,13 @@ export async function logout({ args, json }: CommandContext): Promise<void> {
 
   await client.logout(shouldRevoke ? { revoke: true } : {})
 
-  if (!(providerId in providers) && !flagString(args.flags, 'account')) {
-    await storageFor(args).delete(PROVIDER_KEY_PREFIX + providerId)
+  if (!isBuiltIn(providerId)) {
+    const storage = storageFor(args)
+    const remaining = await listStoredSessions(storage)
+
+    if (!remaining.some((session) => session.provider === providerId)) {
+      await storage.delete(PROVIDER_KEY_PREFIX + providerId)
+    }
   }
 
   if (json) {
@@ -587,7 +626,7 @@ function describeCredentials(id: string, provider: ProviderConfig): string {
     return 'none needed'
   }
 
-  if (id in publicClientIds) {
+  if (lookup(publicClientIds, id)) {
     return 'published id'
   }
 
