@@ -1,6 +1,7 @@
 ---
 '@ai-oauth-sdk/core': patch
 '@ai-oauth-sdk/node': patch
+'@ai-oauth-sdk/browser': patch
 '@ai-oauth-sdk/cli': patch
 '@ai-oauth-sdk/vue': patch
 ---
@@ -78,7 +79,10 @@ branch worked only for a bare `#code=…` string, which no caller produces. The
 asymmetry showed from outside: a fragment-borne `error=` parsed fine while a
 fragment-borne success did not, so a user who completed consent was told no code
 was returned. The fragment is now split first, and the query stays authoritative
-when it carries the response.
+when it carries the response. That also fixes a case with nothing to do with
+fragment mode: a provider appending an artifact like `#_=_` to the redirect had
+it glued onto `state`, which then failed to match the value that was issued and
+took the sign-in down as a `state_mismatch`.
 
 **`scopes_supported` was the one discovery field taken on trust.** A server
 answering with a string put a non-array into `provider.scopes`, and login failed
@@ -104,6 +108,45 @@ descriptor every account slot shares — so the surviving session became
 unreachable while `list` still listed it; and `logout acme --account work` on the
 last session kept the descriptor forever. The condition is now asked of the
 store.
+
+**An app's own `Cross-Origin-Opener-Policy` broke every popup sign-in, with no
+way to turn the cause off.** The popup close-poll is skipped only when the
+*provider* declares `authPage.seversOpener`, but a browsing-context-group swap
+can be caused by either end: a popup's initial `about:blank` inherits the
+opener's COOP, so an app serving its own pages `same-origin` — the standard
+hardening header, required for `crossOriginIsolated` — swaps the group as soon
+as the popup navigates to a provider that sends none. The handle is disowned,
+`popup.closed` reads `true` for a window that is very much alive, and the login
+rejects as `aborted` while the user is still on the login form.
+`same-origin-allow-popups` does not do this. A page cannot read its own COOP, so
+this cannot be detected from inside: `pollForClose` is now an option, and
+`loginWithPopup` — which forwarded `redirectUri` and nothing else, making every
+other receiver option unreachable from the entry point the quick-start and both
+READMEs teach — now forwards the rest.
+
+**Two popup sign-ins in flight at once consumed each other's callback.**
+`onMessage` did no `state` filtering, on the reasoning that a `postMessage`
+reaches the window that opened the popup and nowhere else. True, and not the
+same claim as "reaches one receiver": two attempts put two listeners on the same
+opener and the browser hands every message to both, so one settled with the
+other's callback and the client reported `state_mismatch — possible CSRF` for a
+double-clicked button. The receiver now applies the same predicate the
+BroadcastChannel path uses, and only while more than one is listening, so a lone
+receiver still forwards a mismatching `state` for the client to judge.
+
+**A `BroadcastChannel` acknowledgement was not tied to the announcement it
+acknowledged.** The receiver posted a bare `{ kind: 'received' }` and
+`announceCallback` accepted any ack at all — and a channel reaches every
+same-origin context, so one receiver's ack satisfied an unrelated announcement
+in another tab, which then reported a delivery that never happened and closed
+itself, instead of timing out and resolving `false`. Announcements now carry an
+id and acks echo it; an ack without one is still accepted, since the redirect
+page loads the SDK independently and may be an older copy.
+
+**An IPv6 loopback origin was misclassified.** `location.hostname` keeps the
+brackets, so the `'::1'` entry could never match and an app served at
+`http://[::1]:5173/` got the paste flow where `http://localhost:5173/` gets a
+popup.
 
 **The Vue binding handed back a deep readonly proxy instead of the token set.**
 `readonly()` proxies whatever `.value` returns, so `auth.tokens.value` was never
