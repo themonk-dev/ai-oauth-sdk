@@ -6,13 +6,18 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import { buildAuthorizationUrl } from '../src/authorize.js'
 import { createAuthClient } from '../src/client.js'
+import { OAuthError } from '../src/errors.js'
 import { createAuthenticatedFetch } from '../src/fetch.js'
 import { defineProvider } from '../src/providers/define.js'
+import { claude } from '../src/providers/claude.js'
+import { openai } from '../src/providers/openai.js'
+import { providerFromDiscovery, resolveProvider } from '../src/providers/index.js'
 import { startDeviceAuthorization } from '../src/receivers/device.js'
 import { AuthorizationRegistry } from '../src/registry.js'
 import { fromSyncStorage, memoryStorage, prefixedStorage } from '../src/storage.js'
-import type { CallbackReceiver, CallbackResult, TokenSet } from '../src/types.js'
+import type { CallbackReceiver, CallbackResult, FetchLike, TokenSet } from '../src/types.js'
 
 const tokenResponse = () =>
   new Response(
@@ -341,6 +346,175 @@ describe('the 401 retry never replays a drained body', () => {
 
     expect(response.status).toBe(200)
     expect(seen).toEqual(['{"prompt":"hi"}', '{"prompt":"hi"}'])
+  })
+})
+
+describe('discovery stores the endpoint it validated, not the one it read', () => {
+  const serving = (document: unknown): FetchLike => {
+    return async () =>
+      new Response(JSON.stringify(document), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+  }
+
+  const discover = (document: unknown, input: Record<string, unknown> = {}) =>
+    providerFromDiscovery(
+      'https://idp.acme.example',
+      {
+        id: 'acme',
+        label: 'Acme',
+        clientId: 'acme-client',
+        redirect: { mode: 'custom' },
+        ...input,
+      },
+      serving(document),
+    )
+
+  it('keeps CR/LF out of the authorization URL that reaches the browser', async () => {
+    // The premise: the URL parser strips CR, LF and TAB before parsing, so the
+    // https check passes on a string that is not the one being stored.
+    const hostile = 'https://evil.test/authorize\r\ncalc\r\n'
+    expect(new URL(hostile).protocol, 'the validator is happy with this').toBe('https:')
+    expect(new URL(hostile).href, 'but it did not read the same string').not.toBe(hostile)
+
+    const provider = await discover({
+      authorization_endpoint: hostile,
+      token_endpoint: 'https://acme.test/token',
+    })
+
+    expect(provider.authorizationUrl).toBe('https://evil.test/authorizecalc')
+
+    // Where it ends up: `appendQuery` copies everything before the first `?`
+    // verbatim, and on Windows that string becomes part of a cmd.exe command
+    // line, where a bare newline starts a second command.
+    const url = buildAuthorizationUrl({
+      provider,
+      clientId: 'acme-client',
+      redirectUri: 'myapp://auth/callback',
+      state: 'st-1',
+    })
+
+    expect(url).not.toMatch(/[\r\n\t]/)
+    expect(url.startsWith('https://evil.test/authorizecalc?')).toBe(true)
+  })
+
+  it('does the same for the token and device endpoints', async () => {
+    const provider = await discover({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/to\tken',
+      device_authorization_endpoint: 'https://acme.test/dev\r\nice',
+    })
+
+    expect(provider.tokenUrl).toBe('https://acme.test/token')
+    expect(provider.deviceAuthorizationUrl).toBe('https://acme.test/device')
+  })
+
+  it('leaves an endpoint the integrator passed exactly as they wrote it', async () => {
+    // Their own config, not a remote party's — so it is neither checked nor
+    // normalised, which is the line the `input.x == null` guards already drew.
+    // The document-sourced value beside it shows the normalisation happening.
+    const provider = await discover(
+      { authorization_endpoint: 'https://acme.test', token_endpoint: 'https://acme.test/token' },
+      { tokenUrl: 'http://internal-gateway.acme.test' },
+    )
+
+    expect(provider.tokenUrl).toBe('http://internal-gateway.acme.test')
+    expect(provider.authorizationUrl).toBe('https://acme.test/')
+  })
+
+  it('ignores a scopes_supported that is not an array of strings', async () => {
+    // A string here used to reach `provider.scopes` intact and die much later
+    // as `scopes.join is not a function`; an object silently omitted `scope=`.
+    for (const scopesSupported of ['openid email', {}, [1, 2], 42, true]) {
+      const provider = await discover({
+        authorization_endpoint: 'https://acme.test/authorize',
+        token_endpoint: 'https://acme.test/token',
+        scopes_supported: scopesSupported,
+      })
+
+      expect(provider.scopes).toEqual(['openid'])
+      expect(() =>
+        buildAuthorizationUrl({
+          provider,
+          clientId: 'acme-client',
+          redirectUri: 'myapp://auth/callback',
+          state: 'st-1',
+        }),
+      ).not.toThrow()
+    }
+  })
+
+  it('still takes the scope list a well-formed document advertises', async () => {
+    // The policy is unchanged: only the type of the value was ever in question.
+    const provider = await discover({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      scopes_supported: ['openid', 'email'],
+    })
+
+    expect(provider.scopes).toEqual(['openid', 'email'])
+  })
+})
+
+describe('resolveProvider treats an absent override as no opinion', () => {
+  it('keeps the built-in scopes when the caller passes undefined', () => {
+    // The shape the docs teach, with an optional config key left unset:
+    // `resolveProvider('claude', { scopes: config.scopes })`.
+    const config: { scopes?: string[]; tokenUrl?: string } = {}
+    const resolved = resolveProvider('claude', {
+      scopes: config.scopes,
+      tokenUrl: config.tokenUrl,
+    })
+
+    expect(resolved.scopes).toEqual(claude.scopes)
+    expect(resolved.tokenUrl).toBe(claude.tokenUrl)
+    // The failure this produced was a TypeError from `scopes.join`, one call
+    // later and with nothing pointing back to here.
+    expect(() =>
+      buildAuthorizationUrl({
+        provider: resolved,
+        clientId: 'c',
+        redirectUri: 'myapp://auth/callback',
+        state: 'st-1',
+      }),
+    ).not.toThrow()
+  })
+
+  it('applies the same rule inside redirect, extraAuthParams and tokenRequest', () => {
+    const resolved = resolveProvider('openai', {
+      redirect: { mode: 'loopback', loopbackPort: undefined },
+      extraAuthParams: { codex_cli_simplified_flow: undefined as unknown as string },
+      tokenRequest: { style: 'form', includeClientIdInBody: undefined },
+    })
+
+    expect(resolved.redirect.loopbackPort).toBe(openai.redirect.loopbackPort)
+    expect(resolved.extraAuthParams?.['codex_cli_simplified_flow']).toBe('true')
+    expect(resolved.tokenRequest.includeClientIdInBody).toBe(true)
+  })
+
+  it('still lets a real value override', () => {
+    const resolved = resolveProvider('claude', { scopes: ['mine'], tokenUrl: 'https://x.test/t' })
+
+    expect(resolved.scopes).toEqual(['mine'])
+    expect(resolved.tokenUrl).toBe('https://x.test/t')
+    // An empty array is a value, not an absence: some providers want no scopes.
+    expect(resolveProvider('claude', { scopes: [] }).scopes).toEqual([])
+  })
+})
+
+describe('resolveProvider refuses a name it inherited rather than declared', () => {
+  it('treats prototype keys exactly like any other unknown provider', () => {
+    // A provider id arrives from config files, CLI flags and URL segments, so
+    // it is not necessarily a name this library chose. A bare index read on the
+    // registry walks `Object.prototype`, and every one of these came back
+    // truthy — yielding a descriptor with `id: undefined`.
+    for (const name of ['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty']) {
+      expect(() => resolveProvider(name), name).toThrowError(OAuthError)
+      expect(() => resolveProvider(name), name).toThrowError(/Unknown provider/)
+    }
+
+    expect(() => resolveProvider('nope')).toThrowError(/Unknown provider/)
   })
 })
 

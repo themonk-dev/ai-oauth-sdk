@@ -176,8 +176,23 @@ export const openai = defineProvider({
   apiQuery(): Record<string, string> {
     return { client_version: codexClientVersion }
   },
+  /**
+   * Only `/responses` gets rewritten, and the route is read by trimming the
+   * query and fragment off the string rather than by parsing it.
+   *
+   * `new URL(url, …).pathname` was the obvious way to write this and cannot be
+   * used: React Native's URL shim throws from `pathname`, and this runs on
+   * *every* string-bodied request to the descriptor — so the throw landed on
+   * requests that were never going to be transformed at all, including the
+   * `/models` call, and it landed before the check that would have returned the
+   * body untouched. `url` arrives here already resolved against the base URL
+   * and already carrying `client_version`, so what is left after the `?` and
+   * `#` is exactly the path `pathname` would have reported.
+   */
   transformRequestBody(url, body) {
-    if (!new URL(url, 'http://relative.invalid').pathname.endsWith('/responses')) {
+    const path = (url.split('#')[0] ?? '').split('?')[0] ?? ''
+
+    if (!path.endsWith('/responses')) {
       return body
     }
 

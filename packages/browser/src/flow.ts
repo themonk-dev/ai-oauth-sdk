@@ -56,7 +56,22 @@ export type BrowserFlowResolution =
       hint: PasteHint
     }
 
-const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1'])
+/**
+ * The hostnames that mean "this machine", spelled the way a `Location` spells
+ * them.
+ *
+ * IPv6 is bracketed here, and that is not cosmetic. `location.hostname` keeps
+ * the brackets an IPv6 host is written with — `new URL('http://[::1]:5173/')
+ * .hostname` is `'[::1]'`, not `'::1'` — so a bare `'::1'` entry matches no
+ * real origin and an app served from `http://[::1]:5173/` falls all the way
+ * through to `paste` while the same app on `http://localhost:5173/` gets a
+ * popup. The bare form is also worse than dead if anything ever did reach it:
+ * `originRoot` concatenates the hostname without adding brackets back, so it
+ * would build `http://::1:5173/`, which `new URL()` refuses outright. Only the
+ * bracketed spelling is correct, which is the spelling
+ * `providers/index.ts` already uses for the same job.
+ */
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 function isLoopbackOrigin(origin: BrowserOrigin): boolean {
   return LOOPBACK_HOSTNAMES.has(origin.hostname)

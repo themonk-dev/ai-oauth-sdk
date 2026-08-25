@@ -77,6 +77,33 @@ describe('help and version', () => {
     expect(err()).toContain('Unknown command')
   })
 
+  // The handler table is a plain object literal, so a bare `HANDLERS[command]`
+  // read reached `Object.prototype`. `constructor` and `toString` are truthy
+  // *and* callable, so the unknown-command branch was skipped, the inherited
+  // member was invoked as a handler, and `run` returned 0 having printed
+  // nothing at all — neither the error nor the help text. `valueOf` and
+  // `__proto__` did exit 1, but on an internal JS error ("Cannot convert
+  // undefined or null to object", "handler is not a function") rather than the
+  // message a user can act on. `frobnicate` rides along as the control: every
+  // one of these is a name that is not a command, so every one gets the same
+  // answer.
+  it.each([['frobnicate'], ['constructor'], ['toString'], ['valueOf'], ['__proto__']])(
+    'rejects %s the same way, rather than reaching Object.prototype',
+    async (command) => {
+      expect(await run([command])).toBe(1)
+      expect(err()).toContain(`Unknown command "${command}"`)
+      expect(err()).toContain('ai-oauth-sdk help')
+      expect(out()).toBe('')
+    },
+  )
+
+  // `--json` routes machine-readable output to stdout, so an inherited member
+  // being called as a handler could also corrupt a pipeline, not just exit 0.
+  it('rejects an inherited name with --json too', async () => {
+    expect(await run(['constructor', '--json'])).toBe(1)
+    expect(out()).toBe('')
+  })
+
   it('rejects an unknown option given without a command', async () => {
     expect(await run(['--nope'])).toBe(1)
     expect(err()).toContain('Unknown option')
@@ -306,6 +333,19 @@ describe('logout', () => {
   it('is safe to run when not signed in', async () => {
     expect(await run(['logout', 'openai', '--auth-dir', dir])).toBe(0)
   })
+
+  // The provider maps are plain object literals too, so an inherited name used
+  // to resolve to something truthy the whole way through: `logout constructor`
+  // reported "✓ Signed out of undefined." and exited 0, a success report for a
+  // provider that has never existed.
+  it.each([['constructor'], ['toString'], ['valueOf']])(
+    'refuses to report success for %s',
+    async (providerId) => {
+      expect(await run(['logout', providerId, '--auth-dir', dir])).toBe(1)
+      expect(err()).not.toContain('Signed out')
+      expect(err()).not.toContain('undefined')
+    },
+  )
 })
 
 describe('exec', () => {

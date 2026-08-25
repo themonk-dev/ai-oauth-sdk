@@ -173,6 +173,98 @@ describe('an authenticated fetch against the Codex surface', () => {
   })
 })
 
+describe('the OpenAI path on a runtime whose URL is only half implemented', () => {
+  /**
+   * React Native's built-in URL shim in the shape the repo already documents:
+   * the constructor and `toString` work, `searchParams` and `pathname` throw.
+   * `query.test.ts` deletes the globals outright, which is a stricter
+   * environment but a different one — the failure here came from a URL that
+   * exists and answers `new URL(...)` happily, so it has to be present.
+   *
+   * OpenAI is the descriptor that makes this reachable: `apiQuery` returns
+   * `client_version` on every request, which is what stopped `applyQuery` early
+   * returning, and `transformRequestBody` read `pathname` on every string body
+   * before deciding whether it even wanted to rewrite it.
+   */
+  async function withReactNativeUrl<T>(body: () => Promise<T>): Promise<T> {
+    const RealUrl = globalThis.URL
+
+    class ShimUrl {
+      private readonly href: string
+
+      constructor(url: string, base?: string) {
+        this.href = new RealUrl(url, base).href
+      }
+
+      get searchParams(): never {
+        throw new Error('URL.searchParams is not implemented')
+      }
+
+      get pathname(): never {
+        throw new Error('URL.pathname is not implemented')
+      }
+
+      toString(): string {
+        return this.href
+      }
+    }
+
+    globalThis.URL = ShimUrl as unknown as typeof URL
+
+    try {
+      return await body()
+    } finally {
+      globalThis.URL = RealUrl
+    }
+  }
+
+  it('sends a GET, provider query parameter and all', async () => {
+    const client = await signedInClient()
+    const { calls, fetchImpl } = recordingFetch()
+    const api = createAuthenticatedFetch(client, { fetch: fetchImpl })
+
+    await withReactNativeUrl(() => api('/models'))
+
+    expect(calls[0]?.url).toBe(`${codexBaseUrl}/models?client_version=${codexClientVersion}`)
+  })
+
+  it('sends a string-bodied POST, and still normalizes it', async () => {
+    const client = await signedInClient()
+    const { calls, fetchImpl } = recordingFetch()
+    const api = createAuthenticatedFetch(client, { fetch: fetchImpl })
+
+    await withReactNativeUrl(() =>
+      api('/responses', { method: 'POST', body: JSON.stringify({ model: 'gpt-5.5' }) }),
+    )
+
+    const call = calls[0]!
+    expect(call.url).toBe(`${codexBaseUrl}/responses?client_version=${codexClientVersion}`)
+    expect((JSON.parse(call.body ?? '{}') as Record<string, unknown>)['store']).toBe(false)
+  })
+
+  it('leaves a body on another route alone, without reading pathname to find out', async () => {
+    const client = await signedInClient()
+    const { calls, fetchImpl } = recordingFetch()
+    const api = createAuthenticatedFetch(client, { fetch: fetchImpl })
+
+    await withReactNativeUrl(() =>
+      api('/models', { method: 'POST', body: JSON.stringify({ a: 1 }) }),
+    )
+
+    expect(JSON.parse(calls[0]?.body ?? '{}')).toEqual({ a: 1 })
+  })
+
+  it('keeps the caller query parameter winning, the same as elsewhere', async () => {
+    const client = await signedInClient()
+    const { calls, fetchImpl } = recordingFetch()
+    const api = createAuthenticatedFetch(client, { fetch: fetchImpl })
+
+    await withReactNativeUrl(() => api('/models?client_version=9.9.9&other=1'))
+
+    expect(calls[0]?.url).toBe(`${codexBaseUrl}/models?client_version=9.9.9&other=1`)
+  })
+})
+
 describe('extractCodexModelSlugs', () => {
   it('reads the shapes the endpoint has used', () => {
     expect(extractCodexModelSlugs(['gpt-5.5'])).toEqual(['gpt-5.5'])
