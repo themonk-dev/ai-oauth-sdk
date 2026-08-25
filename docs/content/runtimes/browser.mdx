@@ -61,10 +61,15 @@ giving up. Pass `timeoutMs` when you sign in with one.
 | `height` | `number` | Popup height. |
 | `windowName` | `string` | Popup window name. |
 | `pollIntervalMs` | `number` | How often to check whether the user closed the popup. Defaults to `400`. |
+| `pollForClose` | `boolean` | Whether to poll for a closed popup at all. Defaults to `true`. |
 
 The popup is polled because a closed window is the only signal the browser gives that the user gave
 up on the flow. The poll is skipped for a provider that severs the opener, where the handle reports
 a window still on screen as closed and polling it would fail a working sign-in.
+
+If you serve your own pages with `Cross-Origin-Opener-Policy: same-origin`, the same severed handle
+happens against *every* provider and every popup sign-in fails as `aborted` — prefer
+`same-origin-allow-popups`, which keeps the opener, or pass `pollForClose: false`.
 
 ## Full-page redirect
 
