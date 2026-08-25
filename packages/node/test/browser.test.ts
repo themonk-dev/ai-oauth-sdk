@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { canOpenBrowser, escapeForCmd, openBrowser } from '../src/browser.js'
+import { canOpenBrowser, escapeForCmd, isLaunchableUrl, openBrowser } from '../src/browser.js'
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
@@ -54,6 +54,54 @@ describe('escapeForCmd', () => {
 })
 
 /**
+ * `escapeForCmd` cannot neutralise a newline — `^` before one is cmd's line
+ * continuation, not an escape — so a URL carrying one has to be refused
+ * outright rather than escaped. The route in is a discovery document: the
+ * WHATWG parser strips CR, LF and tab before parsing, so an https check built
+ * on `new URL()` validates a *different string* from the one that is stored
+ * and later handed to the launcher.
+ */
+describe('isLaunchableUrl', () => {
+  it('refuses the CR/LF a discovery document can smuggle past an https check', () => {
+    const smuggled = 'https://evil.test/a\r\ncalc\r\n'
+
+    // The check that approved it reads a string with the controls removed.
+    expect(new URL(smuggled).protocol).toBe('https:')
+    expect(new URL(smuggled).href).toBe('https://evil.test/acalc')
+
+    expect(isLaunchableUrl(smuggled)).toBe(false)
+  })
+
+  it('refuses the rest of the C0 block, and DEL', () => {
+    // Built rather than written literally, so the test file itself stays
+    // free of the control characters it is about.
+    const withCode = (code: number) => `https://p.test/a${String.fromCharCode(code)}b`
+
+    expect(isLaunchableUrl(withCode(0x00))).toBe(false)
+    expect(isLaunchableUrl(withCode(0x09))).toBe(false)
+    expect(isLaunchableUrl(withCode(0x1b))).toBe(false)
+    expect(isLaunchableUrl(withCode(0x1f))).toBe(false)
+    expect(isLaunchableUrl(withCode(0x7f))).toBe(false)
+  })
+
+  it('refuses a raw double quote, which would corrupt the escaping', () => {
+    // The child-process layer quotes any argument containing one, and `^` is
+    // inert inside a cmd quoted region — so every `^&` inserted above would
+    // reach the browser as literal text.
+    expect(isLaunchableUrl('https://p.test/a"b')).toBe(false)
+  })
+
+  it('leaves a real authorization URL alone', () => {
+    expect(
+      isLaunchableUrl(
+        'https://provider.test/authorize?response_type=code&client_id=abc&state=xyz' +
+          '&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fcallback&scope=a+b',
+      ),
+    ).toBe(true)
+  })
+})
+
+/**
  * The suite sets `AI_OAUTH_SDK_NO_BROWSER`, so these restore whatever was there
  * rather than assuming it was unset.
  */
@@ -92,6 +140,16 @@ describe('AI_OAUTH_SDK_NO_BROWSER', () => {
     openBrowser('https://provider.test/authorize')
 
     expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('spawns nothing for a URL carrying a control character', () => {
+    delete process.env['AI_OAUTH_SDK_NO_BROWSER']
+
+    openBrowser('https://evil.test/a\r\ncalc\r\n?response_type=code&client_id=abc')
+
+    // Nothing is launched at all, on any platform — the caller has already
+    // printed the URL, so the user is not left with nothing.
+    expect(spawn).not.toHaveBeenCalled()
   })
 
   it('leaves the platform check alone when unset', () => {
