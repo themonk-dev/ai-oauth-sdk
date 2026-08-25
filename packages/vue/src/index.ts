@@ -1,4 +1,13 @@
-import { computed, onScopeDispose, readonly, ref, shallowRef, type ComputedRef, type Ref } from 'vue'
+import {
+  computed,
+  onScopeDispose,
+  readonly,
+  ref,
+  shallowReadonly,
+  shallowRef,
+  type ComputedRef,
+  type Ref,
+} from 'vue'
 
 import {
   createAuthClient,
@@ -43,6 +52,8 @@ export interface UseAuthResult {
  *
  * `shallowRef` is enough for the token: a `TokenSet` is replaced wholesale and
  * never mutated in place, so deep reactivity would only cost proxy overhead.
+ * The token is exposed with `shallowReadonly` for the same reason — see the
+ * note at the return statement.
  */
 export function useAuth(options: UseAuthOptions): UseAuthResult {
   const { receiver, restoreOnMount = true, onSuccess, onError, ...clientOptions } = options
@@ -77,7 +88,18 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
 
   return {
     client: store.client,
-    tokens: readonly(tokens) as Readonly<Ref<TokenSet | undefined>>,
+    // `shallowReadonly`, not `readonly`: the deep variant proxies whatever
+    // `.value` returns, so `tokens.value` would never be the `TokenSet` the
+    // store holds. It would not survive `structuredClone` — a `postMessage` to
+    // a worker throws `DataCloneError` on a Proxy — and it would compare
+    // unequal to the same token read back from `client.getTokens()`. The
+    // shallow variant keeps `.value` write-protected while leaving the object
+    // itself alone, which is what `shallowRef` above already assumes.
+    //
+    // The trade-off is that a write *into* the returned object now lands
+    // rather than being swallowed with a dev warning. That is consistent with
+    // the store, which replaces a `TokenSet` wholesale rather than mutating it.
+    tokens: shallowReadonly(tokens),
     isAuthenticated: computed(() => tokens.value !== undefined),
     isLoading: readonly(isLoading),
     error: readonly(error) as Readonly<Ref<Error | undefined>>,
