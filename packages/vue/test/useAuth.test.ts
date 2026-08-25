@@ -8,6 +8,7 @@ const token: TokenSet = {
   accessToken: 'at-1',
   refreshToken: 'rt-1',
   tokenType: 'Bearer',
+  provider: providers.claude.id,
   raw: { access_token: 'at-1', refresh_token: 'rt-1', token_type: 'Bearer' },
 }
 

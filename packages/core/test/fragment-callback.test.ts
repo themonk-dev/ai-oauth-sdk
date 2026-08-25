@@ -86,4 +86,16 @@ describe('parseStandardCallback, query response mode', () => {
   it('returns nothing useful for a URL carrying no response', () => {
     expect(parseStandardCallback('https://app.example/cb')).toEqual({})
   })
+
+  it('does not glue a trailing fragment artifact onto the state', () => {
+    // Providers really do append one — `#_=_` is the well-travelled example —
+    // and the old parser ran `parseQuery` over the fragment as though it were
+    // part of the query string, so `state` came back as `mine#_=_`. That does
+    // not equal the `mine` we issued, so the client rejected its own callback
+    // as a `state_mismatch` and the sign-in failed.
+    expect(parseStandardCallback('https://app.example/cb?code=abc&state=mine#_=_')).toEqual({
+      code: 'abc',
+      state: 'mine',
+    })
+  })
 })
