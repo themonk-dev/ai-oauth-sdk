@@ -76,6 +76,36 @@ export function isProviderConfig(value: unknown): value is ProviderConfig {
 }
 
 /**
+ * Drops keys that are present but hold `undefined`.
+ *
+ * An object spread copies a key that exists with value `undefined` just as
+ * eagerly as one holding a real value, so `{ ...base, ...overrides }` lets
+ * `{ scopes: undefined }` erase what `base` had. That shape is not exotic —
+ * `resolveProvider('claude', { scopes: config.scopes })` produces it whenever
+ * the config file leaves `scopes` unset, and every optional field read out of
+ * parsed JSON or a CLI flag behaves the same way. An absent value means "I have
+ * no opinion", which is what the built-in is for; only a real value is an
+ * override.
+ *
+ * Declared as returning `T` rather than the `Partial<T>` it literally produces.
+ * Every call here spreads the result over a complete base of the same shape, so
+ * the keys it drops are supplied by that base; saying `Partial<T>` instead only
+ * pushes `string | undefined` into `extraAuthParams`, whose values cannot be
+ * undefined for the very reason that this function just removed them.
+ */
+function definedOnly<T extends object>(source: T | undefined): T {
+  const result: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(source ?? {})) {
+    if (value !== undefined) {
+      result[key] = value
+    }
+  }
+
+  return result as T
+}
+
+/**
  * Resolves a provider id or inline config into a full descriptor, applying any
  * per-call overrides (`clientId`, `scopes`, custom endpoints).
  */
@@ -88,7 +118,19 @@ export function resolveProvider(
   if (isProviderConfig(provider)) {
     base = provider
   } else {
-    const found = (providers as Record<string, ProviderConfig | undefined>)[provider]
+    // `Object.hasOwn` rather than a bare index read, because `providers` is a
+    // plain object literal and a bare read walks its prototype. Without this,
+    // `resolveProvider('constructor')` — or `'toString'`, `'valueOf'`,
+    // `'__proto__'` — finds something inherited from `Object.prototype`, which
+    // is truthy, so the `unknown_provider` throw below is skipped and the
+    // caller is handed a descriptor with `id: undefined` and
+    // `authorizationUrl: undefined` instead. An id is a string that reaches
+    // here from config files, CLI flags and URL segments, so it is not
+    // necessarily one this library chose; every name that is not a built-in
+    // must fail the same way `'nope'` does.
+    const found = Object.hasOwn(providers, provider)
+      ? (providers as Record<string, ProviderConfig | undefined>)[provider]
+      : undefined
 
     if (!found) {
       throw new OAuthError(
@@ -101,26 +143,40 @@ export function resolveProvider(
     base = found
   }
 
-  const merged: ProviderConfig = {
+  // Every level of the merge is filtered, not just the top one: a
+  // `{ redirect: { mode: 'loopback', loopbackPort: config.port } }` override
+  // with `config.port` unset would otherwise delete the built-in's port the
+  // same way.
+  //
+  // The `if (overrides.scopes?.length) merged.scopes = overrides.scopes` that
+  // used to follow this merge is gone rather than kept: the spread had already
+  // overwritten `scopes` by the time it ran, so it could never restore
+  // anything. What it was reaching for is what `definedOnly` now does for every
+  // key rather than for that one.
+  return {
     ...base,
-    ...overrides,
-    redirect: { ...base.redirect, ...overrides.redirect },
-    extraAuthParams: { ...base.extraAuthParams, ...overrides.extraAuthParams },
-    tokenRequest: { ...base.tokenRequest, ...overrides.tokenRequest },
+    ...definedOnly(overrides),
+    redirect: { ...base.redirect, ...definedOnly(overrides.redirect) },
+    extraAuthParams: { ...base.extraAuthParams, ...definedOnly(overrides.extraAuthParams) },
+    tokenRequest: { ...base.tokenRequest, ...definedOnly(overrides.tokenRequest) },
   }
-
-  if (overrides.scopes?.length) {
-    merged.scopes = overrides.scopes
-  }
-
-  return merged
 }
 
 interface DiscoveryDocument {
   authorization_endpoint?: string
   token_endpoint?: string
   device_authorization_endpoint?: string
-  scopes_supported?: string[]
+  /**
+   * Typed as `unknown` on purpose. The other three are checked before use, and
+   * this one is remote JSON just the same — declaring it `string[]` would be a
+   * promise this module cannot keep, and the `isStringArray` guard below would
+   * read as redundant when it is the only thing making the type true.
+   */
+  scopes_supported?: unknown
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 }
 
 /**
@@ -191,8 +247,28 @@ function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' 
  * The message names the field and the offending value, because the failure
  * surfaces at client construction time far from whoever runs the discovery
  * endpoint.
+ *
+ * What comes back is the *parsed* URL, not the string that was handed in, and
+ * the caller stores that. It looks like pointless churn — the two are equal for
+ * every well-formed endpoint — but they are not equal in the case that matters.
+ * The WHATWG parser strips CR, LF and TAB from its input before parsing, so
+ * `new URL("https://evil.test/a\r\ncalc\r\n")` reports `protocol: "https:"` and
+ * an `href` of `"https://evil.test/acalc"`: the check above passes on a string
+ * that is not the one the raw value would produce. Keeping the raw value would
+ * mean validating one string and using another — and the one being used flows
+ * into `buildAuthorizationUrl`, which copies everything before the first `?`
+ * verbatim, and from there onto a `cmd.exe` command line on Windows, where a
+ * bare newline separates commands. Returning the parsed form makes "what was
+ * checked" and "what is used" the same bytes, which is the only property that
+ * actually holds the guarantee up.
+ *
+ * The cost is that legitimate endpoints are normalised on the way through — a
+ * bare origin gains its trailing `/`, an uppercase host is lowercased, a
+ * default port is dropped. That is the URL every HTTP client would have
+ * resolved the value to anyway, so it changes no request that was going to
+ * work.
  */
-function assertSecureDiscoveredEndpoint(field: string, value: string, source: string): void {
+function checkedDiscoveredEndpoint(field: string, value: string, source: string): string {
   const verdict = classifyDiscoveryUrl(value)
 
   if (verdict === 'unparseable') {
@@ -209,6 +285,8 @@ function assertSecureDiscoveredEndpoint(field: string, value: string, source: st
         'Endpoints taken from a discovery document must use https, except on loopback.',
     )
   }
+
+  return new URL(value).href
 }
 
 /**
@@ -353,8 +431,8 @@ export async function providerFromDiscovery(
   }
 
   const document = (await response.json()) as DiscoveryDocument
-  const authorizationUrl = input.authorizationUrl ?? document.authorization_endpoint
-  const tokenUrl = input.tokenUrl ?? document.token_endpoint
+  let authorizationUrl = input.authorizationUrl ?? document.authorization_endpoint
+  let tokenUrl = input.tokenUrl ?? document.token_endpoint
 
   if (!authorizationUrl || !tokenUrl) {
     throw new OAuthError(
@@ -366,7 +444,10 @@ export async function providerFromDiscovery(
   // Guarded on `input.*` being absent rather than on the resolved value: an
   // explicitly passed `authorizationUrl`/`tokenUrl` is the integrator's own
   // config and is left alone, exactly as `defineProvider` would leave it. Only
-  // the branch where the `??` fell through to the document is validated.
+  // the branch where the `??` fell through to the document is validated — and,
+  // for the same reason, only that branch is replaced with its parsed form.
+  // Normalising a value the integrator typed would be rewriting their config
+  // behind their back; the document's value was never theirs to begin with.
   //
   // `== null` rather than `=== undefined`, to match what `??` above actually
   // does. A JS caller — or a JSON config file with an unset optional key —
@@ -374,30 +455,44 @@ export async function providerFromDiscovery(
   // does. Testing only for `undefined` would let that document value through
   // unchecked, which is the whole case this guard exists for.
   if (input.authorizationUrl == null) {
-    assertSecureDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url)
+    authorizationUrl = checkedDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url)
   }
 
   if (input.tokenUrl == null) {
-    assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url)
+    tokenUrl = checkedDiscoveredEndpoint('token_endpoint', tokenUrl, url)
   }
 
   // The document's device endpoint always wins over `input.deviceAuthorizationUrl`
   // below, so it is always document-sourced when present.
-  if (document.device_authorization_endpoint) {
-    assertSecureDiscoveredEndpoint(
-      'device_authorization_endpoint',
-      document.device_authorization_endpoint,
-      url,
-    )
-  }
+  const deviceAuthorizationUrl = document.device_authorization_endpoint
+    ? checkedDiscoveredEndpoint(
+        'device_authorization_endpoint',
+        document.device_authorization_endpoint,
+        url,
+      )
+    : undefined
+
+  // `scopes_supported` is the one lifted field with no shape check, and a
+  // wrongly-typed one does not surface here: a string sails through and dies
+  // much later as `scopes.join is not a function` inside
+  // `buildAuthorizationUrl`, and an object is quietly treated as empty because
+  // `{}.length` is undefined, so the request goes out with no `scope=` at all.
+  // Neither reads as "the document was wrong". Falling back to the default is
+  // the same thing this line already does for a document that lists no scopes,
+  // and it keeps a mistyped field from being the reason a login breaks.
+  //
+  // Deliberately *not* a rejection of the value the server advertises: taking
+  // `scopes_supported` when the integrator names none is the documented design
+  // (`docs/content/providers/custom.mdx`), and only its type is in question.
+  const advertisedScopes = isStringArray(document.scopes_supported)
+    ? document.scopes_supported
+    : undefined
 
   return defineProvider({
     ...input,
     authorizationUrl,
     tokenUrl,
-    scopes: input.scopes ?? document.scopes_supported ?? ['openid'],
-    ...(document.device_authorization_endpoint
-      ? { deviceAuthorizationUrl: document.device_authorization_endpoint }
-      : {}),
+    scopes: input.scopes ?? advertisedScopes ?? ['openid'],
+    ...(deviceAuthorizationUrl ? { deviceAuthorizationUrl } : {}),
   })
 }
