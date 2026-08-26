@@ -36,17 +36,44 @@ export function base64UrlEncode(bytes: Uint8Array): string {
   return out
 }
 
-/** Built once, not per call — decoding runs on every JWT we read. */
-const BASE64_LOOKUP = new Map<string, number>(
-  Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', (char, i) => [
-    char,
-    i,
-  ]),
-)
+/**
+ * Built once, not per call — decoding runs on every JWT we read.
+ *
+ * `-` and `_` are folded in alongside `+` and `/` so the base64url alphabet
+ * decodes directly. Translating them with a pair of `String.replace` passes
+ * first was equivalent, but it meant three full rewrites of every id_token
+ * before a single byte came out.
+ */
+const BASE64_LOOKUP = new Map<string, number>([
+  ...Array.from(
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',
+    (char, i): [string, number] => [char, i],
+  ),
+  ['-', 62],
+  ['_', 63],
+])
+
+const PADDING_CHAR_CODE = '='.charCodeAt(0)
 
 /** Decodes base64url *or* standard base64, with or without padding. */
 export function base64UrlDecode(input: string): Uint8Array {
-  const normalized = input.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '')
+  /* Trailing '=' is trimmed by scanning rather than with /=+$/. That pattern
+     backtracks quadratically on a long run of '=' followed by any other
+     character — the engine retries the greedy run from each successive start
+     position, and none of them can reach the end of the string. It is not a
+     theoretical input: this function decodes an `id_token` handed to us
+     verbatim by a token endpoint, with no length bound anywhere on the path,
+     and both it and `decodeJwtPayload` are public exports. A 100KB body of
+     that shape blocked the event loop for seconds, growing fourfold with each
+     doubling; the scan below is linear and allocates nothing when there is no
+     padding to strip. */
+  let end = input.length
+
+  while (end > 0 && input.charCodeAt(end - 1) === PADDING_CHAR_CODE) {
+    end--
+  }
+
+  const normalized = end === input.length ? input : input.slice(0, end)
   const lookup = BASE64_LOOKUP
 
   const byteLength = Math.floor((normalized.length * 6) / 8)

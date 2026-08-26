@@ -368,3 +368,159 @@ describe('authorizationHeader reflects the post-refresh token', () => {
     expect(await client.authorizationHeader()).toBe('DPoP FRESH')
   })
 })
+
+/*
+ * `login()`'s `finally` only closed the receiver, `AuthStore.cancel()` only
+ * aborts, and `logout()` deleted only the `tokens:` key — so a login the user
+ * walked away from left its `pending:` record (PKCE verifier and redirect URI)
+ * and the `pending-latest:` pointer to it sitting in storage for the rest of
+ * the TTL, ten minutes by default.
+ *
+ * Sign-out hygiene above all: material for a flow the user abandoned should not
+ * outlive the abandoning. On a provider that never echoes `state` it is also
+ * the pointer a later state-less callback resolves against, which is the last
+ * test here.
+ */
+describe('an abandoned or signed-out login leaves nothing pending', () => {
+  const pendingKeys = (store: Map<string, string>) =>
+    [...store.keys()].filter((key) => key.startsWith('pending'))
+
+  /** A receiver that never hears anything back. */
+  const silentReceiver = (onPresent?: () => void): CallbackReceiver => ({
+    id: 'silent',
+    async start() {
+      return {
+        redirectUri: 'http://127.0.0.1:9999/cb',
+        async present() {
+          onPresent?.()
+        },
+        wait: () => new Promise<CallbackResult>(() => {}),
+        async close() {},
+      }
+    },
+  })
+
+  it('clears the record when the login is aborted', async () => {
+    const store = new Map<string, string>()
+    const controller = new AbortController()
+    const client = createAuthClient({
+      provider,
+      storage: memoryStorage(store),
+      fetch: async () => tokenResponse(),
+    })
+
+    await expect(
+      client.login({
+        receiver: silentReceiver(() => controller.abort()),
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ code: 'aborted' })
+
+    expect(pendingKeys(store)).toEqual([])
+  })
+
+  it('clears the record when the login times out', async () => {
+    const store = new Map<string, string>()
+    const client = createAuthClient({
+      provider,
+      storage: memoryStorage(store),
+      fetch: async () => tokenResponse(),
+    })
+
+    await expect(
+      client.login({ receiver: silentReceiver(), timeoutMs: 10 }),
+    ).rejects.toMatchObject({ code: 'timeout' })
+
+    expect(pendingKeys(store)).toEqual([])
+  })
+
+  it('clears the record when the callback is refused as forged', async () => {
+    const store = new Map<string, string>()
+    const client = createAuthClient({
+      provider,
+      storage: memoryStorage(store),
+      fetch: async () => tokenResponse(),
+    })
+
+    await expect(
+      client.login({ receiver: fixedReceiver({ code: 'INJECTED', state: 'not-ours' }) }),
+    ).rejects.toMatchObject({ code: 'state_mismatch' })
+
+    expect(pendingKeys(store)).toEqual([])
+  })
+
+  it('leaves a successful login exactly as it was', async () => {
+    const store = new Map<string, string>()
+    const client = createAuthClient({
+      provider,
+      storage: memoryStorage(store),
+      fetch: async () => tokenResponse(),
+    })
+
+    let issued: string | undefined
+    const receiver: CallbackReceiver = {
+      id: 'echo',
+      async start() {
+        return {
+          redirectUri: 'http://127.0.0.1:9999/cb',
+          async present(url) {
+            issued = new URL(url).searchParams.get('state') ?? undefined
+          },
+          async wait() {
+            return { code: 'good', state: issued! }
+          },
+          async close() {},
+        }
+      },
+    }
+
+    await expect(client.login({ receiver })).resolves.toMatchObject({ accessToken: 'AT' })
+    /* Consumed by the exchange, not by the cleanup — which must be a no-op here. */
+    expect(pendingKeys(store)).toEqual([])
+    expect(await client.getTokens()).toMatchObject({ accessToken: 'AT' })
+  })
+
+  it('drops a half-finished login on logout', async () => {
+    const store = new Map<string, string>()
+    const client = createAuthClient({
+      provider,
+      storage: memoryStorage(store),
+      fetch: async () => tokenResponse(),
+    })
+
+    await client.setTokens({
+      accessToken: 'AT',
+      refreshToken: 'RT',
+      tokenType: 'Bearer',
+      provider: 'demo',
+      raw: {},
+    })
+    await client.createAuthorization({ redirectUri: 'http://127.0.0.1:9999/cb' })
+    expect(pendingKeys(store).length).toBeGreaterThan(0)
+
+    await client.logout()
+
+    expect(pendingKeys(store)).toEqual([])
+    expect(await client.getTokens()).toBeUndefined()
+  })
+
+  it('leaves a stateless provider nothing to resolve a later callback against', async () => {
+    const stateless = defineProvider({ ...provider, id: 'stateless', echoesState: false })
+    const fetchImpl = vi.fn(async () => tokenResponse())
+    const client = createAuthClient({
+      provider: stateless,
+      storage: memoryStorage(),
+      fetch: fetchImpl,
+    })
+
+    await client.createAuthorization({ redirectUri: 'http://127.0.0.1:9999/cb' })
+    await client.logout()
+
+    // Without the pointer there is no "most recent flow" to correlate on, so a
+    // code arriving after sign-out is refused instead of exchanged.
+    await expect(client.completeAuthorization({ code: 'attacker-code' })).rejects.toMatchObject({
+      code: 'unknown_state',
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})

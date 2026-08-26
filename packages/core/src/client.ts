@@ -384,8 +384,13 @@ export class AuthClient {
     }
     const started = await options.receiver.start(context)
 
+    /* Both hoisted so the `finally` can tell an abandoned flow from a finished
+       one. See the cleanup there. */
+    let authorization: CreatedAuthorization | undefined
+    let completed = false
+
     try {
-      const authorization = await this.createAuthorization({
+      authorization = await this.createAuthorization({
         redirectUri: started.redirectUri,
         ...(options.scopes ? { scopes: options.scopes } : {}),
         ...(options.extraParams ? { extraParams: options.extraParams } : {}),
@@ -422,13 +427,30 @@ export class AuthClient {
         }
       }
 
-      return await this.completeAuthorization({
+      const tokens = await this.completeAuthorization({
         code: callback.code,
         state: authorization.state,
         ...(options.signal ? { signal: options.signal } : {}),
       })
+      completed = true
+
+      return tokens
     } finally {
       await started.close()
+
+      /* A login that ended any way other than with tokens left its pending
+         record behind: closing the receiver stopped listening, but the
+         `pending:` entry — PKCE verifier and redirect URI — and the
+         `pending-latest:` pointer to it both survived until the TTL expired
+         them, ten minutes by default. Cancelling with ctrl-C or letting the
+         timeout fire is the ordinary way to get here, so those records were
+         the common case rather than the rare one. On a successful login the
+         record is already consumed and this does not run at all. */
+      if (authorization && !completed) {
+        await this.#registry.delete(authorization.state).catch(() => {
+          /* Cleanup must not turn a cancelled login into a storage error. */
+        })
+      }
     }
   }
 
@@ -730,6 +752,22 @@ export class AuthClient {
    * Pass `{ revoke: true }` to also tell the provider, where it supports it.
    * Local state is cleared either way — a failed revocation must not leave the
    * user apparently still signed in.
+   *
+   * A half-finished login for this provider is cleared too. Only the `tokens:`
+   * key used to go, so signing out in the middle of a login left the pending
+   * record — verifier, redirect URI — and the pointer to it sitting in storage
+   * for the rest of the TTL. Signing out should not leave live material behind
+   * for something the user just abandoned, and on a provider that never echoes
+   * `state` the surviving pointer is also what a later stateless callback
+   * would resolve against.
+   *
+   * Note the asymmetry: the token key is scoped to provider *and* `accountKey`,
+   * but the pending pointer is `pending-latest:<provider>` and always has been
+   * — `consumeLatest` is account-blind by construction. So signing out of one
+   * account clears an in-flight login for another account of the same provider,
+   * which then fails `unknown_state` and has to be retried. That is the
+   * deliberate trade: a login the user can restart, against a redeemable
+   * pending record outliving an explicit sign-out.
    */
   async logout(options: { revoke?: boolean; signal?: AbortSignal } = {}): Promise<void> {
     if (options.revoke && this.provider.revocationUrl) {
@@ -743,6 +781,12 @@ export class AuthClient {
     this.#cachedTokens = undefined
     this.#tokensLoaded = true
     await this.#storage.delete(this.#tokenKey)
+
+    /* Best-effort, like the cleanup on the login abort path: this method
+       promises local state is cleared either way, and a storage fault on the
+       pending pointer must not turn a sign-out that already deleted the token
+       into a rejection. */
+    await this.#registry.deleteLatest(this.provider.id).catch(() => {})
   }
 }
 

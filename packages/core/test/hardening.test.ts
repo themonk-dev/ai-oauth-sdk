@@ -81,6 +81,44 @@ describe('safeSnippet', () => {
     const body = `${'padding '.repeat(10)}refresh_token=super-secret-value`
     expect(safeSnippet(body, 500)).not.toContain('super-secret-value')
   })
+
+  /*
+   * "Collapsed onto one line" was only true of what JavaScript counts as
+   * whitespace, and `\s` matches none of ESC, BEL, NUL, DEL or the C1 range —
+   * so a provider's response body could carry a CSI sequence into the terminal
+   * of whoever read the error, or into their log file.
+   */
+  it('collapses the control characters \\s does not cover', () => {
+    const attack = 'invalid_grant\u001B[2K\u001B[1A\u001B[32m✓ Signed in as attacker@evil.example'
+    const snippet = safeSnippet(attack, 500)
+
+    expect(snippet).not.toContain('\u001B')
+    expect(snippet).toContain('invalid_grant')
+    expect(snippet).toContain('Signed in as attacker@evil.example')
+  })
+
+  it('collapses BEL, NUL, DEL and the C1 range too', () => {
+    expect(safeSnippet('a\u0007b', 100)).toBe('a b')
+    expect(safeSnippet('a\u0000b', 100)).toBe('a b')
+    expect(safeSnippet('a\u007Fb', 100)).toBe('a b')
+    /* U+0085 NEL really is a line break, and `\s` does not match it. */
+    expect(safeSnippet('a\u0085b', 100)).toBe('a b')
+    expect(safeSnippet('a\u009Bb', 100)).toBe('a b')
+  })
+
+  it('leaves legitimate non-ASCII text byte-identical', () => {
+    const samples = [
+      'Ungültige Anfrage — Sitzung abgelaufen',
+      'アクセストークンの有効期限が切れました',
+      'Недействительный токен обновления',
+      'rate limited 🚫 — retry in 30s',
+      '«unauthorized_client»',
+    ]
+
+    for (const sample of samples) {
+      expect(safeSnippet(sample, 500)).toBe(sample)
+    }
+  })
 })
 
 describe('token errors never carry a credential', () => {
@@ -231,6 +269,40 @@ describe('timingSafeEqual', () => {
     for (let i = 0; i < 300; i++) {
       const a = Math.random().toString(36).slice(2)
       const b = Math.random() < 0.5 ? a : Math.random().toString(36).slice(2)
+      expect(timingSafeEqual(a, b), `${a} vs ${b}`).toBe(a === b)
+    }
+  })
+
+  /*
+   * The comparison span has a floor of 128 so that a one-character probe can no
+   * longer measure the length of whatever it is compared against. A floor, not
+   * a cap: truncating the loop at a fixed span instead would call any two
+   * values that agree on their first 128 characters equal, and every assertion
+   * here is aimed at that mistake.
+   */
+  it('rejects strings that differ only past the fixed span', () => {
+    const prefix = 'a'.repeat(200)
+
+    expect(timingSafeEqual(`${prefix}x`, `${prefix}y`)).toBe(false)
+    expect(timingSafeEqual(`${'z'.repeat(128)}1`, `${'z'.repeat(128)}2`)).toBe(false)
+    /* Differing in the last character of a 1000-character pair, so nothing
+       short of reading the whole thing can tell them apart. */
+    expect(timingSafeEqual(`${'q'.repeat(999)}a`, `${'q'.repeat(999)}b`)).toBe(false)
+  })
+
+  it('still rejects on length when both operands are longer than the span', () => {
+    expect(timingSafeEqual('m'.repeat(300), 'm'.repeat(301))).toBe(false)
+    expect(timingSafeEqual('m'.repeat(300), 'm'.repeat(300))).toBe(true)
+  })
+
+  it('agrees with === over long pairs that share a 128-character prefix', () => {
+    const prefix = 'p'.repeat(128)
+
+    for (let i = 0; i < 200; i++) {
+      const tail = Math.random().toString(36).slice(2)
+      const other = Math.random() < 0.5 ? tail : Math.random().toString(36).slice(2)
+      const a = prefix + tail
+      const b = prefix + other
       expect(timingSafeEqual(a, b), `${a} vs ${b}`).toBe(a === b)
     }
   })

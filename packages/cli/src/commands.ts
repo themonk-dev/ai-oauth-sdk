@@ -24,7 +24,7 @@ import {
 } from '@ai-oauth-sdk/node'
 
 import { flagBoolean, flagNumber, flagString, type ParsedArgs } from './args.js'
-import { bold, cyan, dim, formatExpiry, info, output, outputJson, success, table, warn } from './output.js'
+import { bold, cyan, dim, formatExpiry, info, output, outputJson, plain, success, table, warn } from './output.js'
 
 export class CliError extends Error {
   constructor(
@@ -299,7 +299,10 @@ export async function login({ args, json }: CommandContext): Promise<void> {
 /** Renders the account suffix on the sign-in line, when the token identifies one. */
 function describeAccount(tokens: TokenSet): string {
   if (tokens.email) {
-    return ` as ${cyan(tokens.email)}`
+    /* Straight out of an id_token the provider signed. This lands on the
+       "Signed in to …" line, which is the one an escape sequence would most
+       want to forge, so it is stripped like every other provider string. */
+    return ` as ${cyan(plain(tokens.email))}`
   }
 
   if (tokens.accountId) {
@@ -406,8 +409,11 @@ async function loginWithDevice(client: AuthClient, timeoutMs?: number): Promise<
           info('')
         }
 
-        info(`  Open ${cyan(device.verificationUriComplete ?? device.verificationUri)}`)
-        info(`  Enter code ${bold(device.userCode)}`)
+        /* Both come off the device-authorization response, so both are the
+           provider's text rather than ours; stripped before the colour goes
+           on, so our own escapes survive and theirs do not. */
+        info(`  Open ${cyan(plain(device.verificationUriComplete ?? device.verificationUri))}`)
+        info(`  Enter code ${bold(plain(device.userCode))}`)
         info('')
         info(dim('  Waiting for approval…'))
       },
@@ -474,9 +480,13 @@ export async function whoami({ args, json }: CommandContext): Promise<void> {
   }
 
   info(`${bold(client.provider.label)}`)
-  info(`  account   ${tokens.email ?? tokens.accountId ?? dim('unknown')}`)
+  /* `email` and `accountId` are read out of an id_token the provider signed,
+     so they are its text, not ours; `dim('unknown')` is ours and keeps its
+     escapes. */
+  const account = tokens.email ?? tokens.accountId
+  info(`  account   ${account === undefined ? dim('unknown') : plain(account)}`)
   info(`  expires   ${formatExpiry(tokens.expiresAt)}`)
-  info(`  scopes    ${tokens.scope ?? dim('n/a')}`)
+  info(`  scopes    ${tokens.scope === undefined ? dim('n/a') : plain(tokens.scope)}`)
   info(`  refresh   ${tokens.refreshToken ? 'available' : dim('none')}`)
 }
 

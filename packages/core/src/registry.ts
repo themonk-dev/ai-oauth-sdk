@@ -276,6 +276,26 @@ export class AuthorizationRegistry {
     return pending
   }
 
+  /**
+   * Drops a provider's "newest flow" pointer and the record it names.
+   *
+   * Sign-out hygiene. `delete` needs a `state` to work from, and the caller
+   * signing out does not necessarily have one — the flow it wants gone may
+   * have been started by a different process against the same storage. The
+   * pointer is the only handle onto it, so clearing the pointer without
+   * clearing the record it names would leave the verifier and redirect URI
+   * behind until the TTL expired them.
+   */
+  async deleteLatest(provider: string): Promise<void> {
+    const state = await this.#storage.get(LATEST_PREFIX + provider)
+
+    if (state) {
+      await this.#storage.delete(PENDING_PREFIX + state)
+    }
+
+    await this.#storage.delete(LATEST_PREFIX + provider)
+  }
+
   async delete(state: string): Promise<void> {
     const pending = await this.get(state)
     await this.#storage.delete(PENDING_PREFIX + state)
