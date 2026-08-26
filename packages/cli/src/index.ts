@@ -4,7 +4,7 @@ import { findUnknownFlag, flagBoolean, parseArgs } from './args.js'
 import * as commands from './commands.js'
 import { CliError } from './commands.js'
 import { helpText } from './help.js'
-import { dim, error, info } from './output.js'
+import { dim, error, info, plain } from './output.js'
 
 export { parseArgs } from './args.js'
 export type { ParsedArgs } from './args.js'
@@ -83,8 +83,14 @@ export async function run(argv: string[]): Promise<number> {
 
     return typeof result === 'number' ? result : 0
   } catch (caught) {
+    /* Every message below can carry text the provider chose — an
+       `error_description` straight off a token endpoint, most often — so it is
+       stripped of terminal control characters before it reaches stderr. Our own
+       literals and the error `code` are ours and are left as they are, and the
+       strip has to happen here rather than in `error()`, which paints ANSI
+       colour of its own. */
     if (caught instanceof CliError) {
-      error(caught.message)
+      error(plain(caught.message))
 
       if (caught.hint) {
         info(dim(`  ${caught.hint}`))
@@ -94,7 +100,7 @@ export async function run(argv: string[]): Promise<number> {
     }
 
     if (isOAuthError(caught)) {
-      error(`${caught.code}: ${caught.message}`)
+      error(`${caught.code}: ${plain(caught.message)}`)
 
       if (caught.code === 'refresh_failed') {
         info(dim('  Sign in again to continue.'))
@@ -107,7 +113,7 @@ export async function run(argv: string[]): Promise<number> {
       return 1
     }
 
-    error(caught instanceof Error ? caught.message : String(caught))
+    error(plain(caught instanceof Error ? caught.message : String(caught)))
 
     return 1
   }
