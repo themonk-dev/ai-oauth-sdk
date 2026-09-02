@@ -4,6 +4,7 @@ import { createPkce } from '../pkce.js'
 import { encodeQuery } from '../query.js'
 import { fetchWithSignal } from '../http.js'
 import { safeSnippet } from '../redact.js'
+import { readExpiresIn } from '../token.js'
 import type { DeviceCodeResponse, FetchLike, ProviderConfig, TokenSet } from '../types.js'
 
 export type { DeviceCodeResponse } from '../types.js'
@@ -165,6 +166,10 @@ export interface PollDeviceTokenInput {
  * provider's infrastructure talking, not a verdict on the grant, and giving up
  * would throw away a code the user may already have approved.
  *
+ * A successful body is shaped by the same provider hooks the redirect path
+ * uses — `parseTokenResponse` then `enrichTokens` — so a device login and a
+ * redirect login of the same account store the same {@link TokenSet}.
+ *
  * That tolerance is bounded at {@link MAX_SERVER_ERRORS}. A gateway that is
  * simply down answers every poll, and retrying to the device code's expiry
  * would block for a quarter of an hour and then report a timeout — telling the
@@ -208,22 +213,40 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
       raw = {}
     }
 
-    if (response.ok && typeof raw['access_token'] === 'string') {
-      return {
-        accessToken: raw['access_token'],
-        ...(typeof raw['refresh_token'] === 'string' ? { refreshToken: raw['refresh_token'] } : {}),
-        ...(typeof raw['expires_in'] === 'number'
-          ? { expiresAt: Date.now() + raw['expires_in'] * 1000 }
+    // Same shaping the redirect path applies, in the same order: the provider's
+    // `parseTokenResponse` runs on a success body *before* anything is read out
+    // of it, and only there, because a provider with a non-standard success
+    // shape may still report errors the conventional way. Skipping it here read
+    // an unconventional 200 as a failure and quoted the body — a live
+    // credential — into the error below, while burning the grant it described.
+    const parsed =
+      response.ok && provider.parseTokenResponse ? provider.parseTokenResponse(raw) : raw
+    const accessToken = parsed['access_token']
+
+    if (response.ok && typeof accessToken === 'string' && accessToken) {
+      // `readExpiresIn` rather than a bare `typeof === 'number'`: a provider
+      // that sends the digits as a JSON string would otherwise leave the grant
+      // with no `expiresAt` at all, and `isExpired` reads a missing one as
+      // "never expires". Same coercion the redirect path applies.
+      const expiresIn = readExpiresIn(parsed['expires_in'])
+      const tokens: TokenSet = {
+        accessToken,
+        ...(typeof parsed['refresh_token'] === 'string' && parsed['refresh_token']
+          ? { refreshToken: parsed['refresh_token'] }
           : {}),
-        tokenType: typeof raw['token_type'] === 'string' ? raw['token_type'] : 'Bearer',
-        ...(typeof raw['scope'] === 'string' ? { scope: raw['scope'] } : {}),
-        ...(typeof raw['id_token'] === 'string' ? { idToken: raw['id_token'] } : {}),
+        ...(expiresIn === undefined ? {} : { expiresAt: Date.now() + expiresIn * 1000 }),
+        tokenType: typeof parsed['token_type'] === 'string' ? parsed['token_type'] : 'Bearer',
+        ...(typeof parsed['scope'] === 'string' ? { scope: parsed['scope'] } : {}),
+        ...(typeof parsed['id_token'] === 'string' ? { idToken: parsed['id_token'] } : {}),
         provider: provider.id,
-        raw,
+        raw: parsed,
       }
+      const enriched = provider.enrichTokens?.(parsed, tokens)
+
+      return enriched ? { ...tokens, ...enriched } : tokens
     }
 
-    const error = typeof raw['error'] === 'string' ? raw['error'] : 'unknown_error'
+    const error = typeof parsed['error'] === 'string' ? parsed['error'] : 'unknown_error'
 
     if (error === 'authorization_pending') {
       continue
@@ -240,11 +263,28 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
       continue
     }
 
-    const described = raw['error_description']
+    // A 200 that named no error at all and still could not be shaped into a
+    // token. As far as the provider is concerned this body is a *successful*
+    // token response, so it may be the credential itself — say what is missing
+    // and quote nothing. `redact.ts` matches known parameter names and known
+    // token shapes; an unrecognised secret under an unrecognised key is neither,
+    // and the 120-character cap is not a redaction.
+    if (response.ok && error === 'unknown_error') {
+      throw new OAuthError(
+        'invalid_token_response',
+        `Device token response for "${provider.id}" did not include an access_token.`,
+        { status: response.status },
+      )
+    }
+
+    const described = parsed['error_description']
+    // The body snippet is the last resort, and only for a status that already
+    // says failure: on a 200 the body is the provider's idea of success and may
+    // carry the credential, so an error it *names* is quoted and the body
+    // around it is not.
+    const fallback = response.ok ? '' : safeSnippet(text, 120)
     const detail =
-      typeof described === 'string' && described
-        ? safeSnippet(described, 120)
-        : safeSnippet(text, 120)
+      typeof described === 'string' && described ? safeSnippet(described, 120) : fallback
     // `error` is the provider's string too, so it gets the same treatment as
     // the description beside it — a gateway that reflects the request back puts
     // the `device_code` and `code_verifier` we just posted into this field, and

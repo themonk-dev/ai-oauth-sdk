@@ -144,7 +144,7 @@ async function postToTokenEndpoint(
  * expiry. Anything that is not a finite, non-negative number after coercion —
  * `null`, `"soon"`, `-1`, `Infinity` — states nothing usable and is dropped.
  */
-function readExpiresIn(value: unknown): number | undefined {
+export function readExpiresIn(value: unknown): number | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined
   }
