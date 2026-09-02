@@ -41,6 +41,8 @@ export interface FakeAuthServerOptions {
   omitRefreshOnRenew?: boolean
   /** Delay every token response by this many ms. */
   delayMs?: number
+  /** Answer `/revoke` with this status instead of 200, leaving the token live. */
+  revokeStatus?: number
 }
 
 export interface FakeAuthServer {
@@ -235,7 +237,18 @@ export async function startFakeAuthServer(
         request.on('data', (chunk) => (data += chunk))
         request.on('end', () => resolve(data))
       })
+      // Recorded either way: a refusal still means the request was received,
+      // which is what distinguishes "attempted and failed" from "never tried".
       revocations.push(Object.fromEntries(new URLSearchParams(body)))
+
+      if (options.revokeStatus && options.revokeStatus !== 200) {
+        // The session stays live — that is the whole hazard being modelled.
+        response.writeHead(options.revokeStatus, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: 'temporarily_unavailable' }))
+
+        return
+      }
+
       revoked = true
       currentAccessToken = undefined
       response.writeHead(200)

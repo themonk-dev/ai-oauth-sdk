@@ -1,3 +1,4 @@
+import type { OAuthError } from './errors.js'
 import type { PkceMethod } from './pkce.js'
 
 /** Minimal `fetch` shape, so callers can inject a proxy/instrumented client. */
@@ -355,6 +356,34 @@ export interface ProviderConfig {
 /** Everything except the fields that carry sensible defaults. */
 export type ProviderInput = Omit<ProviderConfig, 'usePkce' | 'pkceMethod' | 'tokenRequest'> &
   Partial<Pick<ProviderConfig, 'usePkce' | 'pkceMethod' | 'tokenRequest'>>
+
+
+/**
+ * What a `logout()` actually did.
+ *
+ * Revocation is reported rather than implied, because "the caller asked to
+ * revoke" and "the provider revoked" are different facts and the interesting
+ * cases are the ones where they diverge: a provider that declares no
+ * revocation endpoint, and one whose endpoint refused. `logout()` swallows a
+ * failed revocation — a user who asked to sign out must not stay signed in
+ * because the provider was down — so this is the only place that outcome is
+ * visible.
+ */
+export interface LogoutResult {
+  /** The stored credential was removed. */
+  signedOut: boolean
+  /**
+   * What happened to revocation.
+   *
+   * `nothing-to-revoke` is its own answer rather than a kind of success:
+   * signing out of a provider you were not signed into posts nothing, and
+   * reporting that as `revoked` would be the same false assurance this type
+   * exists to remove.
+   */
+  revocation: 'not-requested' | 'revoked' | 'unsupported' | 'nothing-to-revoke' | 'failed'
+  /** Present only when revocation === 'failed'. */
+  revocationError?: OAuthError
+}
 
 
 /**
