@@ -248,6 +248,75 @@ describe('custom provider bookkeeping', () => {
   })
 })
 
+/**
+ * `logout --revoke --json` used to print `revoked: shouldRevoke` — what was
+ * asked for, not what happened. The worse half is a provider that *does*
+ * declare a revocation endpoint and whose endpoint refuses: the revocation is
+ * genuinely attempted, `AuthClient.logout` swallows the failure so the user is
+ * still signed out locally, and the CLI printed the same `revoked: true` a
+ * success prints, with nothing on stderr. The field carried no information.
+ */
+describe('logout --revoke reports what the provider did', () => {
+  /** Points the remembered descriptor at a revocation endpoint. */
+  async function withRevocationUrl(revocationUrl: string): Promise<void> {
+    const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+    const descriptor = JSON.parse(stored['provider:acme']!) as Record<string, unknown>
+    stored['provider:acme'] = JSON.stringify({ ...descriptor, revocationUrl })
+    await writeFile(join(dir, 'auth.json'), JSON.stringify(stored))
+  }
+
+  beforeEach(async () => {
+    await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+    stdout = []
+    stderr = []
+  })
+
+  it('reports revoked: true only when the provider actually took it', async () => {
+    await withRevocationUrl(`${server.url}/revoke`)
+
+    expect(await run(['logout', 'acme', '--auth-dir', dir, '--revoke', '--json'])).toBe(0)
+    expect(JSON.parse(out())).toEqual({
+      provider: 'acme',
+      signedOut: true,
+      revoked: true,
+      revocation: 'revoked',
+    })
+    // The provider really was told, and about the refresh token.
+    expect(server.revocations).toHaveLength(1)
+    expect(server.revocations[0]?.['token']).toBe('refresh-1')
+  })
+
+  it('reports revoked: false, and warns, when the endpoint refuses', async () => {
+    const refusing = await startFakeAuthServer({ revokeStatus: 503 })
+
+    try {
+      await withRevocationUrl(`${refusing.url}/revoke`)
+
+      expect(await run(['logout', 'acme', '--auth-dir', dir, '--revoke', '--json'])).toBe(0)
+
+      const parsed = JSON.parse(out()) as Record<string, unknown>
+      expect(parsed).toMatchObject({
+        provider: 'acme',
+        signedOut: true,
+        revoked: false,
+        revocation: 'failed',
+      })
+      expect(parsed['revocationError']).toMatchObject({ code: 'token_request_failed' })
+
+      // It was genuinely attempted — the endpoint refused it.
+      expect(refusing.revocations).toHaveLength(1)
+      // The absent-endpoint warning was the only signal there used to be; a
+      // refusal has to speak too, since the local copy is gone either way.
+      expect(err()).toContain('still live')
+
+      const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+      expect(stored['tokens:acme']).toBeUndefined()
+    } finally {
+      await refusing.close()
+    }
+  })
+})
+
 describe('custom provider validation', () => {
   it('requires both endpoint flags together', async () => {
     expect(
@@ -344,6 +413,126 @@ describe('custom provider validation', () => {
 
       expect(await run(['token', 'gemini', '--auth-dir', dir])).toBe(0)
       expect(out()).toBe('still-valid\n')
+    })
+  })
+
+  /**
+   * The built-in guard above answers "is this id built-in", but what actually
+   * matters is "does this id already hold a credential minted somewhere
+   * known". A remembered custom provider does: `provider:acme` records the
+   * endpoints, and `tokens:acme` the credential issued by them. The endpoint
+   * flags rebuilt the descriptor around the same id and won outright, so
+   * `refresh acme --token-url <other>` sent the stored production refresh token
+   * to `<other>` and overwrote the stored tokens with its answer — exit 0, no
+   * output on stderr at all. It takes nothing exotic to get there: a script or
+   * a copied command line carrying the login flags forward with one host edited
+   * to a staging box, a proxy, or a typo.
+   */
+  describe('a remembered custom provider with different endpoints', () => {
+    let elsewhere: FakeAuthServer
+
+    beforeEach(async () => {
+      elsewhere = await startFakeAuthServer()
+      await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+      stdout = []
+      stderr = []
+    })
+
+    afterEach(async () => {
+      await elsewhere.close()
+    })
+
+    const storedAcme = async () => {
+      const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+
+      return {
+        tokens: JSON.parse(stored['tokens:acme']!) as { accessToken: string; refreshToken?: string },
+        descriptor: JSON.parse(stored['provider:acme']!) as Record<string, string>,
+      }
+    }
+
+    // The token URL is the one that receives the stored refresh token.
+    const mixedFlags = (extra: string[] = []) => [
+      '--auth-dir',
+      dir,
+      '--client-id',
+      'cli-test-client',
+      '--authorize-url',
+      `${server.url}/authorize`,
+      '--token-url',
+      `${elsewhere.url}/token`,
+      ...extra,
+    ]
+
+    it('refuses refresh, and the refresh token never leaves', async () => {
+      expect(await run(['refresh', 'acme', ...mixedFlags()])).toBe(1)
+
+      expect(err()).toContain('--token-url')
+      expect(err()).toContain(`${elsewhere.url}/token`)
+      expect(err()).toContain(`${server.url}/token`)
+
+      // The half that matters: the other endpoint saw nothing at all.
+      expect(elsewhere.requests).toEqual([])
+      expect(elsewhere.refreshCount).toBe(0)
+
+      // And the stored session is exactly as the real provider left it.
+      const { tokens, descriptor } = await storedAcme()
+      expect(tokens.refreshToken).toBe('refresh-1')
+      expect(descriptor['tokenUrl']).toBe(`${server.url}/token`)
+    })
+
+    it('refuses token --force-refresh the same way', async () => {
+      expect(await run(['token', 'acme', '--force-refresh', ...mixedFlags()])).toBe(1)
+
+      expect(err()).toContain('--token-url')
+      expect(elsewhere.requests).toEqual([])
+      // No access token was printed for a caller to pipe onwards.
+      expect(out()).toBe('')
+      expect((await storedAcme()).tokens.refreshToken).toBe('refresh-1')
+    })
+
+    it('names the authorization endpoint when that is the one that differs', async () => {
+      expect(
+        await run([
+          'whoami',
+          'acme',
+          '--auth-dir',
+          dir,
+          '--client-id',
+          'cli-test-client',
+          '--authorize-url',
+          `${elsewhere.url}/authorize`,
+          '--token-url',
+          `${server.url}/token`,
+        ]),
+      ).toBe(1)
+
+      expect(err()).toContain('--authorize-url')
+      expect(err()).toContain('ai-oauth-sdk login acme')
+    })
+
+    it('still refreshes when the endpoints agree', async () => {
+      expect(await run(['refresh', 'acme', ...customFlags(server)])).toBe(0)
+      expect(server.refreshCount).toBe(1)
+      expect(elsewhere.requests).toEqual([])
+    })
+
+    /**
+     * Providers do move, so the change has to stay possible — just not by
+     * accident with the old credential in hand. `login` mints a fresh one
+     * against the new endpoints and re-remembers them, which makes it the
+     * deliberate path the refusal points at.
+     */
+    it('lets login move the provider to the new endpoints', async () => {
+      expect(await run(['login', 'acme', ...customFlags(elsewhere, ['--port', '0'])])).toBe(0)
+
+      const { descriptor } = await storedAcme()
+      expect(descriptor['tokenUrl']).toBe(`${elsewhere.url}/token`)
+
+      // A fresh authorization-code exchange — the old refresh token was not
+      // handed over as part of moving.
+      expect(elsewhere.requests.map((body) => body['grant_type'])).toEqual(['authorization_code'])
+      expect(elsewhere.requests[0]?.['refresh_token']).toBeUndefined()
     })
   })
 
