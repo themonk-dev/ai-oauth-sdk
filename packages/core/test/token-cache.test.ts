@@ -5,7 +5,7 @@
  * Both need a storage backend that is slow or that fails — a keychain prompt, a
  * full disk — so every test here drives one deliberately.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createAuthClient } from '../src/client.js'
 import { defineProvider } from '../src/providers/define.js'
@@ -178,5 +178,110 @@ describe('setTokens() when the write fails', () => {
 
     expect(await client.getTokens()).toMatchObject({ accessToken: 'AT', refreshToken: 'RT' })
     expect(map.get('tokens:demo')).toContain('RT')
+  })
+})
+
+/**
+ * The write side needs the same protection the read side got. Persisting before
+ * committing put `setTokens`' commit behind an await, so which value wins the
+ * cache stopped being decided by call order.
+ */
+describe('a write that finishes after something newer', () => {
+  /** A storage whose `set` for a given key blocks until it is released. */
+  function gatedWrites(map: Map<string, string>) {
+    const gates: Array<() => void> = []
+
+    return {
+      gates,
+      storage: {
+        get: async (key: string) => map.get(key) ?? null,
+        set: async (key: string, value: string) => {
+          await new Promise<void>((resolve) => gates.push(resolve))
+          map.set(key, value)
+        },
+        delete: async (key: string) => {
+          map.delete(key)
+        },
+      } satisfies AuthStorage,
+    }
+  }
+
+  it('does not undo a logout that completed while the write was in flight', async () => {
+    const map = new Map<string, string>()
+    const { gates, storage } = gatedWrites(map)
+    const client = createAuthClient({ provider, storage })
+
+    const writing = client.setTokens(tokenSet('AT'))
+    await vi.waitFor(() => expect(gates).toHaveLength(1))
+
+    // A background refresh is mid-write when the user signs out.
+    await client.logout()
+    gates[0]?.()
+    await writing
+
+    // The sign-out is the newer intent; the write must not resurrect the session.
+    expect(await client.getTokens()).toBeUndefined()
+    expect(await client.isAuthenticated()).toBe(false)
+  })
+
+  it('does not leave the cache holding the older of two overlapping writes', async () => {
+    const map = new Map<string, string>()
+    const { gates, storage } = gatedWrites(map)
+    const client = createAuthClient({ provider, storage })
+
+    const slow = client.setTokens(tokenSet('AT1'))
+    await vi.waitFor(() => expect(gates).toHaveLength(1))
+    const fast = client.setTokens(tokenSet('AT2'))
+    await vi.waitFor(() => expect(gates).toHaveLength(2))
+
+    // The second call wins the cache; the first must not overwrite it on the
+    // way out just because its write finished last.
+    gates[1]?.()
+    await fast
+    gates[0]?.()
+    await slow
+
+    expect(await client.getTokens()).toMatchObject({ accessToken: 'AT2' })
+  })
+})
+
+/**
+ * `logout()` promises local state goes regardless of what revocation or storage
+ * did. A store that cannot be read must not break that promise.
+ */
+describe('logout against an unreadable store', () => {
+  it('still clears local state when the credential cannot be read', async () => {
+    const map = new Map([['tokens:demo', JSON.stringify(tokenSet('AT', 'RT'))]])
+    const revocable = defineProvider({
+      id: 'demo',
+      label: 'Demo',
+      clientId: 'demo-client',
+      authorizationUrl: 'https://provider.invalid/authorize',
+      tokenUrl: 'https://provider.invalid/token',
+      revocationUrl: 'https://provider.invalid/revoke',
+      scopes: [],
+      redirect: { mode: 'custom' },
+    })
+    const client = createAuthClient({
+      provider: revocable,
+      storage: {
+        // A locked keychain or an unreadable auth.json.
+        get: async (): Promise<string | null> => {
+          throw new Error('keychain locked')
+        },
+        set: async (key: string, value: string) => {
+          map.set(key, value)
+        },
+        delete: async (key: string) => {
+          map.delete(key)
+        },
+      },
+    })
+
+    const result = await client.logout({ revoke: true })
+
+    expect(result.signedOut).toBe(true)
+    expect(result.revocation).toBe('nothing-to-revoke')
+    expect(map.has('tokens:demo')).toBe(false)
   })
 })

@@ -7,6 +7,7 @@ import {
   type AuthClientOptions,
   type AuthState,
   type CallbackReceiver,
+  type LogoutResult,
   type TokenSet,
 } from '@ai-oauth-sdk/core'
 
@@ -28,7 +29,8 @@ export interface SolidAuth {
   isLoading: Accessor<boolean>
   error: Accessor<Error | undefined>
   login: (overrides?: { receiver?: CallbackReceiver; scopes?: string[] }) => Promise<TokenSet | undefined>
-  logout: (options?: { revoke?: boolean }) => Promise<void>
+  /** Clears the session, reporting what revocation actually did. */
+  logout: (options?: { revoke?: boolean }) => Promise<LogoutResult>
   refresh: () => Promise<TokenSet | undefined>
   getAccessToken: () => Promise<string>
   cancel: () => void

@@ -667,8 +667,23 @@ export class AuthClient {
    * leaving the spent token on disk as the only way back in.
    */
   async setTokens(tokens: TokenSet): Promise<void> {
+    /*
+     * Persisting first puts this commit behind an await, so commit order would
+     * otherwise be decided by which write finished rather than which call came
+     * last: a `logout()` completing during the write would be undone in memory,
+     * and two overlapping writes could leave the cache holding the older token.
+     * The epoch settles it the same way it settles a stale read — if anything
+     * else published while this write was in flight, that value is the newer
+     * one and this write does not claim the cache. Storage still holds what was
+     * written; the next read reconciles.
+     */
+    const epoch = this.#tokenEpoch
+
     await this.#storage.set(this.#tokenKey, JSON.stringify(tokens))
-    this.#commitTokens(tokens)
+
+    if (this.#tokenEpoch === epoch) {
+      this.#commitTokens(tokens)
+    }
   }
 
   /** True when a token exists and has not passed the renewal window. */
@@ -828,12 +843,18 @@ export class AuthClient {
     if (options.revoke) {
       if (!this.provider.revocationUrl) {
         revocation = 'unsupported'
-      } else if (!(await this.getTokens())) {
+      } else if (!(await this.getTokens().catch(() => undefined))) {
         /*
          * `revoke()` early-returns with nothing stored, so no request is made.
          * Reporting that as `revoked` would restate the bug this result exists
          * to fix — a caller gating on "did the token die" reading success from
          * a call that posted nothing.
+         *
+         * The read cannot be allowed to throw: a locked keychain or an
+         * unreadable credential file would escape `logout()` before anything
+         * was cleared, which is exactly the "apparently still signed in" state
+         * this method promises never to leave behind. An unreadable store is
+         * reported as nothing to revoke, and the clear below still runs.
          */
         revocation = 'nothing-to-revoke'
       } else {
