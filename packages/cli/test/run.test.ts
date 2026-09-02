@@ -329,6 +329,9 @@ describe('logout', () => {
       signedOut: true,
       revoked: false,
       revocation: 'unsupported',
+      // Present and null, like every other nullable field the CLI emits, so a
+      // consumer reads `.revocationError?.code` without a key-existence guard.
+      revocationError: null,
     })
     expect(err()).toContain('no revocation endpoint')
   })
