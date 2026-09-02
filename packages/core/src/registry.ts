@@ -26,6 +26,25 @@ interface Waiter {
 }
 
 /**
+ * Whether a parsed record is usable as a {@link PendingAuthorization}.
+ *
+ * `JSON.parse` succeeding only says the text was JSON — `null`, `3`, `"s"` and
+ * `[]` all parse — and casting the result was enough to make `record.expiresAt`
+ * a property read on `null`, or an expiry comparison against `undefined` that
+ * is false for every clock. Nothing this SDK stores under a `pending:` key
+ * looks like that, so this is shape validation against a foreign writer or a
+ * hand-edited store rather than against our own writes; treating a malformed
+ * record as absent is the same answer the unparseable case already gets.
+ */
+function isPendingAuthorization(value: unknown): value is PendingAuthorization {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Number.isFinite((value as PendingAuthorization).expiresAt)
+  )
+}
+
+/**
  * Tracks in-flight authorizations by `state`.
  *
  * This is the piece that decouples "start a login" from "finish a login". The
@@ -112,7 +131,8 @@ export class AuthorizationRegistry {
   }
 
   /**
-   * Deletes pending records that have passed their TTL.
+   * Deletes pending records that have passed their TTL, along with any that
+   * cannot be read back as one — unparseable, or parseable but the wrong shape.
    *
    * Runs automatically on `create`. A no-op for storage backends that cannot
    * enumerate keys (SecureStore), which is acceptable: those are per-app mobile
@@ -140,9 +160,14 @@ export class AuthorizationRegistry {
       let record: PendingAuthorization | undefined
 
       try {
-        record = JSON.parse(stored) as PendingAuthorization
+        const parsed: unknown = JSON.parse(stored)
+
+        if (isPendingAuthorization(parsed)) {
+          record = parsed
+        }
       } catch {
-        /* Unparseable records can never be used, so they are dropped below. */
+        /* Nothing to do: an unparseable record is dropped below, as a
+           malformed one is. Neither can ever be used. */
       }
 
       if (record === undefined || now > record.expiresAt) {
@@ -189,7 +214,9 @@ export class AuthorizationRegistry {
     }
 
     try {
-      return JSON.parse(stored) as PendingAuthorization
+      const parsed: unknown = JSON.parse(stored)
+
+      return isPendingAuthorization(parsed) ? parsed : undefined
     } catch {
       return undefined
     }

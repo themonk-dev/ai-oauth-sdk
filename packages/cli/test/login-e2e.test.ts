@@ -78,6 +78,19 @@ function stopFakeBrowser(): void {
   followed.clear()
 }
 
+const readStore = async () =>
+  JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+
+/** Rewrites a stored descriptor, standing in for one an older CLI left behind. */
+async function patchDescriptor(
+  key: string,
+  patch: (descriptor: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
+  const stored = await readStore()
+  stored[key] = JSON.stringify(patch(JSON.parse(stored[key]!) as Record<string, unknown>))
+  await writeFile(join(dir, 'auth.json'), JSON.stringify(stored))
+}
+
 const customFlags = (target: FakeAuthServer, extra: string[] = []) => [
   '--auth-dir',
   dir,
@@ -241,10 +254,83 @@ describe('custom provider bookkeeping', () => {
     await run(['logout', 'acme', '--auth-dir', dir, '--account', 'work'])
 
     const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
-    // The other account still needs it.
-    expect(stored['provider:acme']).toBeTruthy()
+    // The other account still needs its own; the one that signed out leaves none behind.
+    expect(stored['provider:acme:home']).toBeTruthy()
+    expect(stored['provider:acme:work']).toBeUndefined()
     expect(stored['tokens:acme:home']).toBeTruthy()
     expect(stored['tokens:acme:work']).toBeUndefined()
+  })
+})
+
+/**
+ * `logout --revoke --json` used to print `revoked: shouldRevoke` — what was
+ * asked for, not what happened. The worse half is a provider that *does*
+ * declare a revocation endpoint and whose endpoint refuses: the revocation is
+ * genuinely attempted, `AuthClient.logout` swallows the failure so the user is
+ * still signed out locally, and the CLI printed the same `revoked: true` a
+ * success prints, with nothing on stderr. The field carried no information.
+ */
+describe('logout --revoke reports what the provider did', () => {
+  /** Points the remembered descriptor at a revocation endpoint. */
+  async function withRevocationUrl(revocationUrl: string): Promise<void> {
+    const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+    const descriptor = JSON.parse(stored['provider:acme']!) as Record<string, unknown>
+    stored['provider:acme'] = JSON.stringify({ ...descriptor, revocationUrl })
+    await writeFile(join(dir, 'auth.json'), JSON.stringify(stored))
+  }
+
+  beforeEach(async () => {
+    await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+    stdout = []
+    stderr = []
+  })
+
+  it('reports revoked: true only when the provider actually took it', async () => {
+    await withRevocationUrl(`${server.url}/revoke`)
+
+    expect(await run(['logout', 'acme', '--auth-dir', dir, '--revoke', '--json'])).toBe(0)
+    expect(JSON.parse(out())).toEqual({
+      provider: 'acme',
+      signedOut: true,
+      revoked: true,
+      revocation: 'revoked',
+      // Always present, like every other nullable field the CLI emits, so a
+      // consumer reads `.revocationError?.code` without a key-existence guard.
+      revocationError: null,
+    })
+    // The provider really was told, and about the refresh token.
+    expect(server.revocations).toHaveLength(1)
+    expect(server.revocations[0]?.['token']).toBe('refresh-1')
+  })
+
+  it('reports revoked: false, and warns, when the endpoint refuses', async () => {
+    const refusing = await startFakeAuthServer({ revokeStatus: 503 })
+
+    try {
+      await withRevocationUrl(`${refusing.url}/revoke`)
+
+      expect(await run(['logout', 'acme', '--auth-dir', dir, '--revoke', '--json'])).toBe(0)
+
+      const parsed = JSON.parse(out()) as Record<string, unknown>
+      expect(parsed).toMatchObject({
+        provider: 'acme',
+        signedOut: true,
+        revoked: false,
+        revocation: 'failed',
+      })
+      expect(parsed['revocationError']).toMatchObject({ code: 'token_request_failed' })
+
+      // It was genuinely attempted — the endpoint refused it.
+      expect(refusing.revocations).toHaveLength(1)
+      // The absent-endpoint warning was the only signal there used to be; a
+      // refusal has to speak too, since the local copy is gone either way.
+      expect(err()).toContain('still live')
+
+      const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+      expect(stored['tokens:acme']).toBeUndefined()
+    } finally {
+      await refusing.close()
+    }
   })
 })
 
@@ -344,6 +430,398 @@ describe('custom provider validation', () => {
 
       expect(await run(['token', 'gemini', '--auth-dir', dir])).toBe(0)
       expect(out()).toBe('still-valid\n')
+    })
+  })
+
+  /**
+   * The built-in guard above answers "is this id built-in", but what actually
+   * matters is "does this id already hold a credential minted somewhere
+   * known". A remembered custom provider does: `provider:acme` records the
+   * endpoints, and `tokens:acme` the credential issued by them. The endpoint
+   * flags rebuilt the descriptor around the same id and won outright, so
+   * `refresh acme --token-url <other>` sent the stored production refresh token
+   * to `<other>` and overwrote the stored tokens with its answer — exit 0, no
+   * output on stderr at all. It takes nothing exotic to get there: a script or
+   * a copied command line carrying the login flags forward with one host edited
+   * to a staging box, a proxy, or a typo.
+   */
+  describe('a remembered custom provider with different endpoints', () => {
+    let elsewhere: FakeAuthServer
+
+    beforeEach(async () => {
+      elsewhere = await startFakeAuthServer()
+      await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+      stdout = []
+      stderr = []
+    })
+
+    afterEach(async () => {
+      await elsewhere.close()
+    })
+
+    const storedAcme = async () => {
+      const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+
+      return {
+        tokens: JSON.parse(stored['tokens:acme']!) as { accessToken: string; refreshToken?: string },
+        descriptor: JSON.parse(stored['provider:acme']!) as Record<string, string>,
+      }
+    }
+
+    // The token URL is the one that receives the stored refresh token.
+    const mixedFlags = (extra: string[] = []) => [
+      '--auth-dir',
+      dir,
+      '--client-id',
+      'cli-test-client',
+      '--authorize-url',
+      `${server.url}/authorize`,
+      '--token-url',
+      `${elsewhere.url}/token`,
+      ...extra,
+    ]
+
+    it('refuses refresh, and the refresh token never leaves', async () => {
+      expect(await run(['refresh', 'acme', ...mixedFlags()])).toBe(1)
+
+      expect(err()).toContain('--token-url')
+      expect(err()).toContain(`${elsewhere.url}/token`)
+      expect(err()).toContain(`${server.url}/token`)
+
+      // The half that matters: the other endpoint saw nothing at all.
+      expect(elsewhere.requests).toEqual([])
+      expect(elsewhere.refreshCount).toBe(0)
+
+      // And the stored session is exactly as the real provider left it.
+      const { tokens, descriptor } = await storedAcme()
+      expect(tokens.refreshToken).toBe('refresh-1')
+      expect(descriptor['tokenUrl']).toBe(`${server.url}/token`)
+    })
+
+    it('refuses token --force-refresh the same way', async () => {
+      expect(await run(['token', 'acme', '--force-refresh', ...mixedFlags()])).toBe(1)
+
+      expect(err()).toContain('--token-url')
+      expect(elsewhere.requests).toEqual([])
+      // No access token was printed for a caller to pipe onwards.
+      expect(out()).toBe('')
+      expect((await storedAcme()).tokens.refreshToken).toBe('refresh-1')
+    })
+
+    it('names the authorization endpoint when that is the one that differs', async () => {
+      expect(
+        await run([
+          'whoami',
+          'acme',
+          '--auth-dir',
+          dir,
+          '--client-id',
+          'cli-test-client',
+          '--authorize-url',
+          `${elsewhere.url}/authorize`,
+          '--token-url',
+          `${server.url}/token`,
+        ]),
+      ).toBe(1)
+
+      expect(err()).toContain('--authorize-url')
+      expect(err()).toContain('ai-oauth-sdk login acme')
+    })
+
+    it('still refreshes when the endpoints agree', async () => {
+      expect(await run(['refresh', 'acme', ...customFlags(server)])).toBe(0)
+      expect(server.refreshCount).toBe(1)
+      expect(elsewhere.requests).toEqual([])
+    })
+
+    /**
+     * Providers do move, so the change has to stay possible — just not by
+     * accident with the old credential in hand. `login` mints a fresh one
+     * against the new endpoints and re-remembers them, which makes it the
+     * deliberate path the refusal points at.
+     */
+    it('lets login move the provider to the new endpoints', async () => {
+      expect(await run(['login', 'acme', ...customFlags(elsewhere, ['--port', '0'])])).toBe(0)
+
+      const { descriptor } = await storedAcme()
+      expect(descriptor['tokenUrl']).toBe(`${elsewhere.url}/token`)
+
+      // A fresh authorization-code exchange — the old refresh token was not
+      // handed over as part of moving.
+      expect(elsewhere.requests.map((body) => body['grant_type'])).toEqual(['authorization_code'])
+      expect(elsewhere.requests[0]?.['refresh_token']).toBeUndefined()
+    })
+  })
+
+  /**
+   * The descriptor records the endpoints a *credential* was minted against, and
+   * credentials are per account — so one descriptor shared by every account on
+   * an id is simply rewritten by whichever account signed in last. That turned
+   * the check upside down: the account whose endpoints no longer matched the
+   * shared record was refused its own correct invocation, while the same
+   * command with no endpoint flags at all sailed through and POSTed that
+   * account's refresh token to the *other* account's token endpoint — the exact
+   * exchange the check exists to prevent.
+   */
+  describe('two accounts on one custom id, signed in against different endpoints', () => {
+    let elsewhere: FakeAuthServer
+
+    beforeEach(async () => {
+      elsewhere = await startFakeAuthServer()
+      await run(['login', 'acme', ...customFlags(server, ['--port', '0', '--account', 'work'])])
+      await run(['login', 'acme', ...customFlags(elsewhere, ['--port', '0', '--account', 'home'])])
+      stdout = []
+      stderr = []
+    })
+
+    afterEach(async () => {
+      await elsewhere.close()
+    })
+
+    const refreshFlags = (extra: string[] = []) => [
+      '--auth-dir',
+      dir,
+      '--client-id',
+      'cli-test-client',
+      ...extra,
+    ]
+
+    it('remembers a descriptor per account rather than one for the id', async () => {
+      const stored = await readStore()
+
+      expect((JSON.parse(stored['provider:acme:work']!) as Record<string, string>)['tokenUrl']).toBe(
+        `${server.url}/token`,
+      )
+      expect((JSON.parse(stored['provider:acme:home']!) as Record<string, string>)['tokenUrl']).toBe(
+        `${elsewhere.url}/token`,
+      )
+    })
+
+    it('accepts the endpoints that account itself signed in against', async () => {
+      expect(
+        await run(['refresh', 'acme', ...customFlags(server, ['--account', 'work', '--json'])]),
+      ).toBe(0)
+
+      expect(JSON.parse(out())).toMatchObject({
+        provider: 'acme',
+        account: 'work',
+        hasRefreshToken: true,
+      })
+      expect(err()).toBe('')
+
+      // Its own endpoint did the refresh, and only its own.
+      expect(server.refreshCount).toBe(1)
+      expect(elsewhere.refreshCount).toBe(0)
+    })
+
+    it('sends a flagless refresh to that account\'s endpoints, not the other\'s', async () => {
+      expect(await run(['refresh', 'acme', ...refreshFlags(['--account', 'work', '--json'])])).toBe(0)
+
+      expect(JSON.parse(out())).toMatchObject({ provider: 'acme', account: 'work' })
+
+      // The half that matters: work's refresh token reached the server that
+      // minted it, and home's endpoint was never handed a grant of any kind.
+      expect(server.refreshCount).toBe(1)
+      expect(server.requests.at(-1)?.['grant_type']).toBe('refresh_token')
+      expect(server.requests.at(-1)?.['refresh_token']).toBe('refresh-1')
+      expect(elsewhere.refreshCount).toBe(0)
+      expect(elsewhere.requests.map((body) => body['grant_type'])).toEqual(['authorization_code'])
+    })
+
+    it('resolves an account through a descriptor written before they were keyed per account', async () => {
+      // What an install upgraded mid-life looks like: one shared descriptor,
+      // and an account that has not signed in since.
+      const stored = await readStore()
+      stored['provider:acme'] = stored['provider:acme:work']!
+      stored['tokens:acme:legacy'] = stored['tokens:acme:work']!
+      delete stored['provider:acme:work']
+      await writeFile(join(dir, 'auth.json'), JSON.stringify(stored))
+
+      expect(await run(['whoami', 'acme', ...refreshFlags(['--account', 'legacy', '--json'])])).toBe(0)
+      expect(JSON.parse(out())).toMatchObject({ provider: 'acme', account: 'legacy' })
+    })
+  })
+
+  /**
+   * Compared as strings, the check refused spellings that name the same
+   * endpoint — a trailing slash, an explicit `:443`, a differently cased host.
+   * Every one of those is something a saved command line collects, and refusing
+   * them breaks a working script without protecting anybody.
+   */
+  describe('endpoint flags spelled differently but naming the same endpoint', () => {
+    const authorizeUrl = 'https://idp.example.com/authorize'
+    const tokenUrl = 'https://idp.example.com/token'
+
+    beforeEach(async () => {
+      await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+      await patchDescriptor('provider:acme', (descriptor) => ({
+        ...descriptor,
+        authorizationUrl: authorizeUrl,
+        tokenUrl,
+      }))
+      stdout = []
+      stderr = []
+    })
+
+    // `whoami` on a token that has not expired reaches no endpoint at all, so
+    // the exit code is the comparison's verdict and nothing else.
+    const whoamiWith = (authorize: string, token: string) =>
+      run([
+        'whoami',
+        'acme',
+        '--auth-dir',
+        dir,
+        '--client-id',
+        'cli-test-client',
+        '--authorize-url',
+        authorize,
+        '--token-url',
+        token,
+        '--json',
+      ])
+
+    it('accepts a trailing slash on the path', async () => {
+      expect(await whoamiWith(authorizeUrl, `${tokenUrl}/`)).toBe(0)
+      expect(JSON.parse(out())).toMatchObject({ provider: 'acme', hasRefreshToken: true })
+    })
+
+    it('accepts a default port written out', async () => {
+      expect(await whoamiWith('https://idp.example.com:443/authorize', tokenUrl)).toBe(0)
+      expect(JSON.parse(out())).toMatchObject({ provider: 'acme', hasRefreshToken: true })
+    })
+
+    it('accepts a differently cased host', async () => {
+      expect(await whoamiWith(authorizeUrl, 'https://IDP.Example.com/token')).toBe(0)
+      expect(JSON.parse(out())).toMatchObject({ provider: 'acme', hasRefreshToken: true })
+    })
+
+    it('still refuses a different path, and a host that merely looks alike', async () => {
+      expect(await whoamiWith(authorizeUrl, 'https://idp.example.com/token/v2')).toBe(1)
+      expect(err()).toContain('--token-url')
+
+      stdout = []
+      stderr = []
+      expect(await whoamiWith(authorizeUrl, 'https://idp.example.com.evil.test/token')).toBe(1)
+      expect(err()).toContain('--token-url')
+      expect(out()).toBe('')
+    })
+
+    it('lets the refresh itself run when only the stored spelling differs', async () => {
+      await patchDescriptor('provider:acme', (descriptor) => ({
+        ...descriptor,
+        authorizationUrl: `${server.url}/authorize/`,
+        tokenUrl: `${server.url}/token/`,
+      }))
+
+      expect(await run(['refresh', 'acme', ...customFlags(server, ['--json'])])).toBe(0)
+      expect(JSON.parse(out())).toMatchObject({ provider: 'acme', hasRefreshToken: true })
+      expect(server.refreshCount).toBe(1)
+    })
+  })
+
+  /**
+   * A descriptor missing the URL under comparison used to mean "no opinion",
+   * which is the one reading it cannot support: the check has not run, and the
+   * command still POSTs the stored refresh token to whatever the flag named.
+   */
+  describe('a descriptor missing the endpoint being compared', () => {
+    let elsewhere: FakeAuthServer
+
+    beforeEach(async () => {
+      elsewhere = await startFakeAuthServer()
+      await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+      await patchDescriptor('provider:acme', ({ tokenUrl: _dropped, ...rest }) => rest)
+      stdout = []
+      stderr = []
+    })
+
+    afterEach(async () => {
+      await elsewhere.close()
+    })
+
+    it('refuses rather than assuming, and the named endpoint receives nothing', async () => {
+      expect(
+        await run([
+          'refresh',
+          'acme',
+          '--auth-dir',
+          dir,
+          '--client-id',
+          'cli-test-client',
+          '--authorize-url',
+          `${server.url}/authorize`,
+          '--token-url',
+          `${elsewhere.url}/token`,
+        ]),
+      ).toBe(1)
+
+      expect(err()).toContain('--token-url')
+      expect(err()).toContain(`${elsewhere.url}/token`)
+
+      // The half that matters: the other server was never given the credential.
+      expect(elsewhere.requests).toEqual([])
+      expect(elsewhere.refreshCount).toBe(0)
+      expect(out()).toBe('')
+
+      const stored = await readStore()
+      expect((JSON.parse(stored['tokens:acme']!) as { refreshToken?: string }).refreshToken).toBe(
+        'refresh-1',
+      )
+    })
+  })
+
+  /**
+   * `logout` spends no credential at either compared endpoint — `--revoke`
+   * talks to `revocationUrl`, which is not compared — so refusing it only took
+   * away the command that cleans up after a descriptor gone wrong, and it is
+   * the command most likely to be run with the whole flag set copied from
+   * `login`.
+   */
+  describe('logout with endpoint flags that disagree', () => {
+    let elsewhere: FakeAuthServer
+
+    beforeEach(async () => {
+      elsewhere = await startFakeAuthServer()
+      await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+      stdout = []
+      stderr = []
+    })
+
+    afterEach(async () => {
+      await elsewhere.close()
+    })
+
+    it('signs out anyway, and clears the descriptor it was fighting with', async () => {
+      expect(
+        await run([
+          'logout',
+          'acme',
+          '--auth-dir',
+          dir,
+          '--client-id',
+          'cli-test-client',
+          '--authorize-url',
+          `${server.url}/authorize`,
+          '--token-url',
+          `${elsewhere.url}/token`,
+          '--json',
+        ]),
+      ).toBe(0)
+
+      expect(JSON.parse(out())).toEqual({
+        provider: 'acme',
+        signedOut: true,
+        revoked: false,
+        revocation: 'not-requested',
+        revocationError: null,
+      })
+
+      // Nothing was sent to either endpoint; a logout has nothing to send.
+      expect(elsewhere.requests).toEqual([])
+
+      const stored = await readStore()
+      expect(stored['tokens:acme']).toBeUndefined()
+      expect(stored['provider:acme']).toBeUndefined()
     })
   })
 

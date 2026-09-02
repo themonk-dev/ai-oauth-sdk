@@ -101,6 +101,7 @@ export type {
   CallbackReceiver,
   CallbackResult,
   FetchLike,
+  LogoutResult,
   PendingAuthorization,
   ProviderConfig,
   ProviderInput,

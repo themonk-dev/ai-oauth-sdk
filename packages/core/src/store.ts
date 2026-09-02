@@ -1,6 +1,6 @@
 import { isOAuthError } from './errors.js'
 import type { AuthClient } from './client.js'
-import type { CallbackReceiver, TokenSet } from './types.js'
+import type { CallbackReceiver, LogoutResult, TokenSet } from './types.js'
 
 export interface AuthState {
   tokens: TokenSet | undefined
@@ -48,7 +48,12 @@ export interface AuthStore {
   /** Loads any persisted session. Safe to call more than once. */
   restore(): Promise<void>
   login(overrides?: LoginOverrides): Promise<TokenSet | undefined>
-  logout(options?: { revoke?: boolean }): Promise<void>
+  /**
+   * Clears the session, returning what revocation actually did — the store
+   * forwards {@link AuthClient.logout}'s result rather than discarding it, so a
+   * UI can tell "revoked at the provider" from "cleared locally only".
+   */
+  logout(options?: { revoke?: boolean }): Promise<LogoutResult>
   refresh(): Promise<TokenSet | undefined>
   getAccessToken(): Promise<string>
   /** Aborts an in-flight login. */
@@ -169,8 +174,11 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
     },
 
     async logout(logoutOptions = {}) {
-      await client.logout(logoutOptions)
+      const result = await client.logout(logoutOptions)
+
       setState({ tokens: undefined, error: undefined })
+
+      return result
     },
 
     async refresh() {
