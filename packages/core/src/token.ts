@@ -10,7 +10,8 @@ export const DEFAULT_EXPIRY_SKEW_MS = 60_000
 interface TokenEndpointResponse {
   access_token?: string
   refresh_token?: string
-  expires_in?: number
+  /** Spec says a number; some providers send the digits as a JSON string. */
+  expires_in?: number | string
   token_type?: string
   scope?: string
   id_token?: string
@@ -134,6 +135,26 @@ async function postToTokenEndpoint(
 }
 
 /**
+ * The lifetime in seconds, or undefined when the response does not state one.
+ *
+ * RFC 6749 §5.1 says `expires_in` is a number, and a well-known
+ * non-conformance is to send the digits as a JSON string instead. Rejecting
+ * `"3600"` costs more than accepting it: with no `expiresAt`, {@link isExpired}
+ * answers false forever, so the credential is never renewed ahead of its real
+ * expiry. Anything that is not a finite, non-negative number after coercion —
+ * `null`, `"soon"`, `-1`, `Infinity` — states nothing usable and is dropped.
+ */
+function readExpiresIn(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined
+  }
+
+  const seconds = Number(value)
+
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined
+}
+
+/**
  * Shapes a token endpoint response into a {@link TokenSet}.
  *
  * `previous` carries a renewal's omissions forward. Providers commonly leave
@@ -154,14 +175,21 @@ function toTokenSet(
     )
   }
 
+  // Validate before choosing, the way `access_token` is checked above. A
+  // gateway that always emits the field sends `"refresh_token": ""` on a
+  // renewal; testing the whole `??` expression for truthiness dropped both the
+  // empty string and the stored token with it, and the next refresh then failed
+  // with `refresh_failed` for a session that was still perfectly renewable.
+  const refreshToken =
+    typeof raw.refresh_token === 'string' && raw.refresh_token
+      ? raw.refresh_token
+      : previous?.refreshToken
+  const expiresIn = readExpiresIn(raw.expires_in)
+
   const tokens: TokenSet = {
     accessToken,
-    ...(raw.refresh_token ?? previous?.refreshToken
-      ? { refreshToken: raw.refresh_token ?? previous?.refreshToken }
-      : {}),
-    ...(typeof raw.expires_in === 'number'
-      ? { expiresAt: Date.now() + raw.expires_in * 1000 }
-      : {}),
+    ...(refreshToken ? { refreshToken } : {}),
+    ...(expiresIn !== undefined ? { expiresAt: Date.now() + expiresIn * 1000 } : {}),
     tokenType: raw.token_type ?? 'Bearer',
     ...(raw.scope ? { scope: raw.scope } : {}),
     ...(raw.id_token ? { idToken: raw.id_token } : {}),
