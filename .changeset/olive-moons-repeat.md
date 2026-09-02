@@ -85,6 +85,16 @@ built-ins that declare no revocation endpoint, where it previously said `true`.
 A script gating on that field was reading a constant; it will now see the truth,
 which may be a different value than it saw yesterday.
 
+**A web storage global was trusted without a document behind it** — `browser`.
+The SSR guard decided "browser" from the presence of `localStorage` /
+`sessionStorage`. Node ships Web Storage on by default from v26, so a server
+render there got a working adapter and the refusal never fired — and Node's
+`localStorage` is a file while its `sessionStorage` is process-global, so that
+pools every request's PKCE verifier and tokens into one store. Same shape as the
+workerd misdetection: a negative test for "not a browser" that a non-browser
+runtime satisfies. The check now asks for a document positively. Deno and Bun
+expose the same globals server-side.
+
 **An explicit `storage: undefined` erased the sessionStorage default** — `browser`.
 The default was spread before the caller's options, so the ordinary
 `{ storage: props.storage }` idiom silently reached `memoryStorage()` — failing
