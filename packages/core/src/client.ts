@@ -117,8 +117,20 @@ export class AuthClient {
 
   /** Guarantees concurrent callers share one refresh instead of racing. */
   #refreshInFlight: Promise<TokenSet> | undefined
+  /** Same guarantee for the first read out of storage. */
+  #loadInFlight: Promise<TokenSet | undefined> | undefined
   #cachedTokens: TokenSet | undefined
   #tokensLoaded = false
+  /**
+   * Bumped by every commit to the cache.
+   *
+   * A storage read is not instant — SecureStore prompts for biometrics, a file
+   * read waits on the disk — and a login or logout completing during one is
+   * newer than whatever that read is about to hand back. The counter is how the
+   * read notices it was overtaken, so it can drop its stale result instead of
+   * writing it over the newer value.
+   */
+  #tokenEpoch = 0
 
   constructor(options: AuthClientOptions) {
     const overrides: Partial<ProviderConfig> = {}
@@ -572,21 +584,73 @@ export class AuthClient {
     return null
   }
 
+  /**
+   * Publishes a value as the newest tokens this client knows about, and marks
+   * every read still in flight as overtaken. See {@link AuthClient.#tokenEpoch}.
+   */
+  #commitTokens(tokens: TokenSet | undefined): void {
+    this.#tokenEpoch++
+    this.#cachedTokens = tokens
+    this.#tokensLoaded = true
+  }
+
+  /**
+   * The cached tokens, reading storage once on first use.
+   *
+   * Concurrent callers share a single read, the same way concurrent refreshes
+   * share one refresh — ten parallel API calls on a cold client would otherwise
+   * fire ten storage reads, which on a backend that prompts for biometrics is
+   * ten prompts.
+   *
+   * The result is written back only if nothing was committed while it was in
+   * flight. A login landing mid-read is newer than the read, and overwriting it
+   * would strand the user unauthenticated for the life of the process — the
+   * cache would say "no tokens" and `#tokensLoaded` would stop anyone looking
+   * again. A logout landing mid-read is the same problem pointing the other
+   * way: the stale read would sign the user back in.
+   */
   async getTokens(): Promise<TokenSet | undefined> {
     if (this.#tokensLoaded) {
       return this.#cachedTokens
     }
 
-    this.#cachedTokens = await this.#readStoredTokens()
-    this.#tokensLoaded = true
+    if (this.#loadInFlight) {
+      return this.#loadInFlight
+    }
 
-    return this.#cachedTokens
+    const run = (async () => {
+      const epoch = this.#tokenEpoch
+      const stored = await this.#readStoredTokens()
+
+      if (this.#tokenEpoch !== epoch) {
+        return this.#cachedTokens
+      }
+
+      this.#commitTokens(stored)
+
+      return stored
+    })()
+
+    this.#loadInFlight = run
+
+    try {
+      return await run
+    } finally {
+      this.#loadInFlight = undefined
+    }
   }
 
+  /**
+   * Persists first, then commits to memory.
+   *
+   * The other order tells the caller the write failed while leaving the client
+   * authenticated in memory — and with a provider that rotates refresh tokens,
+   * the rotated one would then exist only in memory and die with the process,
+   * leaving the spent token on disk as the only way back in.
+   */
   async setTokens(tokens: TokenSet): Promise<void> {
-    this.#cachedTokens = tokens
-    this.#tokensLoaded = true
     await this.#storage.set(this.#tokenKey, JSON.stringify(tokens))
+    this.#commitTokens(tokens)
   }
 
   /** True when a token exists and has not passed the renewal window. */
@@ -654,8 +718,7 @@ export class AuthClient {
         stored.accessToken !== tokens.accessToken &&
         !isExpired(stored, this.#expirySkewMs)
       ) {
-        this.#cachedTokens = stored
-        this.#tokensLoaded = true
+        this.#commitTokens(stored)
 
         return stored
       }
@@ -740,8 +803,7 @@ export class AuthClient {
       }
     }
 
-    this.#cachedTokens = undefined
-    this.#tokensLoaded = true
+    this.#commitTokens(undefined)
     await this.#storage.delete(this.#tokenKey)
   }
 }
