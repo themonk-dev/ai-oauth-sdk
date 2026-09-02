@@ -39,9 +39,13 @@ cannot be shaped now raises without quoting the body.
 **Credential-file writes were serialised per adapter, not per file** — `node`.
 `set`/`delete` are read-modify-write over the whole file, so two clients over one
 `auth.json` — the ordinary one-client-per-provider shape — silently discarded
-each other's records, killing a rotated session. There was no cross-process lock
-at all. The queue is now shared per resolved path, and the read-modify-write runs
-under an `O_EXCL` lock with stale-lock reclaim.
+each other's records, killing a rotated session. The queue is now shared per
+resolved path. Two separate *processes* sharing one credential file can still
+lose a record, as before: an `O_EXCL` lock was tried and removed, because
+without kernel-backed ownership it has no safe expiry — no expiry wedges the
+store after a crash, and any expiry lets a slow writer's `rename` land on top of
+a write that completed under a lock. That limit is now documented rather than
+papered over.
 
 **The loopback receiver could advertise what it would not serve** — `node`. An
 advertised IPv6 literal that differed from the bound host was never bound, and a
@@ -73,8 +77,13 @@ that has genuinely changed endpoints.
 `revoked` echoed the flag, so it read `true` both for the five of seven built-ins
 that declare no revocation endpoint and for a revocation the provider actively
 refused — the latter with no signal anywhere. `AuthClient.logout` now returns a
-`LogoutResult` carrying that outcome (additive; callers ignoring it are
-unaffected), and the CLI reports it.
+`LogoutResult` carrying that outcome, and the store and the four framework
+bindings widen with it. The core change is additive — callers ignoring the
+return value are unaffected — but note the **CLI's JSON output changes**:
+`logout --revoke --json` now reports `revoked: false` for the five of seven
+built-ins that declare no revocation endpoint, where it previously said `true`.
+A script gating on that field was reading a constant; it will now see the truth,
+which may be a different value than it saw yesterday.
 
 **An explicit `storage: undefined` erased the sessionStorage default** — `browser`.
 The default was spread before the caller's options, so the ordinary
