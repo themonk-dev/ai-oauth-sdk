@@ -143,9 +143,17 @@ async function postToTokenEndpoint(
  * answers false forever, so the credential is never renewed ahead of its real
  * expiry. Anything that is not a finite, non-negative number after coercion —
  * `null`, `"soon"`, `-1`, `Infinity` — states nothing usable and is dropped.
+ *
+ * The type is checked *before* the coercion because `Number` is far looser than
+ * this reads: `[]`, `false`, `"  "` and `"\n"` all become `0`, which is not
+ * "no lifetime" but "already expired" — `expiresAt` lands on `Date.now()` and
+ * every `getAccessToken()` then burns a refresh. `true` would become one
+ * second. A value that states nothing must leave `expiresAt` unset; only a
+ * number, or a string with something in it, gets as far as `Number`. A real
+ * `0` still means zero.
  */
 export function readExpiresIn(value: unknown): number | undefined {
-  if (value === undefined || value === null || value === '') {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) {
     return undefined
   }
 

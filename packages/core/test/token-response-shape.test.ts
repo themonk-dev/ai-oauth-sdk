@@ -126,9 +126,38 @@ describe('expires_in is coerced before it is used', () => {
     ['a negative lifetime', -1],
     ['Infinity, which JSON sends as a string', 'Infinity'],
     ['an object', { seconds: 60 }],
+    // `Number` is looser than the check below it reads: each of these coerces
+    // to a clean 0, which is not "no lifetime" but "expired at Date.now()" —
+    // `isExpired` then answers true forever and every `getAccessToken()` burns
+    // a refresh on a credential that was never given a lifetime at all.
+    ['an empty array, which coerces to 0', []],
+    ['a whitespace string, which coerces to 0', '  '],
+    ['a newline, which coerces to 0', '\n'],
+    ['false, which coerces to 0', false],
+    // And this one coerces to 1, i.e. a token that expires in a second.
+    ['true, which coerces to 1', true],
   ])('drops %s rather than inventing an expiry', async (_label, value) => {
     const tokens = await exchangeWith({ access_token: 'at', expires_in: value })
     expect(tokens.expiresAt).toBeUndefined()
+  })
+
+  // The coercing values above are worse than a missing expiry, not equal to it:
+  // they read as *already expired*, so nothing the client hands out is ever
+  // considered usable.
+  it.each([
+    ['an empty array', []],
+    ['a whitespace string', '  '],
+    ['false', false],
+  ])('does not report a token as expired because %s coerced to 0', async (_label, value) => {
+    const tokens = await exchangeWith({ access_token: 'at', expires_in: value })
+    expect(isExpired(tokens)).toBe(false)
+  })
+
+  it('still treats a real 0 as a lifetime of zero', async () => {
+    const tokens = await exchangeWith({ access_token: 'at', expires_in: 0 })
+
+    expect(tokens.expiresAt).toBeDefined()
+    expect(isExpired(tokens)).toBe(true)
   })
 
   it('leaves expiresAt unset when the provider states no lifetime', async () => {
