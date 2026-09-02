@@ -107,6 +107,19 @@ const hasIpv6 = await new Promise<boolean>((resolve) => {
   probe.listen(0, '::1', () => probe.close(() => resolve(true)))
 })
 
+/**
+ * Whether a second loopback address is bindable, as it is on Linux where the
+ * whole `127.0.0.0/8` is loopback.
+ *
+ * It gives the "advertised literal is not the bound one" arrangement an IPv4
+ * spelling, so the case can be exercised where there is no IPv6 to reach for.
+ */
+const hasSecondLoopback = await new Promise<boolean>((resolve) => {
+  const probe = createServer()
+  probe.once('error', () => resolve(false))
+  probe.listen(0, '127.0.0.2', () => probe.close(() => resolve(true)))
+})
+
 /** Whether a promise has settled, without consuming its result. */
 const isSettled = async (promise: Promise<unknown>): Promise<boolean> => {
   const pending = Symbol('pending')
@@ -686,6 +699,114 @@ describe('loopbackReceiver', () => {
         ).rejects.toMatchObject({ message: expect.stringContaining('"[::1]"') })
       })
     })
+
+    /*
+     * A bind host is not always one address. `0.0.0.0` and `::` are what a
+     * devcontainer, a WSL shell or a VM image sets so the port is reachable
+     * from the host, while the redirect URI still names a loopback literal the
+     * browser can use — bind-wide, advertise-narrow. The wildcard is already
+     * listening on that literal, so asking whether it *equals* the literal
+     * rather than whether it *covers* it binds the same port twice and reads
+     * the kernel's `EADDRINUSE` — our own socket — as a foreign holder.
+     */
+    describe('treats a wildcard bind host as covering the address it advertises', () => {
+      it('serves the 127.0.0.1 it advertises while bound to 0.0.0.0', async () => {
+        const started = await loopbackReceiver({
+          port: 0,
+          host: '0.0.0.0',
+          redirectHost: '127.0.0.1',
+        }).start({ provider: testProvider(server.url) })
+
+        try {
+          // Byte-identical to what the same options advertise without a
+          // wildcard bind: the coverage changes, the promise does not.
+          const url = new URL(started.redirectUri)
+          expect(url.hostname).toBe('127.0.0.1')
+          expect(url.pathname).toBe('/callback')
+
+          // And the address it named really answers, which is the half a bind
+          // that never happened cannot prove on its own.
+          const result = await rawGet(`${started.redirectUri}?code=wide&state=xyz`, navigationHeaders)
+          expect(result.status).toBe(200)
+          await expect(started.wait()).resolves.toMatchObject({ code: 'wide' })
+        } finally {
+          await started.close()
+        }
+      })
+
+      it.skipIf(!hasIpv6)('serves the 127.0.0.1 it advertises while bound to ::', async () => {
+        // Node leaves `ipv6Only` off, so the IPv6 wildcard answers on the IPv4
+        // loopback too — the same arrangement one option over.
+        for (const host of ['::', '[::]']) {
+          const started = await loopbackReceiver({ port: 0, host, redirectHost: '127.0.0.1' }).start({
+            provider: testProvider(server.url),
+          })
+
+          try {
+            expect(new URL(started.redirectUri).hostname, host).toBe('127.0.0.1')
+            const result = await rawGet(`${started.redirectUri}?code=wide&state=xyz`, navigationHeaders)
+            expect(result.status, host).toBe(200)
+          } finally {
+            await started.close()
+          }
+        }
+      })
+
+      it.skipIf(!hasIpv6)('still binds an advertised ::1 that the IPv4 wildcard cannot answer for', async () => {
+        // Coverage is per family: an IPv4 socket never receives an IPv6
+        // connection, so `0.0.0.0` leaves `[::1]` as unbound as `127.0.0.1`
+        // would. Waving every wildcard through would reinstate exactly the
+        // hang this whole describe block is about.
+        const started = await loopbackReceiver({
+          port: 0,
+          host: '0.0.0.0',
+          redirectHost: '[::1]',
+        }).start({ provider: testProvider(server.url) })
+
+        try {
+          expect(started.redirectUri).toContain('http://[::1]:')
+          const viaIpv6 = await rawGet(`${started.redirectUri}?code=six&state=xyz`, navigationHeaders)
+          expect(viaIpv6.status).toBe(200)
+          await expect(started.wait()).resolves.toMatchObject({ code: 'six' })
+        } finally {
+          await started.close()
+        }
+      })
+    })
+
+    it.skipIf(!hasSecondLoopback)(
+      'still refuses a required address a foreign process holds, without circular advice',
+      async () => {
+        // The other half of the wildcard case: a bind host that genuinely does
+        // not cover the advertised literal, with somebody else on it. That is
+        // a real refusal and it stays — but the remedy cannot be the
+        // `redirectHost` the URI already names, which is what it used to say.
+        const squatter = createServer()
+        await new Promise<void>((resolve) => squatter.listen(0, '127.0.0.1', resolve))
+        const port = (squatter.address() as AddressInfo).port
+
+        try {
+          await expect(
+            loopbackReceiver({ port, host: '127.0.0.2', redirectHost: '127.0.0.1' }).start({
+              provider: testProvider(server.url),
+            }),
+          ).rejects.toMatchObject({
+            code: 'configuration_error',
+            message: expect.stringMatching(/held by another process[\s\S]*is that address/),
+          })
+
+          await expect(
+            loopbackReceiver({ port, host: '127.0.0.2', redirectHost: '127.0.0.1' }).start({
+              provider: testProvider(server.url),
+            }),
+          ).rejects.toMatchObject({
+            message: expect.not.stringContaining("redirectHost: '127.0.0.1'"),
+          })
+        } finally {
+          await new Promise<void>((resolve) => squatter.close(() => resolve()))
+        }
+      },
+    )
 
     it('leaves a provider that advertises the IP literal on one address', async () => {
       // `xai` already names `127.0.0.1`, which nothing else can answer for, so

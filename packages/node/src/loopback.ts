@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { isIPv6, type AddressInfo } from 'node:net'
 
 import {
   OAuthError,
@@ -22,7 +22,12 @@ export interface LoopbackReceiverOptions {
   port?: number
   /** Path to listen on. Defaults to the provider's declared path. */
   path?: string
-  /** Interface to bind. Defaults to 127.0.0.1 — never bind 0.0.0.0 for this. */
+  /**
+   * Interface to bind. Defaults to 127.0.0.1, and nothing here ever widens that
+   * on its own. A caller that does pass a wildcard — `0.0.0.0` or `::`, which a
+   * devcontainer or VM routinely needs — is taken to be listening on the
+   * loopback address the redirect URI names, so it is not bound a second time.
+   */
   host?: string
   /** Host used when building the redirect URI. Defaults to the provider's. */
   redirectHost?: string
@@ -154,6 +159,44 @@ function uriHost(host: string): string {
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
 }
 
+/**
+ * The address family a bind host stands for when it names every address on the
+ * machine rather than one of them, or nothing when it names one.
+ *
+ * `0.0.0.0` is the IPv4 wildcard; `::` is the IPv6 one and reaches here in any
+ * of the zero spellings IPv6 allows (`::0`, `0:0:0:0:0:0:0:0`, and `[::]` with
+ * its brackets already stripped), so that side is asked structurally rather
+ * than by listing them. Bind-wide while advertising a loopback literal is the
+ * ordinary devcontainer, WSL and VM arrangement, so these are hosts the
+ * receiver is handed in practice even though it never chooses one itself.
+ */
+function wildcardFamily(host: string): 4 | 6 | undefined {
+  if (host === '0.0.0.0') {
+    return 4
+  }
+
+  return isIPv6(host) && !/[1-9a-f]/i.test(host) ? 6 : undefined
+}
+
+/**
+ * Whether binding `primaryHost` already answers for `address`.
+ *
+ * A wildcard is the whole point of the question: it is not the advertised
+ * address, but it is listening on it, so binding it again would collide with
+ * our own socket — `EADDRINUSE` from the kernel, reported as a foreign holder.
+ * `0.0.0.0` answers for every IPv4 address and nothing on IPv6; `::` is
+ * dual-stack, because Node leaves `ipv6Only` off, so it answers for both.
+ */
+function covers(primaryHost: string, address: string): boolean {
+  if (primaryHost === address) {
+    return true
+  }
+
+  const family = wildcardFamily(primaryHost)
+
+  return family === 6 || (family === 4 && !address.includes(':'))
+}
+
 /** The other address a hostname like `localhost` routinely also resolves to. */
 const siblingAddresses: Record<string, string> = { '127.0.0.1': '::1', '::1': '127.0.0.1' }
 
@@ -204,14 +247,17 @@ interface ExtraAddress {
  * `host` the second — so the question is never "is the advertised host an IP
  * literal", it is "is the advertised host covered by what we bound".
  *
- * A literal is covered only when it *is* the bound address; otherwise it has to
- * be bound as well, or the login can never complete. A name like `localhost`
- * covers every address it resolves to, which on a dual-stack machine is both
- * loopback addresses — hence the sibling.
+ * A literal is covered when the bind host answers for it — because it is that
+ * address, or because it is a wildcard that already includes it; otherwise it
+ * has to be bound as well, or the login can never complete. A name like
+ * `localhost` covers every address it resolves to, which on a dual-stack
+ * machine is both loopback addresses — hence the sibling.
  */
 function extraAddresses(advertisedAddress: string, primaryHost: string): ExtraAddress[] {
   if (ipLiteralAddresses.has(advertisedAddress)) {
-    return advertisedAddress === primaryHost ? [] : [{ host: advertisedAddress, required: true }]
+    return covers(primaryHost, advertisedAddress)
+      ? []
+      : [{ host: advertisedAddress, required: true }]
   }
 
   const sibling = siblingAddresses[primaryHost]
@@ -669,18 +715,24 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
             await Promise.all(bound.map(closeServer))
 
             if (attempt === attempts) {
+              /* The remedy differs with the case, because advising the address
+                 the URI already names would send the reader in a circle. Where
+                 the URI names the contested address outright there is no other
+                 host to advertise — only a free port, or a different one. */
               throw new OAuthError(
                 'configuration_error',
                 `Port ${port} on ${contested.host} is held by another process, but the redirect ` +
                   `URI for this login names "${advertisedHost}", which ` +
                   (contested.required
                     ? `is that address. The browser would hand the authorization code straight ` +
-                      'to whoever holds it'
+                      'to whoever holds it, so this login was refused rather than started. Free ' +
+                      'that port, or pass a different `port` (or 0 to pick a free one) if the ' +
+                      'provider allows it.'
                     : `resolves to both ${primaryHost} and ${contested.host}. The browser may ` +
-                      'hand the authorization code to whoever holds the other address') +
-                  ', so this login was refused rather than started. Free that port, or pass ' +
-                  "`redirectHost: '127.0.0.1'` to loopbackReceiver() if the provider accepts " +
-                  'the IP literal.',
+                      'hand the authorization code to whoever holds the other address, so this ' +
+                      'login was refused rather than started. Free that port, or pass ' +
+                      `\`redirectHost: '${uriHost(primaryHost)}'\` to loopbackReceiver() if the ` +
+                      'provider accepts the IP literal.'),
               )
             }
 
