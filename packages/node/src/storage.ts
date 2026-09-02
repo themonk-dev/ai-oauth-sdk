@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
-import { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
 import type { AuthStorage } from '@ai-oauth-sdk/core'
 
@@ -34,139 +34,56 @@ export function defaultAuthDir(): string {
  * property of the *file* rather than of the object that happens to hold it. The
  * map holds one settled promise per distinct path, so it is bounded by the
  * number of credential files a process touches.
+ *
+ * A promise chain reaches exactly as far as one process; the cross-process case
+ * is documented on {@link fileStorage} and deliberately left open.
  */
 const queues = new Map<string, Promise<unknown>>()
-
-/**
- * How long a lock file may sit untouched before a later writer decides its
- * owner died and takes it.
- *
- * The critical section is a read, a JSON round-trip and a rename — under a
- * millisecond in the ordinary case — so ten seconds is not a bound on honest
- * work, it is the point past which "still holding it" stops being plausible. A
- * crashed CLI must not wedge the credential store for the life of the machine,
- * which is what an unconditional wait would do.
- */
-const STALE_LOCK_MS = 10_000
-
-/**
- * How long to wait for the lock before failing.
- *
- * Comfortably longer than {@link STALE_LOCK_MS}, so a waiter always reaches the
- * point where it may reclaim an abandoned lock instead of timing out first.
- */
-const LOCK_TIMEOUT_MS = 15_000
-
-const LOCK_RETRY_MIN_MS = 5
-const LOCK_RETRY_MAX_MS = 100
-
-const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms))
-
-/**
- * Takes the cross-process lock guarding one credential file, and returns the
- * function that releases it.
- *
- * The lock is a sibling file created with `wx` (`O_CREAT|O_EXCL`), which is the
- * one filesystem primitive that is atomic across processes on every platform
- * this adapter runs on: exactly one of two racing writers creates it and the
- * other gets `EEXIST`. Nothing here can be done with an in-process queue — two
- * CLI windows are two processes, and `client.ts` explicitly designs for that
- * being ordinary.
- *
- * A failure to acquire is thrown, never swallowed: the alternative to waiting is
- * writing anyway, and writing anyway is the data loss this exists to prevent.
- */
-async function acquireLock(path: string): Promise<() => Promise<void>> {
-  const lockPath = `${path}.lock`
-  // Written into the lock so release can tell "the lock I took" from "a lock
-  // someone else took after mine was reclaimed as stale", and only ever remove
-  // its own.
-  const token = randomBytes(16).toString('hex')
-  const deadline = Date.now() + LOCK_TIMEOUT_MS
-  let backoff = LOCK_RETRY_MIN_MS
-
-  for (;;) {
-    try {
-      const handle = await open(lockPath, 'wx', 0o600)
-
-      try {
-        await handle.writeFile(token, 'utf8')
-      } finally {
-        await handle.close()
-      }
-
-      return async () => {
-        try {
-          if ((await readFile(lockPath, 'utf8')) === token) {
-            await unlink(lockPath)
-          }
-        } catch {
-          /* Already gone, or reclaimed by someone else; nothing to release. */
-        }
-      }
-    } catch (error) {
-      // Anything other than "someone holds it" — a read-only home directory, a
-      // permission problem — is a real failure and belongs to the caller.
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw error
-      }
-    }
-
-    await reclaimIfStale(lockPath)
-
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Timed out after ${LOCK_TIMEOUT_MS}ms waiting for the lock at ${lockPath} while ` +
-          `writing ${path}. Another process is holding it; if none is running, delete that ` +
-          'file.',
-      )
-    }
-
-    await sleep(backoff)
-    backoff = Math.min(backoff * 2, LOCK_RETRY_MAX_MS)
-  }
-}
-
-/** Removes a lock whose owner has plainly gone away. */
-async function reclaimIfStale(lockPath: string): Promise<void> {
-  try {
-    const before = await stat(lockPath)
-
-    if (Date.now() - before.mtimeMs < STALE_LOCK_MS) {
-      return
-    }
-
-    // Re-stat immediately before removing it and give up if the file changed:
-    // between the two calls the dead owner's lock may have been reclaimed by
-    // another waiter, and deleting *that* lock would put two writers in the
-    // critical section — the very thing being defended. The window is not zero
-    // (there is no "unlink if unchanged" syscall), but reaching it needs an
-    // owner ten seconds dead and a new one arriving inside the same instant.
-    const after = await stat(lockPath)
-
-    if (after.mtimeMs === before.mtimeMs && after.ino === before.ino) {
-      await unlink(lockPath)
-    }
-  } catch {
-    /* Gone while we looked at it: the next `wx` open decides who gets it. */
-  }
-}
 
 /**
  * JSON-file storage for CLIs, written `0600` so other users on the box cannot
  * read the tokens.
  *
  * Writes go to a temp file and are renamed into place: an interrupted write
- * cannot leave a truncated credential file behind. Because a reader therefore
- * always sees one whole record or the previous one, `get` and `keys` need no
- * lock of their own.
+ * cannot leave a truncated credential file behind, and a reader always sees one
+ * whole record or the previous one.
  *
  * A `set` or `delete` is a read-modify-write over the whole file, so those are
- * serialised twice over: through a promise chain shared by every
- * {@link fileStorage} in this process that names the same file, and through a
- * lock file that excludes other processes. Neither half is redundant — the chain
- * alone loses writes between two CLI windows, and the lock file alone would have
- * one instance's queued writes contend with another's inside a single process.
+ * serialised through a promise chain shared by every {@link fileStorage} in this
+ * process that names the same file — including the ordinary shape where
+ * `createNodeAuthClient` builds one client, and so one adapter, per provider.
+ *
+ * ## Limitation: two processes can still lose a write
+ *
+ * Serialisation stops at the process boundary. Two CLI windows writing to one
+ * `~/.ai-oauth-sdk/auth.json` interleave read/read/write/write, and the second
+ * write — built on a record read before the first landed — drops the other's
+ * key with no error on either side. This is not a hairline race: two logins that
+ * start within a few milliseconds of each other lose one of the two records
+ * essentially every time, because both read the file before either renames.
+ * Sequential use is unaffected, and so is any number of writers inside one
+ * process.
+ *
+ * This is left open on purpose. Closing it needs mutual exclusion between
+ * processes, and the only primitive Node exposes without a native dependency is
+ * an `O_EXCL` sentinel file, which has no safe expiry: a lock is either held
+ * forever by a process that was `SIGKILL`ed — wedging every later login on the
+ * machine — or reclaimed on a timeout, in which case a writer merely *slow*
+ * (a suspended laptop, an NFS home, a stopped process, a debugger) has its lock
+ * taken while it is still inside the read-modify-write, and its rename then
+ * silently overwrites the record the reclaimer wrote. A heartbeat does not save
+ * it: `SIGSTOP` freezes the heartbeat and the writer alike, and the writer wakes
+ * up and finishes. There is no atomic "unlink only if still mine" either, so a
+ * release can delete a *live* lock and admit a third writer. A lock like that is
+ * worse than the race it replaces: it destroys writes that had already completed
+ * under a lock the writer believed it held, while making the store look
+ * defended. An advisory `flock`/`fcntl` lock — the primitive that actually has
+ * these properties — needs a native module, and this package is dependency-free
+ * by design.
+ *
+ * Callers who need cross-process safety should give each process its own file
+ * (`dir`/`file`), or pass their own {@link AuthStorage} backed by something with
+ * real transactions — an OS keychain, a database.
  *
  * The directory is created `0700`, but an existing one keeps whatever mode it
  * already has: a `dir` other local users can write to is outside what this
@@ -174,10 +91,14 @@ async function reclaimIfStale(lockPath: string): Promise<void> {
  */
 export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
   const dir = options.dir ?? defaultAuthDir()
-  // Resolved, so two spellings of the same path share one queue. Symlinks are
-  // not followed, and two names for one file through one are the case the lock
-  // file below still covers.
-  const path = resolve(dir, options.file ?? 'auth.json')
+  // `join`, not `resolve`: an absolute `file` must not escape `dir`.
+  const path = join(dir, options.file ?? 'auth.json')
+  // The queue is keyed by the absolute path so that two spellings of one file —
+  // `{dir: './creds'}` and `{dir: '/home/me/creds'}` — share a chain rather than
+  // racing. `resolve` normalises against the process's own cwd, so this is a
+  // canonical name for the same process's purposes; it does not follow symlinks,
+  // and two names for one file through one are not serialised.
+  const queueKey = resolve(path)
 
   const readAll = async (): Promise<Record<string, string>> => {
     try {
@@ -247,10 +168,10 @@ export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
 
   /** Serialises an operation behind whatever is already queued for this file. */
   const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
-    const queue = queues.get(path) ?? Promise.resolve()
+    const queue = queues.get(queueKey) ?? Promise.resolve()
     const result = queue.then(operation, operation)
     queues.set(
-      path,
+      queueKey,
       result.catch(() => {}),
     )
 
@@ -258,24 +179,18 @@ export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
   }
 
   /**
-   * Runs a read-modify-write with no other process inside it.
+   * Runs a read-modify-write with no other writer in this process inside it.
    *
-   * The directory is created first: the lock is a file in it, so there has to be
-   * somewhere to put it before anything can be claimed.
+   * Nothing is created until `change` says there is something to write, so a
+   * `delete` of a key that is not there stays a pure no-op — it neither creates
+   * the credential directory nor fails on a read-only home.
    */
   const mutate = (change: (record: Record<string, string>) => boolean): Promise<void> =>
     enqueue(async () => {
-      await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-      const release = await acquireLock(path)
+      const record = await readAll()
 
-      try {
-        const record = await readAll()
-
-        if (change(record)) {
-          await writeAll(record)
-        }
-      } finally {
-        await release()
+      if (change(record)) {
+        await writeAll(record)
       }
     })
 
