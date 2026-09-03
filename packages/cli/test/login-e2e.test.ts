@@ -347,6 +347,103 @@ describe('custom provider validation', () => {
     })
   })
 
+  /**
+   * The same guard, reached by a spelling it did not recognise.
+   *
+   * `customProvider` refuses a built-in id by testing `providerId in
+   * providers`, an exact string match — but what the guard protects is the
+   * storage key, and core builds that as `tokens:<id>` plus `:<account>` when
+   * `--account` is given. So `openai:work` is not a key of `providers` and was
+   * accepted as a provider of its own, while naming the exact record `login
+   * openai --account work` had written. The endpoint flags then applied to a
+   * live built-in session after all: the refresh token went to the named
+   * endpoint, the answer was written back over the real record, and the command
+   * exited 0 with a success tick.
+   *
+   * Refused at `requireProvider` now, so it fails on every command rather than
+   * only where endpoint flags appear.
+   */
+  describe('a provider id that aliases another id\'s storage key', () => {
+    const seedAliasedOpenAi = (expiresAt: number) =>
+      writeFile(
+        join(dir, 'auth.json'),
+        JSON.stringify({
+          'tokens:openai:work': JSON.stringify({
+            accessToken: 'VICTIM-ACCESS-TOKEN',
+            refreshToken: 'VICTIM-REFRESH-TOKEN',
+            tokenType: 'Bearer',
+            provider: 'openai',
+            expiresAt,
+            raw: {},
+          }),
+        }),
+      )
+
+    const storedAliased = async () => {
+      const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+
+      return JSON.parse(stored['tokens:openai:work']!) as { accessToken: string; refreshToken?: string }
+    }
+
+    const overrides = () => [
+      '--auth-dir',
+      dir,
+      '--authorize-url',
+      `${server.url}/authorize`,
+      '--token-url',
+      `${server.url}/token`,
+    ]
+
+    it('refuses refresh, so the aliased credential never reaches the named endpoint', async () => {
+      await seedAliasedOpenAi(Date.now() - 60_000)
+
+      expect(await run(['refresh', 'openai:work', '--client-id', 'x', ...overrides()])).toBe(1)
+      // The half that matters: the victim's refresh token was not posted
+      // anywhere, and the record it lives in was not overwritten.
+      expect(server.requests).toHaveLength(0)
+      expect(server.refreshCount).toBe(0)
+      expect((await storedAliased()).refreshToken).toBe('VICTIM-REFRESH-TOKEN')
+      expect((await storedAliased()).accessToken).toBe('VICTIM-ACCESS-TOKEN')
+      expect(out()).toBe('')
+    })
+
+    it('refuses token --force-refresh on the alias as well', async () => {
+      await seedAliasedOpenAi(Date.now() - 60_000)
+
+      expect(await run(['token', 'openai:work', '--force-refresh', ...overrides()])).toBe(1)
+      expect(server.requests).toHaveLength(0)
+      expect((await storedAliased()).refreshToken).toBe('VICTIM-REFRESH-TOKEN')
+      expect(out()).toBe('')
+    })
+
+    // The check sits at `requireProvider`, not at the endpoint flags, because
+    // an alias reaches the same record on commands that take no endpoints.
+    it('refuses an alias on a command with no endpoint flags', async () => {
+      await seedAliasedOpenAi(Date.now() + 3_600_000)
+
+      expect(await run(['whoami', 'openai:work', '--auth-dir', dir])).toBe(1)
+      expect(err()).toContain('Invalid provider id')
+      // The hint names the spelling that is actually supported.
+      expect(err()).toContain('--account work')
+      expect(out()).toBe('')
+    })
+
+    it('refuses a trailing separator, and says how to name a second session', async () => {
+      expect(await run(['whoami', 'openai:', '--auth-dir', dir])).toBe(1)
+      expect(err()).toContain('Invalid provider id')
+      expect(err()).toContain('--account')
+    })
+
+    // The supported spelling is untouched: this is the session the alias was
+    // reaching, addressed the way the CLI documents.
+    it('leaves the real --account session working', async () => {
+      await seedAliasedOpenAi(Date.now() + 3_600_000)
+
+      expect(await run(['token', 'openai', '--account', 'work', '--auth-dir', dir])).toBe(0)
+      expect(out()).toBe('VICTIM-ACCESS-TOKEN\n')
+    })
+  })
+
   it('reports a token endpoint that rejects the exchange', async () => {
     const failing = await startFakeAuthServer({ failWith: 'invalid_grant' })
 
