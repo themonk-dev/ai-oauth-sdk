@@ -394,6 +394,11 @@ export interface ReceiverContext {
    * at all, and holding it to a comparison that will never have a value would
    * break it outright. So the starter says which it is, and absent means the
    * second, because that is the behaviour every existing caller already has.
+   *
+   * A receiver that wraps another one has to forward this, and the default
+   * being the permissive answer means forgetting to costs nothing visible
+   * while reopening the window for the receiver inside it. Build the inner
+   * context by spreading this one where you can.
    */
   presents?: boolean
 }

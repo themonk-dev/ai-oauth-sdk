@@ -452,6 +452,31 @@ describe('loopbackReceiver', () => {
     }
   })
 
+  it('still completes when the URL it presented carried no state at all', async () => {
+    // "Nothing presented" and "presented a URL with no `state`" both leave
+    // `presentedState` undefined, and telling them apart is the whole job of
+    // the `presented` flag. Collapsed into one question, a presenting caller
+    // whose provider drops `state` — a third-party `buildAuthParams`, or an
+    // `extraAuthParams` entry emptied out and filtered from the query — would
+    // refuse every callback it ever received and hang until its timeout, which
+    // is a worse failure than the drive-by the refusal exists to prevent.
+    const started = await loopbackReceiver({ port: 0, openBrowser: false }).start({
+      provider: testProvider(server.url),
+      presents: true,
+    })
+    const waiting = started.wait()
+
+    try {
+      await started.present('https://provider.test/authorize?client_id=c')
+
+      const response = await rawGet(`${started.redirectUri}?code=abc`, navigationHeaders)
+      expect(response.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+    } finally {
+      await started.close()
+    }
+  })
+
   it('takes callbacks as they come when it was never presented', async () => {
     // A deliberate gap, and the reason `presents` is a promise the *caller*
     // makes rather than something read off this receiver: `start()` binds the

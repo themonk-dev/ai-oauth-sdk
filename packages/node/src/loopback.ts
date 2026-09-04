@@ -328,11 +328,28 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * learned from the URL it was handed rather than tracked separately, so
        * the two cannot disagree.
        *
-       * Until `present()` runs there is no value here, and `context.presents`
-       * is what says whether that silence is an attempt not yet begun or a
-       * caller who will never present at all — see `belongsToThisAttempt`.
+       * Undefined means either that `present()` has not run or that the URL it
+       * was handed carried no `state` at all; `presented` below is what tells
+       * those apart, and `context.presents` says what the first of them means
+       * — see `belongsToThisAttempt`.
        */
       let presentedState: string | undefined
+
+      /**
+       * Whether `present()` has run at all, tracked apart from the `state` it
+       * found.
+       *
+       * The two are not the same question, and collapsing them is a mistake
+       * the popup and deep-link receivers already avoid. An authorization URL
+       * that carries no `state` — a third-party `buildAuthParams` that drops
+       * it, or an `extraAuthParams` entry emptied out and filtered from the
+       * query — leaves `presentedState` undefined *after* presenting, which is
+       * indistinguishable from not having presented yet. Without this flag a
+       * presenting caller in that position would refuse every callback it ever
+       * received and hang until its timeout, which is a worse failure than the
+       * one the refusal exists to prevent.
+       */
+      let presented = false
 
       /**
        * The provider's own read of the callback query, with the failure it may
@@ -409,8 +426,12 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return true
         }
 
+        if (!presented && context.presents === true) {
+          return false
+        }
+
         if (presentedState === undefined) {
-          return context.presents !== true
+          return true
         }
 
         return timingSafeEqual(state ?? '', presentedState)
@@ -639,6 +660,7 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           // it, so what this receiver believes its attempt is can never drift
           // from what it actually sent the user to.
           presentedState = stateOfAuthorizationUrl(url)
+          presented = true
 
           options.onAuthorizationUrl?.(url)
 

@@ -12,4 +12,6 @@ An empty read is now read for what it is. Tokens in memory can only have come fr
 
 A record that is present but will not parse is deliberately not treated the same way. That is a damaged file, not a decision anyone took, and it still self-heals the way it always has — refresh over it and rewrite it — because failing closed there would turn a truncated write into a forced re-login. Telling the two apart is the whole of the change; a `logout()` on the same client is unaffected, since it clears the cache as well as the record and there is nothing left in memory to protect.
 
+That distinction is only as good as the backend's ability to express it, and the bundled `fileStorage` cannot: it answers a credential file that will not parse with an empty store, so a damaged file there reads as a deletion and now asks for a sign-in where it used to heal quietly. That is a real change in behaviour for the CLI, and the safer direction of the two, but it is a change — teaching `fileStorage` to tell a missing file from an unparseable one is the follow-up that would restore it.
+
 What this does not do is reach a token that has already left. An access token `getAccessToken()` returned before the sign-out stays valid until the provider says otherwise, which is what `logout({ revoke: true })` is for.
