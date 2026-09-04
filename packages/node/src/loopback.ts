@@ -283,15 +283,21 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
  * the promise, and the server keeps listening for the real redirect. The
  * comparison runs in constant time because it now sits on a security boundary.
  *
- * Two gaps are left open deliberately. A receiver driven directly, without
- * `present()`, has no attempt to compare against and takes callbacks as they
- * come: `start()` binds a port, so unlike a deep-link channel there is no
- * pre-existing route for a stray callback to arrive on, and requiring
- * `present()` would break every caller that drives `start()` itself. And a
- * provider declaring `echoesState: false` has said no `state` will come back,
- * so holding it to a comparison it cannot satisfy would reject the only
- * callback it can send. The `Sec-Fetch-*` check above is what covers both, and
- * it is why that check runs first and stays.
+ * The match starts when the port does, not when `present()` runs. `start()`
+ * binds before the client has so much as minted a `state`, and a callback
+ * landing in that window cannot be answering an authorization URL nobody has
+ * been given — but the receiver cannot tell on its own whether a `state` is
+ * still coming, so `ReceiverContext.presents` says. `login()` sets it and its
+ * receiver refuses everything until it has presented; a caller driving
+ * `start()` itself sets nothing, may never present, and takes callbacks as they
+ * come as it always has. That gap is left open deliberately: unlike a deep-link
+ * channel there is no pre-existing route for a stray callback to have arrived
+ * on, and requiring `present()` would break every such caller outright.
+ *
+ * A provider declaring `echoesState: false` is the other deliberate gap: it has
+ * said no `state` will come back, so holding it to a comparison it cannot
+ * satisfy would reject the only callback it can send. The `Sec-Fetch-*` check
+ * above is what covers both, and it is why that check runs first and stays.
  *
  * The callback promise is given a no-op `catch` at construction because it is
  * consumed only in `wait()`; without it, a callback that fails before anyone
@@ -322,12 +328,9 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * learned from the URL it was handed rather than tracked separately, so
        * the two cannot disagree.
        *
-       * There is no companion "has present() run" flag, unlike the deep-link
-       * and popup receivers. Those listen on a channel that exists before the
-       * flow does, so a callback arriving before `present()` is somebody
-       * else's; a bound port does not exist until `start()` binds it, and a
-       * caller may legitimately drive `start()` and never call `present()` at
-       * all.
+       * Until `present()` runs there is no value here, and `context.presents`
+       * is what says whether that silence is an attempt not yet begun or a
+       * caller who will never present at all — see `belongsToThisAttempt`.
        */
       let presentedState: string | undefined
 
@@ -373,17 +376,45 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * §4.1.2.1 requires `state` to be echoed on an error response as well as
        * a successful one, so nothing conforming is turned away.
        *
+       * "Nothing was presented" is only allowed to mean "and never will be".
+       * `start()` binds the port before `login()` builds the authorization URL,
+       * and that gap is real time — a `createAuthorization()` that mints a
+       * `state`, derives a PKCE pair and writes both to storage. A caller
+       * flooding a published fixed port (openai's 1455, xai's 56121) with
+       * `?error=access_denied` lands inside it often enough to matter, and
+       * winning that race settles the promise, closes the port, and frees it to
+       * be rebound before the browser arrives — at which point the genuine
+       * authorization code is delivered to whoever took it. So a context that
+       * has told us it will present is held to its `state` from the moment the
+       * port is bound: no URL has been handed to anyone yet, so there is no
+       * legitimate callback that could be arriving. A caller driving `start()`
+       * on its own says nothing, and keeps the old behaviour — it may never
+       * present, and refusing everything it receives would break it.
+       *
        * A provider declaring `echoesState: false` is the "nothing to compare"
        * case even though the authorization URL carried a `state`, because it
        * has said the callback will not bring one back. The client draws the
        * same exception at the same boundary, with the same caveat: such a
        * provider cannot tell two concurrent attempts apart, which is fine for a
        * CLI and is not safe in a multi-user server.
+       *
+       * The pre-`present()` refusal is spelled as its own branch rather than by
+       * comparing against an empty `state`, because those are not the same
+       * answer. A callback that carries no `state` would match `''` and be
+       * waved through — and no `state` is exactly the shape of the
+       * `?error=access_denied` this is here to turn away.
        */
-      const belongsToThisAttempt = (state: string | undefined): boolean =>
-        presentedState === undefined ||
-        provider.echoesState === false ||
-        timingSafeEqual(state ?? '', presentedState)
+      const belongsToThisAttempt = (state: string | undefined): boolean => {
+        if (provider.echoesState === false) {
+          return true
+        }
+
+        if (presentedState === undefined) {
+          return context.presents !== true
+        }
+
+        return timingSafeEqual(state ?? '', presentedState)
+      }
 
       /**
        * Settles the callback exactly once and then retires the server, so the

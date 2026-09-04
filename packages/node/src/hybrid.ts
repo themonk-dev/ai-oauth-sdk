@@ -80,8 +80,14 @@ export function hybridReceiver(options: HybridReceiverOptions = {}): CallbackRec
          what binds it to the attempt; announcing twice is what that must not
          cost. */
       const { onAuthorizationUrl: _announce, ...quietOptions } = options
+      /* `presents` is carried through unchanged, because this receiver presents
+         its loopback half exactly when it is itself presented — so a promise
+         made to us is one we are making on. Dropping it would leave that half
+         open to a callback in the window before the URL exists, under a
+         `login()` that had said the window was closed. */
       const quietContext: ReceiverContext = {
         provider: context.provider,
+        ...(context.presents !== undefined ? { presents: context.presents } : {}),
         ...(context.signal ? { signal: context.signal } : {}),
       }
 

@@ -381,6 +381,21 @@ export interface ReceiverContext {
   /** Opens a URL however the runtime prefers (spawn browser, `location.assign`). */
   openUrl?: (url: string) => void | Promise<void>
   signal?: AbortSignal
+  /**
+   * Whether whoever started this receiver will go on to call `present()`.
+   *
+   * A receiver that matches callbacks against the `state` it presented has
+   * nothing to match on until `present()` has run, and `start()` and
+   * `present()` are separated by a `createAuthorization()` that does real
+   * storage I/O. What it should do in that window depends on something it
+   * cannot see: `login()` always presents, so a callback arriving first cannot
+   * be legitimate — no authorization URL has been handed to anyone yet — and
+   * must be refused; a caller driving `start()` on its own may never present
+   * at all, and holding it to a comparison that will never have a value would
+   * break it outright. So the starter says which it is, and absent means the
+   * second, because that is the behaviour every existing caller already has.
+   */
+  presents?: boolean
 }
 
 export interface CallbackResult {
