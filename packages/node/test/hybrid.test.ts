@@ -135,6 +135,35 @@ describe('hybridReceiver', () => {
   })
 
   /*
+   * The loopback half refuses callbacks from the moment it binds only if it is
+   * told a `state` is still coming, and hybrid builds its inner context by
+   * naming the fields it forwards rather than by spreading. Dropping `presents`
+   * there costs nothing visible — every other test here presents before it
+   * sends anything — while quietly reopening the `start()`/`present()` window on
+   * the CLI's default receiver, which is the one path where these fixed ports
+   * are actually published.
+   */
+  it('forwards presents to its loopback half, which refuses callbacks until presented', async () => {
+    const started = await hybridReceiver(silent).start({ provider, presents: true })
+
+    try {
+      const waiting = started.wait()
+
+      const early = await rawGet(`${started.redirectUri}?error=access_denied`, navigationHeaders)
+      expect(early.status).toBe(403)
+
+      await started.present('https://provider.test/authorize?state=xyz')
+
+      const real = await rawGet(`${started.redirectUri}?code=abc&state=xyz`, navigationHeaders)
+      expect(real.status).toBe(200)
+
+      await expect(waiting).resolves.toEqual({ code: 'abc', state: 'xyz' })
+    } finally {
+      await started.close()
+    }
+  })
+
+  /*
    * Presenting the loopback half is what binds it, and `present()` is also what
    * opens a browser. Both halves would open one — the loopback receiver through
    * `context.openUrl`, the prompt through the same — so the user got two tabs

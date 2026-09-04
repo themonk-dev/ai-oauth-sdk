@@ -411,11 +411,79 @@ describe('loopbackReceiver', () => {
     }
   })
 
+  it('refuses a callback that arrives before present(), for a caller that will present', async () => {
+    // `login()` binds the port and only then mints a `state`, derives a PKCE
+    // pair and writes both to storage — so there is a real window between the
+    // two, and on a published fixed port (openai's 1455, xai's 56121) a local
+    // process flooding `?error=access_denied` lands inside it often enough to
+    // matter. Winning settles the promise and closes the port, freeing it to be
+    // rebound before the browser turns up with the genuine code.
+    //
+    // Nothing legitimate can arrive here: the authorization URL this would be
+    // answering has not been built yet, let alone handed to a browser.
+    const started = await loopbackReceiver({ port: 0, openBrowser: false }).start({
+      provider: testProvider(server.url),
+      presents: true,
+    })
+    const waiting = started.wait()
+
+    try {
+      const denial = await rawGet(`${started.redirectUri}?error=access_denied`, navigationHeaders)
+      expect(denial.status).toBe(403)
+
+      // A well-formed pair is refused on the same ground, so this is the window
+      // being closed rather than the state-less shape being caught.
+      const early = await rawGet(`${started.redirectUri}?code=x&state=guessed`, navigationHeaders)
+      expect(early.status).toBe(403)
+
+      // Not settled, and — the part that actually matters — the server is still
+      // listening, because settling is what closes it.
+      expect(await isSettled(waiting)).toBe(false)
+
+      await started.present(`https://provider.test/authorize?client_id=c&state=${PRESENTED_STATE}`)
+      const real = await rawGet(
+        `${started.redirectUri}?code=abc&state=${PRESENTED_STATE}`,
+        navigationHeaders,
+      )
+      expect(real.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc', state: PRESENTED_STATE })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('still completes when the URL it presented carried no state at all', async () => {
+    // "Nothing presented" and "presented a URL with no `state`" both leave
+    // `presentedState` undefined, and telling them apart is the whole job of
+    // the `presented` flag. Collapsed into one question, a presenting caller
+    // whose provider drops `state` — a third-party `buildAuthParams`, or an
+    // `extraAuthParams` entry emptied out and filtered from the query — would
+    // refuse every callback it ever received and hang until its timeout, which
+    // is a worse failure than the drive-by the refusal exists to prevent.
+    const started = await loopbackReceiver({ port: 0, openBrowser: false }).start({
+      provider: testProvider(server.url),
+      presents: true,
+    })
+    const waiting = started.wait()
+
+    try {
+      await started.present('https://provider.test/authorize?client_id=c')
+
+      const response = await rawGet(`${started.redirectUri}?code=abc`, navigationHeaders)
+      expect(response.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+    } finally {
+      await started.close()
+    }
+  })
+
   it('takes callbacks as they come when it was never presented', async () => {
-    // A deliberate gap, and the reason there is no "has present() run" flag
-    // here: `start()` binds the port, so there is no channel for a stray
-    // callback to have arrived on beforehand, and a caller that drives
-    // `start()` itself and never presents must still be able to complete.
+    // A deliberate gap, and the reason `presents` is a promise the *caller*
+    // makes rather than something read off this receiver: `start()` binds the
+    // port, so there is no channel for a stray callback to have arrived on
+    // beforehand, and a caller that drives `start()` itself and never presents
+    // must still be able to complete. It says nothing, and gets the behaviour
+    // it always had.
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
     const waiting = started.wait()
 
