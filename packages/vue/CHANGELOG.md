@@ -1,5 +1,12 @@
 # @ai-oauth-sdk/vue
 
+## 1.3.0
+
+### Patch Changes
+
+- Updated dependencies [ce4662f]
+  - @ai-oauth-sdk/core@1.3.0
+
 ## 1.2.0
 
 ### Patch Changes
