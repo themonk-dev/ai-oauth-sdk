@@ -1,0 +1,15 @@
+{
+  "name": "@ai-oauth-sdk-example/voice-chatgpt",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sign in with ChatGPT in the browser, then talk to GPT Live over WebRTC on the subscription — no API key.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@ai-oauth-sdk/core": "workspace:^",
+    "@openai/codex": "^0.154.0",
+    "ai-oauth-sdk": "workspace:^"
+  }
+}

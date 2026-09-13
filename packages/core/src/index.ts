@@ -10,6 +10,8 @@ export type {
 
 export {
   azureAi,
+  chatgptPlanType,
+  codexAuthJson,
   codexBaseUrl,
   codexClientVersion,
   copilotClientHeaders,

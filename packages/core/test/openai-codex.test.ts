@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import { createAuthClient } from '../src/client.js'
 import { createAuthenticatedFetch } from '../src/fetch.js'
+import { OAuthError } from '../src/errors.js'
 import {
+  chatgptPlanType,
+  codexAuthJson,
   codexBaseUrl,
   codexClientVersion,
   extractCodexModelSlugs,
@@ -188,5 +191,66 @@ describe('extractCodexModelSlugs', () => {
 
   it('returns nothing for a shape it does not recognise', () => {
     expect(extractCodexModelSlugs({ unexpected: true })).toEqual([])
+  })
+})
+
+/** An unsigned JWT with OpenAI's namespaced claim, enough for the decoders here. */
+function chatgptJwt(auth: Record<string, unknown>, top: Record<string, unknown> = {}): string {
+  const encode = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString('base64url')
+
+  return `${encode({ alg: 'none' })}.${encode({ ...top, 'https://api.openai.com/auth': auth })}.sig`
+}
+
+describe('chatgptPlanType', () => {
+  it('reads the plan from the id_token', () => {
+    expect(
+      chatgptPlanType({
+        accessToken: chatgptJwt({ chatgpt_plan_type: 'free' }),
+        idToken: chatgptJwt({ chatgpt_plan_type: 'plus' }),
+      }),
+    ).toBe('plus')
+  })
+
+  it('falls back to the access token, and to nothing', () => {
+    expect(chatgptPlanType({ accessToken: chatgptJwt({ chatgpt_plan_type: 'pro' }) })).toBe('pro')
+    expect(chatgptPlanType({ accessToken: 'opaque' })).toBeUndefined()
+    expect(chatgptPlanType({ accessToken: chatgptJwt({}) })).toBeUndefined()
+  })
+})
+
+describe('codexAuthJson', () => {
+  const idToken = chatgptJwt({ chatgpt_account_id: 'acct-1', chatgpt_plan_type: 'plus' }, { email: 'a@b.c' })
+  const now = new Date('2026-09-13T00:00:00Z')
+
+  it('renders the file codex reads, with every field codex requires present', () => {
+    expect(
+      codexAuthJson(
+        { accessToken: 'access-1', refreshToken: 'refresh-1', idToken, accountId: 'acct-1' },
+        { now },
+      ),
+    ).toEqual({
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
+      last_refresh: '2026-09-13T00:00:00.000Z',
+      tokens: { access_token: 'access-1', account_id: 'acct-1', id_token: idToken, refresh_token: 'refresh-1' },
+    })
+  })
+
+  it('never writes null where codex wants a string', () => {
+    // A `null` in either field makes the whole file unparsable, and codex then
+    // runs unauthenticated against api.openai.com rather than failing loudly.
+    const accessToken = chatgptJwt({ chatgpt_plan_type: 'plus' })
+    const file = codexAuthJson({ accessToken }, { now })
+
+    expect(file.tokens.refresh_token).toBe('')
+    expect(file.tokens.id_token).toBe(accessToken)
+    expect(file.tokens).not.toHaveProperty('account_id')
+    expect(JSON.stringify(file.tokens)).not.toContain('null')
+  })
+
+  it('refuses a token set codex could not parse', () => {
+    expect(() => codexAuthJson({ accessToken: 'opaque' })).toThrow(OAuthError)
+    expect(() => codexAuthJson({ accessToken: '' , idToken })).toThrow(OAuthError)
   })
 })
