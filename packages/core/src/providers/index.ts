@@ -14,12 +14,15 @@ export { claude, gemini, githubCopilot, openai, openrouter, qwen, xai }
 export { copilotClientHeaders, exchangeForCopilotToken } from './github-copilot.js'
 export type { CopilotApiToken } from './github-copilot.js'
 export {
+  chatgptPlanType,
+  codexAuthJson,
   codexBaseUrl,
   codexClientVersion,
   extractCodexModelSlugs,
   fetchCodexModels,
   normalizeCodexResponsesBody,
 } from './openai.js'
+export type { CodexAuthJson } from './openai.js'
 export { azureAi } from './azure-ai.js'
 export { publicClientIds, publicClientSecrets } from './public-client-ids.js'
 export type { PublicClientIdProvider } from './public-client-ids.js'

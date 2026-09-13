@@ -258,3 +258,91 @@ function readSlug(item: unknown): string | undefined {
 
   return typeof candidate === 'string' ? candidate.trim() || undefined : undefined
 }
+
+/**
+ * Reads the ChatGPT plan (`free`, `plus`, `pro`, `business`, `enterprise`,
+ * `edu`) off the token claims, `id_token` first and `access_token` as the
+ * fallback, since OpenAI writes the same namespaced claim into both.
+ *
+ * A plan gate is the first thing a subscription-backed feature checks — voice
+ * is the current example — so it is read once here rather than by every caller
+ * that knows the claim's URL-shaped key.
+ */
+export function chatgptPlanType(tokens: Pick<TokenSet, 'accessToken' | 'idToken'>): string | undefined {
+  for (const token of [tokens.idToken, tokens.accessToken]) {
+    if (!token) {
+      continue
+    }
+
+    const plan = readAuthClaim(decodeJwtPayload(token))['chatgpt_plan_type']
+
+    if (typeof plan === 'string' && plan) {
+      return plan
+    }
+  }
+
+  return undefined
+}
+
+/**
+ * The `auth.json` the Codex CLI reads from `$CODEX_HOME`. Verified against
+ * `codex-rs/login/src/token_data.rs` and `auth/storage.rs` at 0.154.0.
+ */
+export interface CodexAuthJson {
+  auth_mode: 'chatgpt'
+  OPENAI_API_KEY: null
+  /** ISO 8601. Codex refreshes on its own once this is old enough. */
+  last_refresh: string
+  tokens: {
+    access_token: string
+    account_id?: string
+    id_token: string
+    refresh_token: string
+  }
+}
+
+/**
+ * Renders a token set as the file the Codex CLI reads, so a signed-in user's
+ * subscription can drive `codex` itself — `codex app-server`, `codex exec` —
+ * from a private `CODEX_HOME` rather than from the user's global login.
+ *
+ * Two of the fields are stricter than `TokenSet` is, and getting either wrong
+ * is silent: Codex fails to parse the whole file, runs with no credentials, and
+ * sends the request to `api.openai.com` where it fails with "You didn't provide
+ * an API key". Neither can be `null`:
+ *
+ * - `id_token` must be a JWT carrying the `https://api.openai.com/auth` claims,
+ *   because Codex parses it on load. The access token carries the same claims,
+ *   so it stands in when the flow returned no id_token.
+ * - `refresh_token` must be a string. A flow that keeps the refresh token
+ *   elsewhere (a browser tab, say) writes an empty one, and the call simply
+ *   cannot outlive the access token.
+ *
+ * The result is a credential file: write it `0600`, into a directory nothing
+ * else reads, and delete it with the process that used it.
+ */
+export function codexAuthJson(
+  tokens: Pick<TokenSet, 'accessToken' | 'accountId' | 'idToken' | 'refreshToken'>,
+  options: { now?: Date } = {},
+): CodexAuthJson {
+  const idToken = tokens.idToken ?? tokens.accessToken
+
+  if (!tokens.accessToken || !decodeJwtPayload(idToken)) {
+    throw new OAuthError(
+      'invalid_token_response',
+      'Codex needs a JWT id_token (or access token) carrying the ChatGPT claims; this token set has neither.',
+    )
+  }
+
+  return {
+    auth_mode: 'chatgpt',
+    OPENAI_API_KEY: null,
+    last_refresh: (options.now ?? new Date()).toISOString(),
+    tokens: {
+      access_token: tokens.accessToken,
+      ...(tokens.accountId ? { account_id: tokens.accountId } : {}),
+      id_token: idToken,
+      refresh_token: tokens.refreshToken ?? '',
+    },
+  }
+}
