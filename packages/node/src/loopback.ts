@@ -156,6 +156,37 @@ const EPHEMERAL_BIND_ATTEMPTS = 5
 const familyUnavailable = new Set(['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EINVAL', 'EPROTONOSUPPORT'])
 
 /**
+ * True when `EACCES` on this bind has to be read as "someone is holding it".
+ *
+ * `EADDRINUSE` is not the only way a kernel says a port is taken. libuv binds
+ * with neither `SO_REUSEADDR` nor `SO_EXCLUSIVEADDRUSE` (`src/win/tcp.c`), and
+ * on Windows a second bind against that arrangement reports `WSAEACCES` —
+ * surfacing here as `EACCES` — rather than `EADDRINUSE`, whenever the existing
+ * holder took the wildcard address under a different user account, or took it
+ * with `SO_EXCLUSIVEADDRUSE`, which Microsoft recommends every server do. A
+ * wildcard holder on `0.0.0.0:1455` does receive connections addressed to
+ * `127.0.0.1:1455`, so this is a holder that genuinely intercepts.
+ *
+ * Reading that as an unusable machine is what made it dangerous: `listen()`
+ * threw a bare errno, `hybridReceiver` tells a refusal from a kernel by type
+ * rather than by code, and a bare errno meant "degrade to `--paste`" — which
+ * advertises the provider's fixed loopback URI while the squatter is still on
+ * it. That is the exact bypass the sibling-address refusal below was written to
+ * close.
+ *
+ * Only for a fixed port. An ephemeral bind (`0`) refused by seccomp or a
+ * dropped capability is the sandbox case `--paste` exists to serve, there is no
+ * published address at stake, and the containers that do this overwhelmingly
+ * report `EPERM` (Docker's default seccomp profile), which still degrades. A
+ * *fixed* port refused for want of privilege is no better off: this process
+ * cannot own the URI it would otherwise advertise, so refusing is the honest
+ * answer either way. No provider this library ships names a port below 1024.
+ */
+function heldRatherThanUnusable(error: NodeJS.ErrnoException, port: number): boolean {
+  return error.code === 'EACCES' && port !== 0
+}
+
+/**
  * The address a hostname resolves to besides `bindHost`, or `undefined` when
  * there is nothing extra to cover.
  */
@@ -189,7 +220,7 @@ async function tryListen(server: Server, port: number, host: string): Promise<Bi
     const onError = (error: NodeJS.ErrnoException) => {
       server.removeListener('listening', onListening)
 
-      if (error.code === 'EADDRINUSE') {
+      if (error.code === 'EADDRINUSE' || heldRatherThanUnusable(error, port)) {
         resolve('in-use')
 
         return
@@ -218,7 +249,7 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
     const onError = (error: NodeJS.ErrnoException) => {
       server.removeListener('listening', onListening)
 
-      if (error.code === 'EADDRINUSE') {
+      if (error.code === 'EADDRINUSE' || heldRatherThanUnusable(error, port)) {
         reject(
           new OAuthError(
             'configuration_error',

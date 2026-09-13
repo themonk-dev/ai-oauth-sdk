@@ -134,6 +134,55 @@ async function postToTokenEndpoint(
 }
 
 /**
+ * Reads a field the token endpoint is meant to send as a string.
+ *
+ * {@link TokenEndpointResponse} describes what RFC 6749 §5.1 asks for, not what
+ * arrives. The body is `JSON.parse` output from someone else's server, so every
+ * one of these slots can hold a number, an object or a `null` and the
+ * declared type notices none of it. `access_token` has always been checked;
+ * the rest were taken on trust and flowed into the stored credential, out
+ * through `JSON.stringify` into the credential file, and back again.
+ *
+ * What that costs is downstream, in code that is entitled to assume a string:
+ * a `token_type` of `{}` reaches `createAuthenticatedFetch` and becomes the
+ * literal `[object Object]` in the `Authorization` header, and a non-string
+ * `id_token` reaches `decodeJwtPayload`, whose `token.split('.')` sits above
+ * its own `try` and throws a bare `TypeError` out of `exchangeCode` rather
+ * than an {@link OAuthError}.
+ *
+ * The device flow has always read its response this way — see
+ * `receivers/device.ts` — so this is the existing rule applied to the redirect
+ * path, not a new one. Empty strings go out with the non-strings: each of
+ * these fields is either a usable value or absent, and `''` is neither.
+ */
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined
+}
+
+/**
+ * The `Authorization` scheme to pair the access token with.
+ *
+ * `token_type` is the one field here that is interpolated straight into a
+ * header, so it has to be usable as an RFC 9110 §11.1 scheme — a bare token,
+ * no spaces and no control characters. Anything else is not a scheme the
+ * request could carry: `Headers.set` rejects a value containing CR or LF
+ * outright, which surfaces as a `TypeError` thrown from inside `fetch` on the
+ * first API call, a long way from the response that caused it.
+ *
+ * So an unusable value falls back to the default rather than throwing. The
+ * request would fail either way, and failing it here would turn a cosmetic
+ * provider quirk into a login that cannot complete — while `Bearer` is both
+ * what RFC 6749 §7.1 names as the default and what every provider this library
+ * ships actually issues. The surrounding whitespace is trimmed rather than
+ * rejected, since `"Bearer "` plainly means `Bearer`.
+ */
+function readTokenType(value: unknown): string {
+  const candidate = readString(value)?.trim()
+
+  return candidate && /^[!#$%&'*+.^_`|~\w-]+$/.test(candidate) ? candidate : 'Bearer'
+}
+
+/**
  * Shapes a token endpoint response into a {@link TokenSet}.
  *
  * `previous` carries a renewal's omissions forward. Providers commonly leave
@@ -154,17 +203,25 @@ function toTokenSet(
     )
   }
 
+  /* Validated before it is chosen between, the way `access_token` is checked
+     above. Testing the whole `??` expression meant a non-string was kept, and
+     — because `'' ?? x` is `''` — a gateway that always emits the field sent
+     `"refresh_token": ""` on a renewal and took the stored token down with it,
+     leaving `refresh_failed` on the next call for a session that was still
+     perfectly renewable. */
+  const refreshToken = readString(raw.refresh_token) ?? previous?.refreshToken
+  const scope = readString(raw.scope)
+  const idToken = readString(raw.id_token)
+
   const tokens: TokenSet = {
     accessToken,
-    ...(raw.refresh_token ?? previous?.refreshToken
-      ? { refreshToken: raw.refresh_token ?? previous?.refreshToken }
-      : {}),
+    ...(refreshToken ? { refreshToken } : {}),
     ...(typeof raw.expires_in === 'number'
       ? { expiresAt: Date.now() + raw.expires_in * 1000 }
       : {}),
-    tokenType: raw.token_type ?? 'Bearer',
-    ...(raw.scope ? { scope: raw.scope } : {}),
-    ...(raw.id_token ? { idToken: raw.id_token } : {}),
+    tokenType: readTokenType(raw.token_type),
+    ...(scope ? { scope } : {}),
+    ...(idToken ? { idToken } : {}),
     provider: provider.id,
     raw: raw as Record<string, unknown>,
   }
