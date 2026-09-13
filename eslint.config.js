@@ -12,7 +12,7 @@ export default tseslint.config(
   // toolchain and its own lockfile, outside the pnpm workspace on purpose, so
   // the workspace gate does not reach into it.
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/.turbo/**', 'examples/**/dist/**', 'docs/**'],
+    ignores: ['**/dist/**', '**/node_modules/**', '**/.turbo/**', '**/.claude/**', 'examples/**/dist/**', 'docs/**'],
   },
   {
     files: ['**/*.{ts,tsx,js,mjs}'],

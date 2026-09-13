@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ChatGPT Voice — ai-oauth-sdk</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#e8eaf0; --muted:#8b93a7; --line:#262b36; --accent:#10a37f; --danger:#e5484d; --warn:#f5a524; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:560px; margin:0 auto; padding:40px 20px 60px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 28px; font-size:13px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; margin-bottom:16px; }
+  button { font:inherit; border:0; border-radius:10px; padding:11px 16px; cursor:pointer; color:#fff; background:var(--accent); }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  button.danger { background:var(--danger); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .code { font:600 22px/1 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:2px; padding:8px 12px; border:1px dashed var(--line); border-radius:8px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .who { display:flex; justify-content:space-between; align-items:center; }
+  .pill { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+  .pill.on { border-color:var(--accent); color:var(--accent); } .pill.warn { border-color:var(--warn); color:var(--warn); } .pill.err { border-color:var(--danger); color:var(--danger); }
+  .orb-wrap { display:grid; place-items:center; padding:22px 0 8px; }
+  .orb { width:132px; height:132px; border-radius:50%; display:grid; place-items:center; background:radial-gradient(circle at 35% 30%,#1f2a3a,#10151d); border:2px solid var(--line); transition:box-shadow .12s,border-color .2s,transform .08s; }
+  .orb.listening { border-color:var(--accent); } .orb.speaking { border-color:#7aa2ff; box-shadow:0 0 40px 4px rgba(122,162,255,.35); } .orb.muted { border-color:var(--danger); }
+  .orb svg { width:44px; height:44px; fill:none; stroke:var(--fg); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .state { text-align:center; color:var(--muted); font-size:13px; min-height:20px; }
+  select { font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  label { font-size:13px; color:var(--muted); }
+  .log { font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); max-height:220px; overflow:auto; white-space:pre-wrap; margin:0; }
+  .log .u { color:var(--fg); } .log .a { color:#9ccbff; } .log .e { color:var(--danger); } .log .t { color:var(--warn); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>ChatGPT Voice, on your subscription</h1>
+  <p class="sub"><code>ai-oauth-sdk</code> device login in the browser → GPT&nbsp;Live over WebRTC via a local <code>codex app-server</code>. No API key.</p>
+
+  <section class="card">
+    <div id="auth-out">
+      <div class="row"><button id="login">Sign in with ChatGPT</button><span class="muted">Plus / Pro / Business / Enterprise.</span></div>
+      <p class="muted" id="prereq" style="margin:10px 0 0"></p>
+    </div>
+    <div id="auth-pending" hidden>
+      <p class="muted" style="margin-top:0">Enter this code on the OpenAI page that opened (or <a id="verify-link" href="#" target="_blank" rel="noreferrer">open it</a>):</p>
+      <div class="row"><span class="code" id="user-code">----</span><button class="ghost" id="copy">Copy</button><button class="ghost" id="cancel-login">Cancel</button></div>
+      <p class="muted">Waiting for approval…</p>
+    </div>
+    <div id="auth-in" hidden>
+      <div class="who"><div><strong id="who">you</strong> <span class="pill" id="plan">plan</span></div><button class="ghost" id="logout">Sign out</button></div>
+    </div>
+  </section>
+
+  <section class="card" id="voice" hidden>
+    <div class="row" style="justify-content:space-between">
+      <div class="row"><label for="voice-name">Voice</label>
+        <select id="voice-name"><option>juniper</option><option>arbor</option><option>breeze</option><option>cove</option><option>ember</option><option>maple</option><option>sol</option><option>spruce</option><option>vale</option><option>marin</option><option>cedar</option></select>
+      </div>
+      <span class="pill" id="conn">disconnected</span>
+    </div>
+    <div class="orb-wrap"><div class="orb" id="orb"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M8 21h8"/></svg></div></div>
+    <div class="state" id="state">Press Start. The mic stays on for the whole call; talk, interrupt, keep talking.</div>
+    <div class="row" style="justify-content:center;margin-top:14px">
+      <button id="start">Start voice</button><button class="ghost" id="mute" disabled>Mute mic</button><button class="danger" id="stop" disabled>End call</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px"><strong style="font-size:13px">Events</strong><button class="ghost" id="clear" style="padding:4px 10px;font-size:12px">clear</button></div>
+    <pre class="log" id="log"></pre>
+  </section>
+  <audio id="remote" autoplay playsinline></audio>
+</main>
+
+<!-- The workspace build, served by server.js. In production: a pinned CDN version. -->
+<script src="/vendor/ai-oauth-sdk.global.js"></script>
+<script>
+const $ = (id) => document.getElementById(id)
+const logEl = $('log')
+function log(kind, text) {
+  const span = document.createElement('span')
+  if (kind) span.className = kind
+  span.textContent = `${new Date().toLocaleTimeString([], { hour12: false })}  ${text}\n`
+  logEl.append(span); logEl.scrollTop = logEl.scrollHeight
+}
+$('clear').onclick = () => { logEl.textContent = '' }
+
+// ── auth: the SDK, straight from the page. Tokens live in sessionStorage. ──
+const client = AIOAuth.createAuthClient({
+  provider: 'openai',
+  clientId: AIOAuth.publicClientIds.openai,
+  storage: AIOAuth.sessionStorageAdapter(),
+})
+$('prereq').textContent = AIOAuth.openai.devicePrerequisite ?? ''
+
+let loginAbort, popup
+const planOf = (tokens) => AIOAuth.chatgptPlanType(tokens) ?? 'unknown plan'
+function showAuth(tokens, pending = false) {
+  $('auth-out').hidden = Boolean(tokens) || pending
+  $('auth-pending').hidden = !pending
+  $('auth-in').hidden = !tokens
+  $('voice').hidden = !tokens
+  if (tokens) {
+    $('who').textContent = tokens.email ?? tokens.accountId ?? 'signed in'
+    const plan = planOf(tokens)
+    $('plan').textContent = plan
+    $('plan').className = 'pill ' + (/free/i.test(plan) ? 'warn' : 'on')
+    if (/free/i.test(plan)) log('t', 'Free plan: ChatGPT Voice needs Plus/Pro/Business/Enterprise, the call will most likely be refused.')
+  }
+}
+$('login').onclick = async () => {
+  loginAbort = new AbortController()
+  popup = window.open('about:blank', 'chatgpt-device-login', 'popup,width=520,height=720')  // inside the click, or it is blocked
+  try {
+    const tokens = await client.deviceLogin({
+      signal: loginAbort.signal,
+      onCode(device) {
+        const url = device.verificationUriComplete ?? device.verificationUri
+        $('user-code').textContent = device.userCode
+        $('verify-link').href = url
+        if (popup) popup.location.href = url; else log('t', `Popup blocked; open ${url} and enter ${device.userCode}`)
+        showAuth(undefined, true)
+        log('', `device login started, code ${device.userCode}`)
+      },
+    })
+    popup?.close()
+    showAuth(tokens)
+    log('', `signed in as ${tokens.email ?? tokens.accountId} (${planOf(tokens)})`)
+  } catch (error) {
+    popup?.close()
+    showAuth(undefined)
+    if (!(AIOAuth.isOAuthError(error) && error.code === 'aborted')) log('e', AIOAuth.isOAuthError(error) ? `${error.code}: ${error.message}` : String(error))
+  }
+}
+$('copy').onclick = () => navigator.clipboard?.writeText($('user-code').textContent)
+$('cancel-login').onclick = () => loginAbort?.abort()
+$('logout').onclick = async () => { await endCall(); await client.logout(); showAuth(undefined); log('', 'signed out') }
+
+// ── voice: plain WebRTC; only SDP and control events touch our server ──
+const SHARE_REFRESH_TOKEN = false
+let pc, mic, sessionId = '', eventsAbort, meterRaf = 0, audioCtx
+const orb = $('orb'), stateEl = $('state'), conn = $('conn'), remoteAudio = $('remote')
+const startBtn = $('start'), muteBtn = $('mute'), stopBtn = $('stop')
+const setConn = (t, c = '') => { conn.textContent = t; conn.className = 'pill ' + c }
+const setOrb = (mode, msg) => { orb.className = 'orb ' + (mode === 'idle' ? '' : mode); if (msg !== undefined) stateEl.textContent = msg }
+
+const waitIce = (p, ms = 2500) => p.iceGatheringState === 'complete' ? Promise.resolve() : new Promise((res) => {
+  const t = setTimeout(res, ms)
+  p.addEventListener('icegatheringstatechange', () => { if (p.iceGatheringState === 'complete') { clearTimeout(t); res() } })
+})
+function startMeter(stream) {
+  audioCtx = new AudioContext()
+  const an = audioCtx.createAnalyser(); an.fftSize = 512
+  audioCtx.createMediaStreamSource(stream).connect(an)
+  const buf = new Float32Array(an.fftSize)
+  const tick = () => {
+    an.getFloatTimeDomainData(buf)
+    let e = 0; for (const s of buf) e += s * s
+    const rms = Math.sqrt(e / buf.length), glow = Math.min(60, rms * 600)
+    if (!orb.classList.contains('speaking')) orb.style.boxShadow = `0 0 ${glow}px ${glow / 6}px rgba(16,163,127,.45)`
+    orb.style.transform = `scale(${1 + Math.min(.08, rms * .6)})`
+    meterRaf = requestAnimationFrame(tick)
+  }
+  meterRaf = requestAnimationFrame(tick)
+}
+async function voiceHeaders() {
+  // getAccessToken() refreshes transparently if the token is near expiry.
+  const accessToken = await client.getAccessToken()
+  const tokens = await client.getTokens()
+  return { authorization: `Bearer ${accessToken}`, 'x-chatgpt-account-id': tokens.accountId ?? '' }
+}
+async function startCall() {
+  startBtn.disabled = true
+  try {
+    setConn('connecting', 'warn'); setOrb('idle', 'Requesting microphone…')
+    mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false })
+    pc = new RTCPeerConnection({ bundlePolicy: 'max-bundle' })
+    for (const t of mic.getTracks()) pc.addTrack(t, mic)
+    const dc = pc.createDataChannel('oai-events')
+    dc.onopen = () => log('', 'data channel open')
+    dc.onmessage = (m) => onPeerEvent(m.data)
+    pc.ontrack = (ev) => { remoteAudio.srcObject = ev.streams[0] ?? new MediaStream([ev.track]); remoteAudio.play().catch((e) => log('e', `autoplay: ${e}`)) }
+    pc.onconnectionstatechange = () => {
+      log('', `webrtc ${pc?.connectionState}`)
+      if (pc?.connectionState === 'connected') { setConn('live', 'on'); setOrb('listening', 'Listening. Mic is always on — talk whenever you like.') }
+      if (pc?.connectionState === 'failed' || pc?.connectionState === 'disconnected') setConn(pc.connectionState, 'err')
+    }
+    setOrb('idle', 'Creating offer…')
+    await pc.setLocalDescription(await pc.createOffer())
+    await waitIce(pc)
+    setOrb('idle', 'Starting codex app-server + GPT Live session on your subscription…')
+    const tokens = await client.getTokens()
+    const r = await fetch('/api/voice/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(await voiceHeaders()) },
+      body: JSON.stringify({
+        sdp: pc.localDescription.sdp,
+        voice: $('voice-name').value,
+        idToken: tokens.idToken,
+        // The refresh token stays in this tab unless you opt in. Sharing it lets
+        // the server keep a call alive past the access token's expiry.
+        ...(SHARE_REFRESH_TOKEN ? { refreshToken: tokens.refreshToken } : {}),
+      }),
+    })
+    const d = await r.json()
+    if (!r.ok) throw new Error(`${d.error}: ${d.message ?? ''}`)
+    sessionId = d.sessionId
+    await pc.setRemoteDescription({ type: 'answer', sdp: d.sdp })
+    log('', `session ${sessionId.slice(0, 8)}… answer applied`)
+    startMeter(mic)
+    muteBtn.disabled = false; stopBtn.disabled = false
+    streamBridgeEvents(sessionId)
+  } catch (error) {
+    log('e', String(error)); setConn('failed', 'err'); setOrb('idle', 'Could not start. See events.')
+    await endCall()
+  }
+}
+async function streamBridgeEvents(id) {
+  eventsAbort = new AbortController()
+  try {
+    const r = await fetch(`/api/voice/${encodeURIComponent(id)}/events`, { headers: await voiceHeaders(), signal: eventsAbort.signal })
+    if (!r.ok || !r.body) throw new Error(`events ${r.status}`)
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      buf += dec.decode(value, { stream: !done })
+      let i
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1)
+        if (line) { try { onBridgeEvent(JSON.parse(line)) } catch {} }
+      }
+      if (done) break
+    }
+  } catch (e) { if (!eventsAbort?.signal.aborted) log('e', `events stream: ${e}`) }
+}
+function onBridgeEvent(ev) {
+  switch (ev.type) {
+    case 'keepalive': return
+    case 'handoff': log('a', `handoff → execution agent: "${ev.transcript}"`); setOrb('speaking', 'Thinking (delegated to Codex)…'); return
+    case 'tool.running': log('t', `tool ${ev.name} running`); return
+    case 'tool.completed': log('t', `tool ${ev.name} done`); setOrb('listening', 'Listening.'); return
+    case 'tool.failed': log('e', `tool ${ev.name ?? '?'} failed: ${ev.message}`); return
+    case 'session.closed': log('', 'server session closed'); endCall(); return
+    case 'error': log('e', `server: ${ev.message}`); return
+    case 'log': log('', ev.message); return
+    default: log('', `${ev.type} ${JSON.stringify(ev)}`)
+  }
+}
+function onPeerEvent(raw) {
+  let ev; try { ev = JSON.parse(String(raw)) } catch { return }
+  const t = String(ev?.type ?? '')
+  if (t === 'input_audio_buffer.speech_started') setOrb('listening', 'Hearing you…')
+  else if (t === 'output_audio_buffer.started' || t === 'response.created') setOrb('speaking', 'Speaking — just talk to interrupt.')
+  else if (t === 'output_audio_buffer.stopped' || t === 'response.done') setOrb('listening', 'Listening.')
+  else if (t.endsWith('transcript.done') || t.endsWith('transcription.completed')) log(t.includes('input') ? 'u' : 'a', ev.transcript ?? ev.text ?? '')
+  else if (t === 'error') log('e', `peer: ${JSON.stringify(ev.error ?? ev)}`)
+  else if (t) log('', t)
+}
+async function endCall() {
+  cancelAnimationFrame(meterRaf); orb.style.boxShadow = ''; orb.style.transform = ''
+  eventsAbort?.abort(); eventsAbort = undefined
+  pc?.close(); pc = undefined
+  mic?.getTracks().forEach((t) => t.stop()); mic = undefined
+  await audioCtx?.close().catch(() => {}); audioCtx = undefined
+  remoteAudio.srcObject = null
+  if (sessionId) {
+    const id = sessionId; sessionId = ''
+    fetch(`/api/voice/${encodeURIComponent(id)}`, { method: 'DELETE', headers: await voiceHeaders().catch(() => ({})) }).catch(() => {})
+  }
+  startBtn.disabled = false; muteBtn.disabled = true; stopBtn.disabled = true; muteBtn.textContent = 'Mute mic'
+  setConn('disconnected'); setOrb('idle', 'Call ended.')
+}
+startBtn.onclick = () => startCall()
+stopBtn.onclick = () => endCall()
+muteBtn.onclick = () => {
+  const track = mic?.getAudioTracks()[0]; if (!track) return
+  track.enabled = !track.enabled
+  muteBtn.textContent = track.enabled ? 'Mute mic' : 'Unmute mic'
+  setOrb(track.enabled ? 'listening' : 'muted', track.enabled ? 'Listening.' : 'Mic muted.')
+}
+client.getTokens().then((t) => showAuth(t)).catch(() => showAuth(undefined))
+</script>
+</body>
+</html>
