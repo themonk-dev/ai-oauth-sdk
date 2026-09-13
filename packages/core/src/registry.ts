@@ -26,6 +26,33 @@ interface Waiter {
 }
 
 /**
+ * `consume` calls still running, by `state`, across every registry in the
+ * process. See {@link AuthorizationRegistry.consume}.
+ *
+ * Module-level rather than per-instance, because a registry instance is not the
+ * boundary the guarantee is stated at. `AuthClient` builds its own registry in
+ * its constructor, and the documented multi-user server recipe builds a client
+ * per request — each with a fresh `prefixedStorage` wrapper — so an
+ * instance-scoped map put every concurrent callback in its own gate and
+ * serialised nothing. Keying on the storage object does not help for the same
+ * reason: the wrapper is new every time even when the store behind it is one.
+ *
+ * `state` is the right key because it is what identifies an authorization
+ * attempt. It is 32 bytes of CSPRNG output and the library refuses to degrade
+ * that (see SECURITY.md), so two registries racing on one `state` are racing
+ * for one record whatever storage wrapper each is holding.
+ *
+ * Sharing the map across storages is safe as well as sufficient: a joining
+ * caller never receives the winner's record. It awaits, then re-reads *its own*
+ * storage, so the worst a collision could do is make one caller wait for an
+ * unrelated read to finish.
+ *
+ * Entries are removed in a `finally`, so a rejected or hung consume cannot
+ * accumulate.
+ */
+const consuming = new Map<string, Promise<PendingAuthorization>>()
+
+/**
  * Tracks in-flight authorizations by `state`.
  *
  * This is the piece that decouples "start a login" from "finish a login". The
@@ -43,8 +70,6 @@ export class AuthorizationRegistry {
   readonly #settled = new Map<string, { tokens?: TokenSet; error?: unknown; at: number }>()
   readonly #settledTtlMs: number
   readonly #maxSettled: number
-  /** `consume` calls still running, by state. See {@link consume}. */
-  readonly #consuming = new Map<string, Promise<PendingAuthorization>>()
 
   constructor(options: AuthorizationRegistryOptions) {
     this.#storage = options.storage
@@ -227,6 +252,12 @@ export class AuthorizationRegistry {
    * every token it already issued for a reused code, taking out the session the
    * first call had just established.
    *
+   * The serialisation spans the process, not this instance — see
+   * {@link consuming} for why that distinction is the whole point. Every
+   * registry in the process gates on one map, so a server that builds a client
+   * per request is covered, which is the shape the multi-user recipe documents
+   * and the one SECURITY.md's "per process" wording promises.
+   *
    * In-process only, and deliberately so. `AuthStorage` has no
    * compare-and-swap, so two CLI windows sharing one `auth.json` can still both
    * read the record before either deletes it. Closing that needs an atomic
@@ -234,23 +265,25 @@ export class AuthorizationRegistry {
    * defect justifies.
    */
   async consume(state: string): Promise<PendingAuthorization> {
-    const inFlight = this.#consuming.get(state)
+    const inFlight = consuming.get(state)
 
     if (inFlight) {
       // However the first call ends — consumed, expired, or thrown — the record
-      // is gone once it has, so reading again reports it as already used.
+      // is gone once it has, so reading again reports it as already used. The
+      // re-read goes through this registry's own storage, which is what keeps
+      // one shared map correct across registries that do not share a store.
       await inFlight.catch(() => {})
 
       return this.#consumeOnce(state)
     }
 
     const running = this.#consumeOnce(state)
-    this.#consuming.set(state, running)
+    consuming.set(state, running)
 
     try {
       return await running
     } finally {
-      this.#consuming.delete(state)
+      consuming.delete(state)
     }
   }
 
