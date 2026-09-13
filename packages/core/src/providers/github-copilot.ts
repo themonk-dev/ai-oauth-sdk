@@ -132,10 +132,46 @@ export async function exchangeForCopilotToken(
 }
 
 /**
+ * Hosts RFC 8252 treats as loopback, matching the set `providers/index.ts`
+ * exempts for the same reason: traffic to them never leaves the machine, so
+ * cleartext there is not a wire risk, and a proxy or a recording fixture on
+ * `http://127.0.0.1:<port>` is a normal way to drive this.
+ */
+const loopbackHosts = new Set(['127.0.0.1', '[::1]', 'localhost'])
+
+/**
  * Reads the API host out of the exchange response.
  *
  * GitHub returns it under `endpoints.api`. Undefined when it is absent, which
- * leaves the descriptor's `apiBaseUrl` in place rather than guessing.
+ * leaves the descriptor's `apiBaseUrl` in place rather than guessing — the
+ * behaviour the `apiBaseUrl` comment above already describes as intended.
+ *
+ * A value that does not parse, or that names anything but `https` off loopback,
+ * is treated the same way as absent. This is the rule
+ * `assertSecureDiscoveredEndpoint` applies in `providers/index.ts`, and it is
+ * applied here for consistency with it rather than because there is a live hole:
+ * this document arrives over TLS from a hard-coded `https://api.github.com`, so
+ * writing an `http://` host into it means having already broken that connection.
+ * It is defence in depth and nothing more.
+ *
+ * What makes it worth having anyway is where the value ends up. It becomes
+ * `ResolvedCredential.baseUrl`, and every later relative-path request through
+ * `createAuthenticatedFetch` is resolved against it carrying the Copilot bearer
+ * token — so a single unexamined string decides, for the life of that credential,
+ * who receives it. That is exactly the shape of the discovery case: a remotely
+ * supplied endpoint that silently redirects a credential, with nothing anomalous
+ * for the caller to notice.
+ *
+ * It returns `undefined` rather than throwing, which is the one place it
+ * deliberately diverges from the discovery check. That one runs at construction
+ * time, where refusing costs nobody a session; this one runs in the middle of a
+ * live exchange, and falling back to the descriptor's own `apiBaseUrl` keeps a
+ * sign-in working instead of breaking it over a defence-in-depth check.
+ *
+ * The host is deliberately *not* pinned to `api.githubcopilot.com` or to a
+ * `github.com` suffix. Enterprise accounts genuinely get a different host — that
+ * is the whole reason this field is read rather than configured — so anything
+ * narrower than "must be https" would refuse legitimate deployments.
  */
 function readApiEndpoint(raw: Record<string, unknown>): string | undefined {
   const endpoints = raw['endpoints']
@@ -146,5 +182,28 @@ function readApiEndpoint(raw: Record<string, unknown>): string | undefined {
 
   const api = (endpoints as Record<string, unknown>)['api']
 
-  return typeof api === 'string' && api ? api : undefined
+  if (typeof api !== 'string' || !api) {
+    return undefined
+  }
+
+  let parsed: URL
+
+  try {
+    parsed = new URL(api)
+  } catch {
+    /* Unparseable is refused rather than waved through, as the discovery
+       check does with one: a value nothing can make sense of is not a host
+       this credential should be sent to. */
+    return undefined
+  }
+
+  if (parsed.protocol === 'https:') {
+    return api
+  }
+
+  if (parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname)) {
+    return api
+  }
+
+  return undefined
 }

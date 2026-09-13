@@ -53,8 +53,14 @@ export function defaultReceiver(provider: {
     return promptReceiver()
   }
 
+  /* stderr, not stdout, for the same reason `promptReceiver` uses it: stdout is
+     the data channel — `login … --json > out.json` has to capture the JSON and
+     nothing else — and an authorization URL is something a human reads. This is
+     the last branch, so it is also the one that runs for a `custom`-redirect
+     provider on a headless box, exactly where the output is most likely to be
+     redirected somewhere. */
   return loopbackReceiver({ openBrowser: false, onAuthorizationUrl: (url) => {
-    process.stdout.write(`\nOpen this URL to sign in:\n\n  ${url}\n\n`)
+    process.stderr.write(`\nOpen this URL to sign in:\n\n  ${url}\n\n`)
   } })
 }
 

@@ -123,6 +123,69 @@ describe('an authenticated fetch against Copilot', () => {
     expect(github.calls[0]?.url).toBe(`${githubCopilot.apiBaseUrl}/chat/completions`)
   })
 
+  /*
+   * `endpoints.api` is remotely supplied and becomes the `baseUrl` every later
+   * relative-path request is resolved against, carrying the Copilot bearer
+   * token — so an `http://` host named there would send that credential over
+   * cleartext for the life of the credential. `providers/index.ts` already
+   * treats a remotely-supplied endpoint as hostile; this is the same rule, in
+   * the same shape, applied to the same kind of value.
+   *
+   * Defence in depth rather than a live hole: the document arrives over TLS from
+   * a hard-coded `https://api.github.com`, so an attacker who can write into it
+   * has already broken that connection.
+   */
+  it('ignores a cleartext host GitHub names and falls back to the descriptor', async () => {
+    const client = await signedInClient()
+    const github = stubGitHub({ apiHost: 'http://api.attacker.example' })
+    const api = createAuthenticatedFetch(client, { fetch: github.fetchImpl })
+
+    await api('/chat/completions')
+
+    expect(github.calls[0]?.url).toBe(`${githubCopilot.apiBaseUrl}/chat/completions`)
+    expect(github.calls[0]?.headers.get('authorization')).toBe('Bearer copilot-token-1')
+  })
+
+  it('ignores a host that is not a URL at all', async () => {
+    const client = await signedInClient()
+    const github = stubGitHub({ apiHost: 'not a url' })
+    const api = createAuthenticatedFetch(client, { fetch: github.fetchImpl })
+
+    await api('/chat/completions')
+
+    expect(github.calls[0]?.url).toBe(`${githubCopilot.apiBaseUrl}/chat/completions`)
+  })
+
+  /*
+   * The check must stay a scheme check. Enterprise accounts get a host that is
+   * neither `api.githubcopilot.com` nor under `github.com`, which is the entire
+   * reason this field is read out of the response rather than configured, so
+   * anything narrower would refuse legitimate deployments.
+   */
+  it('still accepts any https host, including one on nobody’s allowlist', async () => {
+    const client = await signedInClient()
+    const github = stubGitHub({ apiHost: 'https://copilot.enterprise.example.co.uk' })
+    const api = createAuthenticatedFetch(client, { fetch: github.fetchImpl })
+
+    await api('/chat/completions')
+
+    expect(github.calls[0]?.url).toBe(
+      'https://copilot.enterprise.example.co.uk/chat/completions',
+    )
+  })
+
+  /* Loopback keeps the exemption every other check here gives it — a local
+     proxy on `http://127.0.0.1:<port>` is an ordinary way to drive this. */
+  it('still accepts a loopback host over http', async () => {
+    const client = await signedInClient()
+    const github = stubGitHub({ apiHost: 'http://127.0.0.1:8080' })
+    const api = createAuthenticatedFetch(client, { fetch: github.fetchImpl })
+
+    await api('/chat/completions')
+
+    expect(github.calls[0]?.url).toBe('http://127.0.0.1:8080/chat/completions')
+  })
+
   it('lets an explicit baseUrl option win over both', async () => {
     const client = await signedInClient()
     const github = stubGitHub()

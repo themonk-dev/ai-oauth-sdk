@@ -10,6 +10,19 @@ const loopbackOrigin: BrowserOrigin = { protocol: 'http:', hostname: 'localhost'
 /** A deployed app, the shape every non-loopback consumer actually runs from. */
 const httpsOrigin: BrowserOrigin = { protocol: 'https:', hostname: 'app.example.com', port: '' }
 
+/**
+ * A non-loopback *cleartext* origin. Not a contrived case: an app on the LAN
+ * during development, or an intranet tool behind a name with no certificate.
+ */
+const cleartextOrigin: BrowserOrigin = { protocol: 'http:', hostname: 'tools.corp.lan', port: '' }
+
+/**
+ * The same dev server reached over IPv6. `location.hostname` keeps the brackets
+ * an IPv6 host is written with, so this is the spelling a real `Location`
+ * produces — and the one the loopback set has to hold for it to be recognised.
+ */
+const ipv6LoopbackOrigin: BrowserOrigin = { protocol: 'http:', hostname: '[::1]', port: '5173' }
+
 function expectPopup(resolution: BrowserFlowResolution): asserts resolution is Extract<
   BrowserFlowResolution,
   { flow: 'popup' }
@@ -90,6 +103,79 @@ describe('popup redirect URIs', () => {
 
     const exact: BrowserOrigin = { protocol: 'http:', hostname: '127.0.0.1', port: '56121' }
     expect(resolveBrowserFlow(providers.xai, exact).flow).toBe('popup')
+  })
+})
+
+/*
+ * `acceptsHttpsRedirect` says what the provider will take, and rule 1 used to
+ * test only "not loopback" while `originRoot` copies `origin.protocol`
+ * verbatim. An app served from `http://tools.corp.lan/` therefore had that
+ * cleartext URL handed to the provider as its redirect — for `openrouter` it
+ * reaches the wire as `callback_url` — and the authorization code came back
+ * over cleartext.
+ */
+describe('a non-loopback cleartext origin', () => {
+  it('is never offered a popup by the provider that accepts an arbitrary HTTPS redirect', () => {
+    expect(providers.openrouter.redirect.acceptsHttpsRedirect).toBe(true)
+    expect(resolveBrowserFlow(providers.openrouter, cleartextOrigin).flow).not.toBe('popup')
+  })
+
+  it('never yields an http redirect URI from any built-in provider', () => {
+    for (const provider of Object.values(providers)) {
+      const resolution = resolveBrowserFlow(provider, cleartextOrigin)
+
+      if (resolution.flow === 'popup') {
+        expect.unreachable(`${provider.id} offered a popup from a cleartext origin`)
+      }
+    }
+  })
+
+  it('is told the origin has to be secure, not that the page will fail to load', () => {
+    const resolution = resolveBrowserFlow(providers.openrouter, cleartextOrigin)
+    expectPaste(resolution)
+    // The `unreachable` wording — "will fail to load", "copy the whole address
+    // bar" — describes something that does not happen here, and names a remedy
+    // that is not the one. The redirect address is fine; the origin is not.
+    expect(resolution.hint.kind).toBe('insecure-origin')
+    expect(resolution.hint.message).toMatch(/https/)
+  })
+
+  it('still prefers a device flow, which needs no redirect back to the page at all', () => {
+    // openai and xai are unaffected by the origin's scheme: nothing is
+    // redirected anywhere, so downgrading them to paste would be a regression.
+    expect(resolveBrowserFlow(providers.openai, cleartextOrigin).flow).toBe('device')
+    expect(resolveBrowserFlow(providers.xai, cleartextOrigin).flow).toBe('device')
+  })
+
+  it('leaves loopback origins alone, where cleartext never leaves the machine', () => {
+    // Rule 2 catches these on `loopbackPort: 0`, and must keep doing so.
+    const resolution = resolveBrowserFlow(providers.openrouter, loopbackOrigin)
+    expectPopup(resolution)
+    expect(resolution.redirectUri).toBe('http://localhost:5173/')
+
+    const ipLiteral: BrowserOrigin = { protocol: 'http:', hostname: '127.0.0.1', port: '3000' }
+    expectPopup(resolveBrowserFlow(providers.claude, ipLiteral))
+  })
+
+  /*
+   * The bracketed spelling is the one a real `Location` hands over, so a
+   * loopback set holding a bare `::1` recognises no IPv6 origin at all. That
+   * was survivable while rule 1 caught everything cleartext; now that rule 1
+   * requires https, an unrecognised `[::1]` would drop a dev server from
+   * `popup` to a paste hint telling it to be served over https — advice that
+   * makes no sense for a machine talking to itself.
+   */
+  it('recognises the bracketed IPv6 loopback spelling a Location actually produces', () => {
+    const resolution = resolveBrowserFlow(providers.openrouter, ipv6LoopbackOrigin)
+
+    expectPopup(resolution)
+    expect(resolution.redirectUri).toBe('http://[::1]:5173/')
+  })
+
+  it('leaves genuine https origins entirely unaffected', () => {
+    const resolution = resolveBrowserFlow(providers.openrouter, httpsOrigin)
+    expectPopup(resolution)
+    expect(resolution.redirectUri).toBe('https://app.example.com/')
   })
 })
 
