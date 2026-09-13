@@ -33,6 +33,29 @@ export interface UseAuthOptions extends AuthClientOptions {
    * mocking `window.location`.
    */
   origin?: BrowserOrigin
+  /**
+   * Identity for the adapters this hook cannot look inside — `storage`,
+   * `crypto`, `fetch`.
+   *
+   * They are captured once, when the client is built, and never re-read: the
+   * client holds `storage` in a `readonly` field and hands the same instance
+   * to its authorization registry. So a `storage` that has come to *mean*
+   * something different — the store belonging to a different signed-in user —
+   * cannot announce itself by changing object identity. Nothing in the key
+   * below would move, the previous user's client would stay, and their tokens
+   * would keep being served.
+   *
+   * The adapters are deliberately not keyed on directly. Built inline in a
+   * component body — which is how this repo's own examples write them — their
+   * identity changes on every render, and keying on that would rebuild the
+   * client mid-flow and cancel in-flight logins: strictly worse than the gap
+   * it closed. A string the caller controls is stable by construction.
+   *
+   * Pass it whenever a `storage` adapter is scoped per user, and keep it
+   * stable per identity: `storageKey={appUserId}`, never a fresh value each
+   * render.
+   */
+  storageKey?: string
 }
 
 export interface UseAuthResult extends AuthState {
@@ -74,14 +97,38 @@ export interface UseAuthResult extends AuthState {
  * render cycle. Subscription-based rather than `useSyncExternalStore` so the
  * package still supports React 17.
  *
- * The store's identity depends only on what changes the client's behaviour;
- * rebuilding it every render would drop in-flight flows and the token cache.
+ * The store's identity is every option that is plain data and safe to hold in a
+ * memo dependency: the provider, client id, redirect URI, scopes, account key,
+ * extra auth params, the TTL and skew numbers, and
+ * {@link UseAuthOptions.storageKey}. Rebuilding it every
+ * render would drop in-flight flows and the token cache, so all of these are
+ * compared by *value* — an inline `extraAuthParams={{ prompt: 'consent' }}`
+ * hashes equal across renders and does not churn the client.
+ *
+ * The adapters — `storage`, `crypto`, `fetch` — are deliberately absent, for
+ * the reason given on `storageKey`: keying on an object identity that changes
+ * every render would cancel the very logins this hook exists to run. That is
+ * what `storageKey` is for, and why swapping `storage` alone is not enough to
+ * re-key a client.
+ *
+ * `clientSecret` is absent too, for a different reason: a `useMemo` dependency
+ * is visible in React DevTools, and a client secret does not belong there.
+ * Change it together with `storageKey` if it ever has to move at runtime.
+ *
  * Callbacks are read through a ref so they stay current without joining that
  * identity. `subscribe` emits immediately, so the mount effect also resyncs
  * state after a remount.
  */
 export function useAuth(options: UseAuthOptions): UseAuthResult {
-  const { receiver, restoreOnMount = true, onSuccess, onError, origin, ...clientOptions } = options
+  const {
+    receiver,
+    restoreOnMount = true,
+    onSuccess,
+    onError,
+    origin,
+    storageKey,
+    ...clientOptions
+  } = options
 
   const clientKey = JSON.stringify({
     provider:
@@ -90,6 +137,10 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
     redirectUri: clientOptions.redirectUri,
     scopes: clientOptions.scopes,
     accountKey: clientOptions.accountKey,
+    extraAuthParams: clientOptions.extraAuthParams,
+    stateTtlMs: clientOptions.stateTtlMs,
+    expirySkewMs: clientOptions.expirySkewMs,
+    storageKey,
   })
 
   const latest = useRef({ clientOptions, receiver, onSuccess, onError })
@@ -108,6 +159,70 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
   )
 
   const [state, setState] = useState<AuthState>(() => store.getState())
+
+  /* A new store must not be read through the old store's state, even once.
+     `useState`'s initializer runs on mount only, so on the render where
+     `clientKey` moved, `store` is already the new one while `state` still holds
+     what the old one last published — and the new store's `subscribe` does not
+     emit until the effect below runs, after this render has committed. That
+     committed render is the whole bug this hook is being fixed for, in
+     miniature: a `storageKey` swap would paint the previous user's tokens,
+     refresh token included, under the client that replaced them. Resetting
+     during render rather than in an effect is what keeps it off the screen. */
+  const storeRef = useRef(store)
+
+  if (storeRef.current !== store) {
+    storeRef.current = store
+    setState(store.getState())
+  }
+
+  /* The one case `storageKey` cannot fix on its own: an app that never learns
+     it exists. A `storage` swapped while a session is held is the dangerous
+     shape — the client keeps the old store, so the previous user's tokens go
+     on being served, and nothing else in the hook says so.
+
+     Silent whenever `clientKey` moved on the same render, which is the test
+     that matters rather than `storageKey` alone: an app re-keying through
+     `accountKey` has already done the right thing, and telling it otherwise
+     would be a warning for correct code. Gated on `state.tokens` because a swap
+     with no session held is benign, and latched because the inline
+     `storage: memoryStorage()` idiom is a fresh object every render — warning
+     on each would bury the signal in the noise it exists to cut through.
+
+     Dev only, and deliberately inert where `NODE_ENV` is absent entirely: a
+     bundler substitutes the literal `process.env.NODE_ENV`, not this
+     `globalThis` read, so treating "undefined" as development would ship the
+     warning to production. This package is browser-facing and carries no Node
+     types, which is why the global cannot be read directly. */
+  const warnedRef = useRef(false)
+  const storageRef = useRef(clientOptions.storage)
+  const clientKeyRef = useRef(clientKey)
+  const reKeyed = clientKeyRef.current !== clientKey
+
+  clientKeyRef.current = clientKey
+
+  const nodeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+    ?.env?.['NODE_ENV']
+
+  if (
+    nodeEnv !== undefined &&
+    nodeEnv !== 'production' &&
+    !warnedRef.current &&
+    !reKeyed &&
+    storageKey === undefined &&
+    clientOptions.storage !== storageRef.current &&
+    state.tokens !== undefined
+  ) {
+    warnedRef.current = true
+    console.warn(
+      '[ai-oauth-sdk] `storage` changed while a session was held, but the client was built ' +
+        'with the previous adapter and will keep reading it — tokens included. If the new ' +
+        'store belongs to a different user, pass a `storageKey` that changes with them. If it ' +
+        'is the same store rebuilt each render, hoist it out of the component.',
+    )
+  }
+
+  storageRef.current = clientOptions.storage
 
   useEffect(() => {
     const unsubscribe = store.subscribe(setState)

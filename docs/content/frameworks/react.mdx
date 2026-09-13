@@ -81,9 +81,27 @@ failing later.
 
 ## Store identity
 
-The store is rebuilt only when something that changes the client's behaviour changes: the provider,
-the client id, the redirect URI, the scopes, or the account key. Rebuilding it on every render
-would drop in-flight flows and the token cache.
+The store is rebuilt only when something that identifies it changes: the provider, the client id,
+the redirect URI, the scopes, the account key, the extra auth params, the state TTL and expiry
+skew, or `storageKey`. Rebuilding it on every render would drop in-flight flows and the token
+cache, so all of these are compared by value — an inline `extraAuthParams={{ prompt: 'consent' }}`
+does not churn the client.
+
+The adapters — `storage`, `crypto`, `fetch` — are deliberately not part of that identity. Built
+inline in a component body they are a new object every render, and keying on that would rebuild the
+client mid-flow and cancel the login you just started.
+
+That has a consequence worth stating plainly: **a `storage` adapter is captured once and never
+re-read.** If you scope storage per signed-in user, swapping it alone does *not* give you a new
+client — the previous user's tokens, refresh token included, go on being served. Say so with
+`storageKey`:
+
+```tsx
+const auth = useAuth({ provider, clientId, storage: storageFor(appUserId), storageKey: appUserId })
+```
+
+`accountKey` has the same effect, since it is part of the identity. In development, changing
+`storage` while a session is held logs a warning if neither is set.
 
 Your callbacks are read through a ref, so `onSuccess` and `onError` stay current without joining
 that identity. You do not need to memoise them.

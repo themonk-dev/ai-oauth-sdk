@@ -216,6 +216,99 @@ describe('popupReceiver', () => {
     await started.close()
   })
 
+  /**
+   * The hijacked-popup case. A named auxiliary window is reachable by name from
+   * anywhere in its browsing context group, so a page the user reached this app
+   * from can navigate the live popup to this app's own redirect page and have
+   * it post a denial back — same origin, same `WindowProxy`, so neither the
+   * origin check nor `event.source` can tell it apart. Only the missing `state`
+   * can, and taking such a payload would cancel a live sign-in outright.
+   */
+  it('ignores a state-less denial posted while an attempt is live', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider,
+    })
+    const settled = watch(started)
+    await started.present('https://provider.test/authorize?state=mine')
+
+    deliverCallback('https://app.test/callback?error=access_denied')
+    await delivered()
+
+    expect(settled.settled).toBe(false)
+
+    // The genuine callback still completes on the same receiver.
+    const waiting = started.wait()
+    deliverCallback('https://app.test/callback?code=abc&state=mine')
+
+    await expect(waiting).resolves.toEqual({ code: 'abc', state: 'mine' })
+
+    await started.close()
+  })
+
+  it('ignores a postMessage callback minted for another attempt', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider,
+    })
+    const settled = watch(started)
+    await started.present('https://provider.test/authorize?state=mine')
+
+    deliverCallback('https://app.test/callback?code=abc&state=theirs')
+    await delivered()
+
+    expect(settled.settled).toBe(false)
+
+    await started.close()
+  })
+
+  it('ignores a postMessage callback that beats present() to the window', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider,
+    })
+    const settled = watch(started)
+
+    deliverCallback('https://app.test/callback?error=access_denied')
+    await delivered()
+
+    expect(settled.settled).toBe(false)
+
+    await started.close()
+  })
+
+  /**
+   * The `state` test above is exempt for a provider declaring
+   * `echoesState: false`, which is the one the browser popup flow most often
+   * serves — so the name the popup is opened under has to stop being a constant
+   * an outsider can read out of the published source.
+   */
+  it('opens the popup under an unpredictable, per-attempt window name', async () => {
+    const names: string[] = []
+
+    for (const _attempt of [0, 1]) {
+      const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+        provider,
+      })
+      await started.present('https://provider.test/authorize?state=mine')
+      names.push(String(openSpy.mock.calls.at(-1)?.[1]))
+      await started.close()
+    }
+
+    expect(names[0]).not.toBe('aioauth-login')
+    expect(names[0]).not.toBe(names[1])
+    expect(names[0]).toMatch(/^aioauth-[0-9a-f]{32}$/)
+  })
+
+  it('still honours an explicit window name', async () => {
+    const started = await popupReceiver({
+      redirectUri: 'http://localhost/callback',
+      windowName: 'chosen',
+    }).start({ provider })
+    await started.present('https://provider.test/authorize?state=mine')
+
+    expect(openSpy.mock.calls.at(-1)?.[1]).toBe('chosen')
+
+    await started.close()
+  })
+
   it('defaults its redirect URI to the current page', async () => {
     const started = await popupReceiver().start({ provider })
     expect(started.redirectUri).toBe('http://localhost/')

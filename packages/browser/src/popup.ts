@@ -1,5 +1,6 @@
 import {
   OAuthError,
+  hasSecureRandom,
   isOAuthError,
   readCallback,
   type CallbackReceiver,
@@ -15,7 +16,15 @@ export interface PopupReceiverOptions {
   redirectUri?: string
   width?: number
   height?: number
-  /** Popup window name. */
+  /**
+   * Popup window name. Defaults to an unpredictable per-attempt name.
+   *
+   * A *fixed* name is a name anyone can guess, and a named auxiliary window can
+   * be reached by name from anywhere in its browsing context group — so a page
+   * the user reached this app from can navigate the live popup mid-flow. Pass
+   * one only if something genuinely has to address the window (a test harness),
+   * and never a constant in a page an outsider can open.
+   */
   windowName?: string
   /** How often to check whether the user closed the popup. Default 400ms. */
   pollIntervalMs?: number
@@ -36,6 +45,46 @@ const MESSAGE_TYPE = 'aioauth:callback'
  * `state` comparison in {@link popupReceiver}.
  */
 const CALLBACK_CHANNEL = 'aioauth:callback-channel'
+
+/**
+ * An unguessable name for the popup, minted per attempt.
+ *
+ * The `state` comparison below is what refuses a hijacked popup's payload, but
+ * it cannot be the whole answer: a provider declaring `echoesState: false` has
+ * said no `state` will come back, so the comparison is exempt for exactly the
+ * provider the browser popup flow most often serves. Taking the name out of the
+ * published source removes the precondition instead of the consequence — a
+ * window nobody can name is a window nobody can navigate by name.
+ *
+ * This throws rather than falling back, the way the rest of the library does
+ * with randomness. Neither available alternative is acceptable: `Math.random()`
+ * would only look unguessable, and returning the old constant would silently
+ * restore the precondition — for the `echoesState: false` provider, the *only*
+ * protection there is — at the one moment we have learned we cannot provide it.
+ *
+ * Nor is the throw unreachable in the way it might appear. The client mints
+ * PKCE through its own `crypto` option, and `createDefaultCrypto` tells a
+ * caller on a runtime without `getRandomValues` to supply one; a caller who
+ * does gets a working `createAuthorization()` and arrives here regardless.
+ * `ReceiverContext` does not carry that adapter, so this cannot borrow it. In a
+ * browser the question is close to moot — `getRandomValues` is exposed on
+ * insecure origins too, only `subtle` is gated — which is what makes refusing
+ * cheap and silence expensive.
+ */
+function popupWindowName(): string {
+  if (!hasSecureRandom()) {
+    throw new OAuthError(
+      'unsupported_runtime',
+      'popupReceiver needs crypto.getRandomValues to name the popup unpredictably, and this ' +
+        'runtime has none. A fixed name lets a page that can reach this one navigate the popup ' +
+        'mid-flow. Pass an explicit `windowName` only if you have another way to prevent that.',
+    )
+  }
+
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16))
+
+  return `aioauth-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
+}
 
 type ChannelMessage = { kind: 'callback'; payload: string } | { kind: 'received' }
 
@@ -206,10 +255,32 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
        * providers resolve against the most recently started flow, which is fine
        * for a CLI or a single-flow app and is not safe in a multi-user server.
        */
+      /**
+       * A trailing fragment artifact is not a different attempt.
+       *
+       * Some providers append one — `#_=_` is the well-known case — and an app
+       * that hands the receiver `window.location.href` rather than its search
+       * string carries it into the parsed value, so `mine` arrives as
+       * `mine#_=_`. Be plain about what tolerating it buys, because it is less
+       * than it looks: such a callback still fails. The client compares the
+       * state exactly, with no stripping, and rejects it as `state_mismatch`.
+       * What changes is only *how* it fails — at the client, immediately and by
+       * name, rather than here, silently, as a login that hangs to its timeout.
+       * A legible error on a misconfigured app is worth the wider accept
+       * surface; a working configuration is not on offer either way.
+       *
+       * The surface stays narrow regardless. Matching still requires the
+       * attempt's own 256-bit `state` as a prefix, which is what an outsider
+       * cannot supply, and `presentedState` is base64url so it can never itself
+       * contain a `#` for the split to cut short. What this test exists to
+       * refuse is a payload that answers for no attempt at all.
+       */
+      const attemptState = (state: string | undefined): string | undefined => state?.split('#')[0]
+
       const belongsToThisAttempt = (state: string | undefined): boolean =>
         presentedState === undefined ||
         context.provider.echoesState === false ||
-        state === presentedState
+        attemptState(state) === presentedState
 
       const onMessage = (event: MessageEvent) => {
         if (event.origin !== window.location.origin) {
@@ -222,12 +293,31 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
           return
         }
 
-        // Taken as it comes, with no `state` of its own to answer for: a
-        // `postMessage` reaches the window that opened the popup and nowhere
-        // else, so a payload arriving here was minted for this attempt by
-        // construction. Judging it again could only drop one the client is
-        // better placed to rule on.
-        read(data.payload).settle()
+        /* Matched to the attempt on the same test the channel below applies,
+           and for the same reason. A `postMessage` does reach only the window
+           that opened the popup — but "the window we opened" is not the same
+           claim as "a window only we can reach". A named auxiliary window is
+           findable by name from anywhere in its browsing context group, and
+           the opener chain keeps a page the user arrived from inside that
+           group: it can call `window.open(ourRedirectPage, windowName)` and
+           navigate the live popup, which then posts to us from our own origin
+           with our own handle. `event.source` cannot tell that apart — a
+           `WindowProxy` keeps its identity across navigation, so the hijacked
+           popup is still `popup` — and the origin check passes by
+           construction. `state` is the only thing the outsider cannot supply.
+
+           The shape that matters is a payload carrying none: an unsolicited
+           `?error=access_denied` rejects `wait()` before the client's own
+           comparison can run, cancelling a live sign-in on demand. That is
+           the same drive-by the loopback receiver and the channel handler
+           already refuse. */
+        const callback = read(data.payload)
+
+        if (!presented || !belongsToThisAttempt(callback.state)) {
+          return
+        }
+
+        callback.settle()
       }
 
       window.addEventListener('message', onMessage)
@@ -310,7 +400,7 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
 
           popup = window.open(
             url,
-            options.windowName ?? 'aioauth-login',
+            options.windowName ?? popupWindowName(),
             `popup=yes,width=${width},height=${height},left=${Math.round(left)},top=${Math.round(top)}`,
           )
 
