@@ -33,7 +33,11 @@ Share one session across a tree with `<AuthProvider>` + `useAuthContext()`.
 ## Notes
 
 The client is memoised on the options that identify it, so re-renders do not drop in-flight flows
-or the token cache.
+or the token cache. The adapters — `storage`, `crypto`, `fetch` — are not among them, because an
+adapter built inline is a new object every render and keying on that would cancel the login you
+just started. So a `storage` scoped per signed-in user needs a `storageKey` (or an `accountKey`)
+that changes with them; swapping the adapter alone keeps the previous user's client, and their
+tokens with it.
 
 State updates are guarded against unmount, because OAuth flows routinely outlive the component that
 started them. The user wanders off to the provider's consent screen and comes back, and by then the

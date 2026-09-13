@@ -83,8 +83,34 @@ was told to trust, but not a token. That depends on the authorization server act
 challenge, which this library cannot observe, and it does not apply at all to a provider you define
 with `usePkce: false`.
 
-**Popup callbacks are origin-checked** before being trusted, and `postCallbackToOpener` posts to its
-own origin rather than to `*`.
+**Popup callbacks are origin-checked and matched to the attempt by `state`**, on the same test the
+broadcast path applies, and `postCallbackToOpener` posts to its own origin rather than to `*`.
+
+The origin check alone proves which origin sent a message, not which attempt it was minted for, and
+those come apart. A named auxiliary window can be reached by name from anywhere in its browsing
+context group, and an opener chain keeps a page the user arrived from inside that group — so such a
+page can navigate the live popup to your own redirect page, which then posts to you from your own
+origin. `event.source` does not separate the two either: a `WindowProxy` keeps its identity across
+navigation, so the hijacked popup is still the handle you hold. Only the `state` is beyond reach. A
+payload carrying none, where the attempt presented one, is refused — that is the shape of a forged
+`?error=access_denied`, and taking one would cancel a live sign-in outright.
+
+A trailing fragment artifact such as `#_=_` is not read as a different attempt, which buys less than
+it sounds like and is worth stating exactly: such a callback still fails. The client compares the
+`state` exactly, with no stripping, and rejects it as `state_mismatch`. What the tolerance changes is
+only how it fails — at the client, immediately and by name, instead of as a login that hangs to its
+timeout. Matching still requires the attempt's own 256-bit `state` as a prefix, and that value is
+base64url, so it can never itself contain the `#` the comparison cuts at.
+
+A provider declaring `echoesState: false` is exempt from that comparison, as it is on the channel and
+for the same reason — which leaves the exemption widest on the provider the browser popup flow most
+often serves, and means the `state` test gives that provider no protection at all. So the popup is
+opened under an unguessable, per-attempt window name rather than a constant, removing the
+precondition instead of relying on the consequence; for `echoesState: false` that name is the whole
+of the defence. A runtime with no `crypto.getRandomValues` to mint it is refused rather than quietly
+given the old constant, on the same principle as the rest of the randomness here. Pass `windowName`
+only if something genuinely has to address the window, and never a constant a page an outsider
+controls could guess.
 
 **`announceCallback` broadcasts on your own origin, to everything listening on it.** A
 `BroadcastChannel` cannot be opened from another origin, so the code does not leave yours — but it
