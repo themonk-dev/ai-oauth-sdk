@@ -139,11 +139,36 @@ What it is not is an API key. Nothing here reaches `api.openai.com`, fine-tuning
 or the assistants API. And usage is billed to the signed-in user's ChatGPT plan, under whatever
 terms OpenAI applies to that plan, which is worth reading before you build on it.
 
-<Callout type="warn" title="Speech to speech is not reachable from here">
-  ChatGPT's voice transport wants a token minted for the ChatGPT *web* client, which comes from a
-  browser session cookie rather than from an OAuth grant. No scope or header available here opens
-  it. Use an API key and OpenAI's documented `/v1/realtime/calls` interface for that.
-</Callout>
+### Handing the token to Codex itself
+
+The Codex CLI signs in with this same grant and keeps it in `$CODEX_HOME/auth.json`. Write that
+file from a `TokenSet` and `codex` runs as the signed-in user — `codex app-server` in particular,
+which is how ChatGPT's realtime voice call and delegated turns are reached on a subscription, with
+no API key in the picture.
+
+```ts
+import { codexAuthJson } from '@ai-oauth-sdk/core'
+import { mkdir, writeFile } from 'node:fs/promises'
+
+await mkdir(home, { recursive: false, mode: 0o700 })
+await writeFile(`${home}/auth.json`, JSON.stringify(codexAuthJson(tokens)), { mode: 0o600 })
+// spawn('codex', ['app-server', '--stdio'], { env: { CODEX_HOME: home, PATH } })
+```
+
+Two fields are stricter than `TokenSet` is, and the helper exists because getting either wrong is
+silent: `id_token` must be a JWT carrying the ChatGPT claims (the access token carries the same
+ones and stands in), and `refresh_token` must be a string rather than `null`. Codex otherwise fails
+to parse the file, runs with no credentials at all, and its request goes to `api.openai.com` where
+it fails with "You didn't provide an API key". Treat the result as a credential file: `0600`, a
+private directory, deleted with the process.
+
+`chatgptPlanType(tokens)` reads `free`, `plus`, `pro` and so on off the same claim, which is the
+first thing a subscription-gated feature such as voice needs to check.
+
+[`examples/voice-chatgpt`](https://github.com/themonk-dev/ai-oauth-sdk/tree/main/examples/voice-chatgpt)
+is the whole path end to end: device login in the browser, then GPT Live over WebRTC through a
+private `codex app-server`. The transport is OpenAI's private ChatGPT/Codex one, not the public
+Realtime API, and can change without notice.
 
 ### For an API-key account
 
