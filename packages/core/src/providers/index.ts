@@ -110,6 +110,24 @@ export function resolveProvider(
     redirect: { ...base.redirect, ...overrides.redirect },
     extraAuthParams: { ...base.extraAuthParams, ...overrides.extraAuthParams },
     tokenRequest: { ...base.tokenRequest, ...overrides.tokenRequest },
+    // `defineProvider` applies these, but nothing makes a descriptor go through
+    // it: `isProviderConfig` accepts any object with an `id` and an
+    // `authorizationUrl`, so an inline config — a JSON file, a descriptor built
+    // by hand and cast, anything crossing a package boundary as a plain object
+    // — arrives here with both fields simply absent. `usePkce` absent is
+    // falsy, so the flow builds an authorization URL with no `code_challenge`
+    // and silently runs the one shape of this library's threat model that PKCE
+    // is the whole answer to: a captured authorization code becomes redeemable.
+    // The defaults are reapplied here so the only way to lose PKCE is to ask
+    // for that in so many words.
+    //
+    // `??`, never `||` or a truthiness test. `github-copilot` sets
+    // `usePkce: false` deliberately — GitHub's device flow does not use PKCE
+    // and rejects the request that carries it — and a truthiness test would
+    // read that deliberate `false` as "unset", turn PKCE on, and break the
+    // provider outright.
+    usePkce: overrides.usePkce ?? base.usePkce ?? true,
+    pkceMethod: overrides.pkceMethod ?? base.pkceMethod ?? 'S256',
   }
 
   if (overrides.scopes?.length) {
@@ -157,7 +175,20 @@ function isLoopbackUrl(value: string): boolean {
   }
 }
 
-function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' {
+/**
+ * `allowLoopback` is the caller's answer to "is cleartext here still confined
+ * to this machine?", and it is not the same answer everywhere. An issuer is
+ * loopback-exempt by definition — it is the thing being vouched for, and a
+ * local development authorization server is the normal case. A value *named by*
+ * that issuer's document only inherits the exemption when the issuer was itself
+ * on loopback, because a remote issuer naming a loopback endpoint is not a
+ * local server describing itself; it is a remote party choosing which local
+ * process the code exchange goes to.
+ */
+function classifyDiscoveryUrl(
+  value: string,
+  allowLoopback: boolean,
+): 'ok' | 'unparseable' | 'insecure' {
   let parsed: URL
 
   try {
@@ -170,7 +201,7 @@ function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' 
     return 'ok'
   }
 
-  if (parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname)) {
+  if (allowLoopback && parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname)) {
     return 'ok'
   }
 
@@ -191,12 +222,31 @@ function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' 
  * platform browser launcher, where a `%VAR%` in it is expanded by cmd.exe on
  * Windows.
  *
+ * Cleartext on loopback is exempt, but only when the issuer was itself on
+ * loopback — the same condition {@link assertSecureDiscoveryResponse} already
+ * places on the redirect target, and for the same reason. A local development
+ * server describing its own `http://127.0.0.1:<port>/token` is ordinary. A
+ * public `https` issuer naming one is not: nothing about being remote and
+ * TLS-verified entitles a party to pick which process on *this* machine
+ * receives the authorization code, the PKCE verifier, the refresh token and the
+ * client secret, and any local process that can hold a port would then be
+ * handed them — with the `https` issuer standing behind the descriptor as
+ * though it had been validated. The exemption exists so that traffic which
+ * never reaches a wire is not held to TLS; it is not a way for a remote
+ * document to reach inside the machine.
+ *
  * The message names the field and the offending value, because the failure
  * surfaces at client construction time far from whoever runs the discovery
  * endpoint.
  */
-function assertSecureDiscoveredEndpoint(field: string, value: string, source: string): void {
-  const verdict = classifyDiscoveryUrl(value)
+function assertSecureDiscoveredEndpoint(
+  field: string,
+  value: string,
+  source: string,
+  issuer: string,
+): void {
+  const allowLoopback = isLoopbackUrl(issuer)
+  const verdict = classifyDiscoveryUrl(value, allowLoopback)
 
   if (verdict === 'unparseable') {
     throw new OAuthError(
@@ -209,7 +259,12 @@ function assertSecureDiscoveredEndpoint(field: string, value: string, source: st
     throw new OAuthError(
       'configuration_error',
       `Discovery document at ${source} names an insecure ${field}: "${value}". ` +
-        'Endpoints taken from a discovery document must use https, except on loopback.',
+        (allowLoopback
+          ? 'Endpoints taken from a discovery document must use https, except on loopback.'
+          : 'Endpoints taken from a discovery document must use https. Loopback is exempt only ' +
+            'when the issuer is itself on loopback, which this one is not, so a cleartext ' +
+            'endpoint here would be a remote party choosing a local process to send ' +
+            'credentials to.'),
     )
   }
 }
@@ -235,7 +290,9 @@ function assertSecureDiscoveredEndpoint(field: string, value: string, source: st
  * the endpoints are theirs, not a remote party's.
  */
 function assertSecureIssuer(issuer: string): void {
-  const verdict = classifyDiscoveryUrl(issuer)
+  // `true` unconditionally: an issuer on loopback is the case the exemption is
+  // for, and there is no earlier value to inherit the judgement from.
+  const verdict = classifyDiscoveryUrl(issuer, true)
 
   if (verdict === 'unparseable') {
     throw new OAuthError(
@@ -377,11 +434,11 @@ export async function providerFromDiscovery(
   // does. Testing only for `undefined` would let that document value through
   // unchecked, which is the whole case this guard exists for.
   if (input.authorizationUrl == null) {
-    assertSecureDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url)
+    assertSecureDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url, issuer)
   }
 
   if (input.tokenUrl == null) {
-    assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url)
+    assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url, issuer)
   }
 
   // The document's device endpoint always wins over `input.deviceAuthorizationUrl`
@@ -391,6 +448,7 @@ export async function providerFromDiscovery(
       'device_authorization_endpoint',
       document.device_authorization_endpoint,
       url,
+      issuer,
     )
   }
 

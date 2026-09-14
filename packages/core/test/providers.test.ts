@@ -9,6 +9,7 @@ import {
   claude,
   defineProvider,
   gemini,
+  githubCopilot,
   openai,
   openrouter,
   parseStandardCallback,
@@ -18,6 +19,7 @@ import {
   resolveProvider,
   xai,
 } from '../src/providers/index.js'
+import type { ProviderConfig } from '../src/types.js'
 
 describe('built-in provider descriptors', () => {
   it('exposes every built-in provider', () => {
@@ -325,6 +327,46 @@ describe('resolveProvider', () => {
     expect(custom.pkceMethod).toBe('S256')
     expect(custom.tokenRequest.style).toBe('form')
     expect(custom.redirect.loopbackPath).toBe('/callback')
+  })
+
+  it('reapplies the PKCE defaults to a descriptor that never went through defineProvider', async () => {
+    // `isProviderConfig` asks only for an `id` and an `authorizationUrl`, so a
+    // descriptor built by hand — read from a config file, or assembled across a
+    // package boundary — reaches the client with `usePkce` simply absent. Absent
+    // is falsy, and the flow would then run with no `code_challenge` at all:
+    // silently, and against the one attack PKCE is the whole answer to.
+    const handBuilt = {
+      id: 'handmade',
+      label: 'Handmade',
+      authorizationUrl: 'https://acme.test/authorize',
+      tokenUrl: 'https://acme.test/token',
+      scopes: ['openid'],
+      redirect: { mode: 'custom' },
+      extraAuthParams: {},
+      tokenRequest: {},
+    } as unknown as ProviderConfig
+
+    const resolved = resolveProvider(handBuilt)
+    expect(resolved.usePkce).toBe(true)
+    expect(resolved.pkceMethod).toBe('S256')
+
+    const client = createAuthClient({
+      provider: handBuilt,
+      clientId: 'c',
+      redirectUri: 'myapp://callback',
+      storage: memoryStorage(),
+    })
+    const authorization = await client.createAuthorization()
+
+    expect(new URL(authorization.url).searchParams.get('code_challenge')).toBeTruthy()
+    expect(new URL(authorization.url).searchParams.get('code_challenge_method')).toBe('S256')
+  })
+
+  it('leaves a provider that turned PKCE off deliberately turned off', async () => {
+    // `??`, not `||`: GitHub's device flow does not use PKCE, and reading that
+    // `false` as "unset" would switch it back on and break the provider.
+    expect(resolveProvider('github-copilot').usePkce).toBe(false)
+    expect(resolveProvider(githubCopilot, { clientId: 'mine' }).usePkce).toBe(false)
   })
 })
 

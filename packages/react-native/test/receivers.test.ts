@@ -290,6 +290,73 @@ describe('authSessionReceiver', () => {
     await started.close()
   })
 
+  it('ignores a denial that carries no state', async () => {
+    // `openAuthSessionAsync` completes on the first URL matching the redirect,
+    // and on Android that is a scheme any other app may also have registered.
+    // A bare `?error=access_denied` on it must not be able to fail a login that
+    // is genuinely in progress — so it leaves `wait()` pending rather than
+    // rejecting, because rejecting *is* the cancellation being prevented.
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?error=access_denied` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('ignores a result URL whose path is not the redirect URI', async () => {
+    // The `state` matches, so only the path comparison can turn this away.
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}XYZ?code=abc&state=xyz`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('settles on a result URL that echoes the presented state', async () => {
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=abc&state=xyz` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).resolves.toEqual({ code: 'abc', state: 'xyz' })
+
+    await started.close()
+  })
+
+  it('ignores a result URL whose state disagrees', async () => {
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}?code=forged&state=someone-elses`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('still takes a callback from a provider that declares it echoes no state', async () => {
+    // The same exemption the deep-link receiver makes: a provider that has said
+    // it will not echo `state` would otherwise be held to a comparison it
+    // cannot satisfy, and its only possible callback dropped.
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=unechoed` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({
+      provider: defineProvider({ ...provider, echoesState: false }),
+    })
+
+    await started.present('https://provider.test/authorize?state=presented')
+    await expect(started.wait()).resolves.toMatchObject({ code: 'unechoed' })
+
+    await started.close()
+  })
+
   it('requires present() before wait()', async () => {
     const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=a` })
     const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })

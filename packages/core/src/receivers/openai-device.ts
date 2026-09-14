@@ -2,6 +2,7 @@ import { OAuthError } from '../errors.js'
 import { fetchWithSignal } from '../http.js'
 import { safeSnippet } from '../redact.js'
 import { exchangeCode } from '../token.js'
+import { clamp } from './device.js'
 import type { DeviceFlow, DeviceFlowPollInput, DeviceFlowStartInput, FetchLike } from '../types.js'
 
 /**
@@ -27,6 +28,8 @@ const DEVICE_REDIRECT_URI = `${ISSUER}/deviceauth/callback`
 
 const DEFAULT_INTERVAL_SECONDS = 5
 const DEFAULT_EXPIRY_SECONDS = 15 * 60
+/** The ceiling on a server-named deadline, matching the RFC 8628 sibling. */
+const MAX_EXPIRY_MS = 24 * 60 * 60 * 1000
 
 interface UserCodeResponse {
   device_auth_id?: unknown
@@ -82,6 +85,21 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
  * no pre-filled verification URI either, but its page forwards `user_code`
  * straight through to the authorize step — verified against the live redirect —
  * so the same one-click link xAI hands back can be built here.
+ *
+ * `interval` and `expires_at` are clamped because they come from the server,
+ * the same way the RFC 8628 flow clamps its own pair. `"0"` is a perfectly
+ * valid value to send and taking it literally turns the poll loop below into an
+ * unthrottled flood of an OpenAI endpoint, from every client that got the
+ * response; the ceiling stops a broken server pinning us to one request a
+ * minute. `expires_at` is an absolute timestamp rather than a duration, so a
+ * far-future one would hold the loop open effectively forever, and it is capped
+ * a day out. There is no floor on it: a short deadline simply ends the loop,
+ * which is the server's call to make.
+ *
+ * The `Number()` coercion has to survive, and has to come first. `clamp` reads
+ * a non-number as absent, so clamping the raw string would quietly return the
+ * fallback for every response this endpoint actually sends — the bound would
+ * look enforced and the server's real value would never be honoured.
  */
 async function start(input: DeviceFlowStartInput) {
   const fetchImpl = input.fetchImpl ?? globalThis.fetch
@@ -113,7 +131,7 @@ async function start(input: DeviceFlowStartInput) {
     )
   }
 
-  const interval = Number(raw['interval'])
+  const interval = clamp(Number(raw['interval']), DEFAULT_INTERVAL_SECONDS, 1, 60)
   const expiresAt = Date.parse(String(raw['expires_at'] ?? ''))
 
   return {
@@ -122,9 +140,9 @@ async function start(input: DeviceFlowStartInput) {
     verificationUri: VERIFICATION_URI,
     verificationUriComplete: `${VERIFICATION_URI}?user_code=${encodeURIComponent(userCode)}`,
     expiresAt: Number.isFinite(expiresAt)
-      ? expiresAt
+      ? Math.min(expiresAt, Date.now() + MAX_EXPIRY_MS)
       : Date.now() + DEFAULT_EXPIRY_SECONDS * 1000,
-    intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : DEFAULT_INTERVAL_SECONDS) * 1000,
+    intervalMs: interval * 1000,
   }
 }
 

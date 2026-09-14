@@ -8,8 +8,15 @@ import type { DeviceCodeResponse, FetchLike, ProviderConfig, TokenSet } from '..
 
 export type { DeviceCodeResponse } from '../types.js'
 
-/** Reads a numeric field from an untrusted response, bounded and with a default. */
-function clamp(value: unknown, fallback: number, min: number, max: number): number {
+/**
+ * Reads a numeric field from an untrusted response, bounded and with a default.
+ *
+ * Shared with the OpenAI device flow next door, which has the same problem with
+ * a different wire format. Note that it is strict about the type: a numeric
+ * *string* is not a number here and falls back, so a provider that sends one
+ * has to coerce before calling this rather than after.
+ */
+export function clamp(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return fallback
   }

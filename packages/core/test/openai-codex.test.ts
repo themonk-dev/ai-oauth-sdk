@@ -202,6 +202,13 @@ function chatgptJwt(auth: Record<string, unknown>, top: Record<string, unknown> 
   return `${encode({ alg: 'none' })}.${encode({ ...top, 'https://api.openai.com/auth': auth })}.sig`
 }
 
+/** A well-formed JWT from somebody else entirely — no OpenAI claim anywhere. */
+function foreignJwt(payload: Record<string, unknown>): string {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
+
+  return `${encode({ alg: 'none' })}.${encode(payload)}.sig`
+}
+
 describe('chatgptPlanType', () => {
   it('reads the plan from the id_token', () => {
     expect(
@@ -252,5 +259,34 @@ describe('codexAuthJson', () => {
   it('refuses a token set codex could not parse', () => {
     expect(() => codexAuthJson({ accessToken: 'opaque' })).toThrow(OAuthError)
     expect(() => codexAuthJson({ accessToken: '' , idToken })).toThrow(OAuthError)
+  })
+
+  it('refuses a JWT that decodes but carries no ChatGPT claim', () => {
+    // Decoding is not the bar: codex reads the account out of the namespaced
+    // claim, so a well-formed token from another issuer parses, yields no
+    // account, and leaves codex running unauthenticated against
+    // api.openai.com. That has to be an error here rather than a silent one
+    // hours later.
+    const google = foreignJwt({ iss: 'https://accounts.google.com', sub: '1', email: 'a@b.c' })
+
+    expect(() => codexAuthJson({ accessToken: google, idToken: google })).toThrow(OAuthError)
+  })
+
+  it('falls back to the access token when the id_token carries no claim', () => {
+    // `idToken` is whatever the token endpoint returned, and it is not always
+    // the token codex wants. Preferring it before checking it refused a token
+    // set that has exactly what codex needs, just not in the first field.
+    const accessToken = chatgptJwt({ chatgpt_plan_type: 'plus' })
+    const file = codexAuthJson({ accessToken, idToken: 'opaque-id-token' }, { now })
+
+    expect(file.tokens.id_token).toBe(accessToken)
+  })
+
+  it('accepts an empty claim object, which a real account can carry', () => {
+    // Personal and organization tokens carry different sub-keys, so the claim's
+    // contents are not something to hold a token to — its presence is.
+    expect(codexAuthJson({ accessToken: chatgptJwt({}) }, { now }).tokens.id_token).toBe(
+      chatgptJwt({}),
+    )
   })
 })

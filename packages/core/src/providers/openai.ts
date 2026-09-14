@@ -19,6 +19,26 @@ function readAuthClaim(payload: Record<string, unknown> | undefined): Record<str
 }
 
 /**
+ * Whether a token is a JWT that actually carries OpenAI's namespaced auth
+ * claims, as opposed to merely being a JWT.
+ *
+ * The distinction is the whole of what Codex needs from `id_token`: it decodes
+ * the token and reads this claim, so a perfectly well-formed JWT minted by
+ * somebody else satisfies "is a JWT" and still leaves Codex running without an
+ * account. A `TokenSet` can hold one — `idToken` is whatever the token endpoint
+ * returned, and a provider override or a multi-issuer deployment can put a
+ * foreign one there.
+ *
+ * The claim only has to be present and be an object. Its contents differ by
+ * account: a personal token and an organization token carry different
+ * sub-keys, and even an empty object is a token OpenAI issued for this flow,
+ * so requiring anything inside it would refuse real users.
+ */
+function carriesAuthClaim(token: string | undefined): boolean {
+  return token ? isRecord(decodeJwtPayload(token)?.[AUTH_CLAIM]) : false
+}
+
+/**
  * The surface a ChatGPT subscription token actually works against.
  *
  * Not `api.openai.com`: that is the REST API, it wants an API key, and it
@@ -312,8 +332,11 @@ export interface CodexAuthJson {
  * an API key". Neither can be `null`:
  *
  * - `id_token` must be a JWT carrying the `https://api.openai.com/auth` claims,
- *   because Codex parses it on load. The access token carries the same claims,
- *   so it stands in when the flow returned no id_token.
+ *   because Codex parses it on load and reads the account out of that claim.
+ *   Both tokens are candidates and the first one actually carrying the claim is
+ *   written, so the access token — which OpenAI gives the same claim — stands
+ *   in whenever the id_token would not do, whether the flow returned none at
+ *   all or returned one that is opaque or minted by a different issuer.
  * - `refresh_token` must be a string. A flow that keeps the refresh token
  *   elsewhere (a browser tab, say) writes an empty one, and the call simply
  *   cannot outlive the access token.
@@ -325,9 +348,17 @@ export function codexAuthJson(
   tokens: Pick<TokenSet, 'accessToken' | 'accountId' | 'idToken' | 'refreshToken'>,
   options: { now?: Date } = {},
 ): CodexAuthJson {
-  const idToken = tokens.idToken ?? tokens.accessToken
+  // Both candidates are judged before either is chosen, rather than picking
+  // `idToken` when it merely exists and validating afterwards. Preferring it
+  // unconditionally means an opaque or foreign id_token alongside a
+  // claims-carrying access token is refused, when the token set in fact has
+  // exactly what Codex needs; and validating only that the chosen one decodes
+  // lets a JWT from somewhere else through, which Codex accepts, parses, finds
+  // no account in, and then runs unauthenticated against api.openai.com — the
+  // silent failure this guard exists to turn into a thrown error.
+  const idToken = [tokens.idToken, tokens.accessToken].find(carriesAuthClaim)
 
-  if (!tokens.accessToken || !decodeJwtPayload(idToken)) {
+  if (!tokens.accessToken || !idToken) {
     throw new OAuthError(
       'invalid_token_response',
       'Codex needs a JWT id_token (or access token) carrying the ChatGPT claims; this token set has neither.',

@@ -197,6 +197,33 @@ describe('providerFromDiscovery', () => {
     expect(provider.deviceAuthorizationUrl).toBe('http://[::1]:8123/device')
   })
 
+  it('refuses a loopback endpoint named by an issuer that is not itself loopback', async () => {
+    // The exemption above is for a local authorization server describing
+    // itself, where the traffic never reaches a wire. A remote https issuer
+    // naming a loopback endpoint is the opposite: it is choosing which process
+    // on *this* machine receives the code, the verifier and the client secret,
+    // and the loopback scheme is what would have let it through unremarked.
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          authorization_endpoint: 'https://idp.acme.example/authorize',
+          token_endpoint: 'http://127.0.0.1:8123/token',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+
+    await expect(
+      providerFromDiscovery(
+        'https://idp.acme.example',
+        { id: 'acme', label: 'Acme', clientSecret: 'super-secret', redirect: { mode: 'loopback' } },
+        fetchImpl,
+      ),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/token_endpoint.*"http:\/\/127\.0\.0\.1:8123\/token"/),
+    })
+  })
+
   it('leaves an integrator-supplied http tokenUrl alone', async () => {
     // Not document-sourced, so it is the integrator's own config — the same
     // value `defineProvider` would accept without comment.

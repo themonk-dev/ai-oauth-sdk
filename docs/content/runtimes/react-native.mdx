@@ -46,6 +46,14 @@ const tokens = await client.login({
 `present()` and awaits it in `wait()`. Cancelling the sheet rejects with an `aborted` error rather
 than hanging.
 
+The URL the session returns is bound to the attempt exactly as a deep link is: the session
+completes on the first URL matching the redirect, and on Android that is a scheme any other app may
+also have registered. One on a different path, or whose `state` disagrees with the one presented —
+or that carries none where one was presented, `?error=...` included — is dropped rather than
+settling the login, so pass `timeoutMs` (or a `signal`) to `login()` for the provider that ignores
+RFC 6749 and omits `state` on a denial. Closing the sheet is unaffected and still fails fast: that
+is the OS reporting on this receiver's own session, not a URL someone else could send.
+
 ## Bare React Native
 
 ```ts

@@ -113,6 +113,40 @@ describe("OpenAI's device flow, which is not RFC 8628", () => {
     expect(exchange.get('redirect_uri')).toBe('https://auth.openai.com/deviceauth/callback')
   })
 
+  it('clamps a poll interval and a deadline it was handed', async () => {
+    // Both values are the server's, and both are load-bearing here: an interval
+    // of a millisecond is an unthrottled flood of an OpenAI endpoint from every
+    // client that got the response, and a year-out `expires_at` holds the loop
+    // open for a year. The string is what OpenAI really sends, so the coercion
+    // has to happen before the clamp — otherwise the clamp reads every real
+    // response as absent and quietly hands back the fallback.
+    const { fetchImpl } = stubFetch([
+      {
+        status: 200,
+        body: { ...started, interval: '0.001', expires_at: '2999-01-01T00:00:00Z' },
+      },
+    ])
+
+    const device = await openaiDeviceFlow.start({ provider: openai, clientId: 'app_x', fetchImpl })
+
+    expect(device.intervalMs).toBeGreaterThanOrEqual(1000)
+    expect(device.expiresAt).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000)
+  })
+
+  it('leaves a realistic response exactly as the server sent it', async () => {
+    // The clamp is a bound, not a rewrite: a server behaving normally must see
+    // its own numbers come back, or the coercion bug above would be invisible.
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    const { fetchImpl } = stubFetch([
+      { status: 200, body: { ...started, interval: '5', expires_at: expiresAt } },
+    ])
+
+    const device = await openaiDeviceFlow.start({ provider: openai, clientId: 'app_x', fetchImpl })
+
+    expect(device.intervalMs).toBe(5000)
+    expect(device.expiresAt).toBe(Date.parse(expiresAt))
+  })
+
   it('quotes the provider when the request is refused', async () => {
     const { fetchImpl } = stubFetch([{ status: 400, body: { detail: 'unknown client' } }])
     await expect(

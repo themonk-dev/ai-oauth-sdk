@@ -30,7 +30,10 @@ const tokens = await client.login({
 ```
 
 `authSessionReceiver` uses `SFAuthenticationSession` / Custom Tabs, so the user keeps
-their provider cookies and the OS closes the sheet on redirect.
+their provider cookies and the OS closes the sheet on redirect. The URL it returns is
+matched to the attempt by `state` and by the redirect URI's whole path, the same way a
+deep link is, so pass `timeoutMs` (or a `signal`) to `login()`. Closing the sheet still
+fails fast with an `aborted` error.
 
 ## Bare React Native
 
