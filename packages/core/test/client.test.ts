@@ -313,6 +313,27 @@ describe('a callback for no pending flow cannot evict buffered results', () => {
     ).rejects.toMatchObject({ code: 'authorization_denied' })
     await expect(waiting).rejects.toMatchObject({ code: 'authorization_denied' })
   })
+
+  it('still reports an expiry to a waiter, which consumes no record', async () => {
+    /* `state_expired` is thrown after the record has been deleted, so the
+       ownership flag the guard reads never flips. A waiter given no timeout
+       has no timer of its own, so failing to report here hangs it forever. */
+    const client = createAuthClient({
+      provider: testProvider(server.url),
+      redirectUri: 'http://localhost:9999/callback',
+      storage: memoryStorage(),
+      stateTtlMs: 50,
+    })
+    const authorization = await client.createAuthorization()
+    const { code, state } = await followAuthorization(authorization.url)
+    const waiting = client.waitForAuthorization(state)
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    await expect(client.completeAuthorization({ code, state })).rejects.toMatchObject({
+      code: 'state_expired',
+    })
+    await expect(waiting).rejects.toMatchObject({ code: 'state_expired' })
+  })
 })
 
 describe('waitForAuthorization — the state-keyed handoff', () => {

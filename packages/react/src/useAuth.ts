@@ -91,8 +91,10 @@ export function useAuth(options: UseAuthOptions): UseAuthResult {
      fields (`parseCallback`, `enrichTokens`, `apiHeaders`,
      `transformRequestBody`) do not survive `JSON.stringify`, so descriptors
      differing only in a hook still hash equal; and the output depends on key
-     order, which is stable here because `defineProvider` spreads a fixed
-     literal. Re-keying the memo does not separate *persistent* storage —
+     order, which `defineProvider` takes from the caller's own literal rather
+     than imposing — stable for any one call site, so the memo holds, but two
+     descriptors built key-for-key differently are two clients. Re-keying the
+     memo does not separate *persistent* storage —
      both clients still read `tokens:<id>` — which is what `accountKey` is
      for. */
   const clientKey = JSON.stringify({

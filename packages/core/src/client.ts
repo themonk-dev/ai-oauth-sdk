@@ -364,7 +364,16 @@ export class AuthClient {
 
       return tokens
     } catch (error) {
-      if (consumed) {
+      /* `state_expired` is thrown after `consume()` has already deleted the
+         record, so `consumed` never flips even though the state was ours —
+         and only a record that existed can produce it, which makes it as good
+         an ownership proof as `consumed` itself. Without this the waiter on a
+         flow whose user sat too long at the consent screen is never settled
+         at all: `waitFor` installs no timer unless it was given one. */
+      const wasOurs =
+        consumed || (error instanceof OAuthError && error.code === 'state_expired')
+
+      if (wasOurs) {
         this.#registry.reject(state, error)
       }
 
