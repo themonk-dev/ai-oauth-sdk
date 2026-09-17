@@ -18,6 +18,7 @@ import {
   resolveProvider,
   xai,
 } from '../src/providers/index.js'
+import type { ProviderConfig } from '../src/types.js'
 
 describe('built-in provider descriptors', () => {
   it('exposes every built-in provider', () => {
@@ -325,6 +326,75 @@ describe('resolveProvider', () => {
     expect(custom.pkceMethod).toBe('S256')
     expect(custom.tokenRequest.style).toBe('form')
     expect(custom.redirect.loopbackPath).toBe('/callback')
+  })
+})
+
+/*
+ * PKCE is the whole of what stops a captured authorization code from being
+ * redeemed — `state` binds a callback to an attempt and does nothing about the
+ * code itself — so the default that turns it on has to be unloseable. These pin
+ * the two ways it used to be lost silently.
+ */
+describe('PKCE defaults survive being handed nothing', () => {
+  const base = {
+    id: 'acme',
+    label: 'Acme',
+    authorizationUrl: 'https://acme.test/authorize',
+    tokenUrl: 'https://acme.test/token',
+    scopes: ['read'],
+    redirect: { mode: 'loopback' as const, loopbackPort: 9999 },
+  }
+
+  // `{ ...cfg, usePkce: cfg.usePkce }` over an optional field is the shape that
+  // produced this: the key is present, the value is undefined, and the spread
+  // used to overwrite the default with it.
+  it('ignores an explicitly undefined usePkce', () => {
+    const provider = defineProvider({ ...base, usePkce: undefined })
+    expect(provider.usePkce).toBe(true)
+  })
+
+  it('ignores an explicitly undefined pkceMethod', () => {
+    const provider = defineProvider({ ...base, pkceMethod: undefined })
+    expect(provider.pkceMethod).toBe('S256')
+  })
+
+  // The carve-out the default exists alongside: GitHub's device grant has no
+  // PKCE and says so, and no amount of defaulting may argue with it.
+  it('keeps a deliberate usePkce: false', () => {
+    expect(defineProvider({ ...base, usePkce: false }).usePkce).toBe(false)
+  })
+
+  // A descriptor can reach `resolveProvider` without ever meeting
+  // `defineProvider` — via a cast, or from plain JavaScript — and every client
+  // construction goes through here, so the default is applied here too.
+  it('defaults PKCE for a descriptor that never went through defineProvider', () => {
+    const provider = resolveProvider({ ...base, tokenRequest: { style: 'form' } } as ProviderConfig)
+    expect(provider.usePkce).toBe(true)
+    expect(provider.pkceMethod).toBe('S256')
+  })
+
+  it('keeps a deliberate usePkce: false through resolveProvider', () => {
+    const provider = resolveProvider({
+      ...base,
+      usePkce: false,
+      tokenRequest: { style: 'form' },
+    } as ProviderConfig)
+    expect(provider.usePkce).toBe(false)
+  })
+
+  // The end of the chain, and the only assertion that proves the fix reached
+  // the wire: a challenge on the URL and a verifier kept back to redeem it.
+  it('challenges the authorization request for such a provider', async () => {
+    const client = createAuthClient({
+      provider: defineProvider({ ...base, usePkce: undefined }),
+      clientId: 'acme-client',
+    })
+    const authorization = await client.createAuthorization()
+    const url = new URL(authorization.url)
+
+    expect(url.searchParams.get('code_challenge')).toBeTruthy()
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256')
+    expect(authorization.codeVerifier).toBeTruthy()
   })
 })
 

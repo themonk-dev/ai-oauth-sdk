@@ -89,10 +89,17 @@ export function readCallback(provider: ProviderConfig, input: string): CallbackR
  */
 export function defineProvider(input: ProviderInput): ProviderConfig {
   return {
-    usePkce: true,
-    pkceMethod: 'S256',
     tokenRequest: { style: 'form', includeClientIdInBody: true },
     ...input,
+    // These two sit *after* the spread because they carry the library's central
+    // promise, and a promise a caller can break by accident is not one. Ahead of
+    // it, a key that is present but explicitly `undefined` — what
+    // `defineProvider({ ...cfg, usePkce: cfg.usePkce })` produces, and what the
+    // optional types accept without a word — overwrote `true` with nothing, and
+    // every later reader tests it for bare truthiness. `??` rather than `||`, so
+    // the `usePkce: false` a device-flow provider means deliberately survives.
+    usePkce: input.usePkce ?? true,
+    pkceMethod: input.pkceMethod ?? 'S256',
     redirect: { loopbackPath: '/callback', loopbackHost: 'localhost', ...input.redirect },
   }
 }

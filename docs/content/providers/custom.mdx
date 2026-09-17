@@ -160,8 +160,8 @@ enterprise accounts. So neither is knowable from the descriptor.
 | `clientId` | `string` | Usually supplied by the consumer instead. |
 | `clientSecret` | `string` | For providers that insist, such as Gemini. |
 | `requiresClientId` | `boolean` | Set false when none is transmitted. Defaults to `true`. |
-| `usePkce` | `boolean` | Defaults to `true`. |
-| `pkceMethod` | `'S256' | 'plain'` | Defaults to `S256`. |
+| `usePkce` | `boolean` | Defaults to `true`. Only an explicit `false` turns PKCE off; leaving the field out, or passing `undefined`, keeps it on. |
+| `pkceMethod` | `'S256' \| 'plain'` | Defaults to `S256`. |
 | `tokenRequest` | `TokenRequestSpec` | style form or json, plus header and body options. |
 | `extraAuthParams` | `Record<string, string>` | Appended to the authorization URL. |
 | `deviceAuthorizationUrl` | `string` | RFC 8628 endpoint, when supported. |
