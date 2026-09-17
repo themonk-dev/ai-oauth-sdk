@@ -16,6 +16,28 @@ function inWebWorker(): boolean {
 }
 
 /**
+ * Whether a web storage global belongs to a *document*, rather than merely
+ * existing.
+ *
+ * Presence used to be the whole test, on the reasoning that web storage exists
+ * in browsers and nowhere else. That stopped being true: Node ships Web Storage
+ * enabled by default from v26 (it was behind `--experimental-webstorage`
+ * earlier), so a server render there finds a perfectly working `localStorage`
+ * and the refusal below never fires. Node's `localStorage` is backed by a file
+ * and its `sessionStorage` by the process — both global to the process, not
+ * scoped to the request — so that is the token-pooling case
+ * {@link unavailableStorage} exists to refuse, arriving through a door the
+ * check did not cover. Deno and Bun expose the same globals server-side.
+ *
+ * So the question is asked positively, the way {@link inWebWorker} asks its
+ * own: a document means a browser tab, and a runtime that merely implements the
+ * storage API does not have one.
+ */
+function inDocument(): boolean {
+  return typeof window !== 'undefined' && typeof window.document !== 'undefined'
+}
+
+/**
  * Stands in when there is no browser storage global at all — not "unavailable
  * right now" (Safari private mode, a sandboxed iframe: both *throw* on access,
  * and are handled below by degrading to memory) but "absent because this
@@ -66,7 +88,7 @@ function unavailableStorage(adapterName: string): AuthStorage {
  */
 export function localStorageAdapter(): AuthStorage {
   try {
-    if (typeof localStorage === 'undefined') {
+    if (typeof localStorage === 'undefined' || !inDocument()) {
       return inWebWorker() ? memoryStorage() : unavailableStorage('localStorageAdapter')
     }
 
@@ -92,7 +114,7 @@ export function localStorageAdapter(): AuthStorage {
  */
 export function sessionStorageAdapter(): AuthStorage {
   try {
-    if (typeof sessionStorage === 'undefined') {
+    if (typeof sessionStorage === 'undefined' || !inDocument()) {
       return inWebWorker() ? memoryStorage() : unavailableStorage('sessionStorageAdapter')
     }
 

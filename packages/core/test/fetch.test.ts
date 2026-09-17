@@ -336,6 +336,75 @@ describe('revocation', () => {
     await expect(client.revoke()).rejects.toMatchObject({ code: 'configuration_error' })
   })
 
+  /**
+   * `logout()` swallows a failed revocation on purpose, so the only way a
+   * caller can tell a session that died at the provider from one that is still
+   * live is what it returns. It used to return nothing, which made "revoked"
+   * unknowable — an offboarding script could only echo back what it asked for.
+   */
+  describe('what logout reports', () => {
+    it('says revoked when the provider took it', async () => {
+      const client = await signedInClient(server)
+
+      expect(await client.logout({ revoke: true })).toEqual({
+        signedOut: true,
+        revocation: 'revoked',
+      })
+      expect(server.revocations).toHaveLength(1)
+    })
+
+    it('says unsupported when the provider declares no endpoint', async () => {
+      const client = await signedInClient(server, { revocationUrl: undefined })
+
+      expect(await client.logout({ revoke: true })).toEqual({
+        signedOut: true,
+        revocation: 'unsupported',
+      })
+      // Nothing was even attempted, which is the point.
+      expect(server.revocations).toHaveLength(0)
+      expect(await client.getTokens()).toBeUndefined()
+    })
+
+    it('says failed, and carries the error, when the endpoint refuses', async () => {
+      const refusing = await startFakeAuthServer({ revokeStatus: 503 })
+
+      try {
+        const client = await signedInClient(refusing)
+        const result = await client.logout({ revoke: true })
+
+        expect(result.signedOut).toBe(true)
+        expect(result.revocation).toBe('failed')
+        expect(result.revocationError).toMatchObject({ code: 'token_request_failed', status: 503 })
+        // It was genuinely attempted, and the local tokens still went.
+        expect(refusing.revocations).toHaveLength(1)
+        expect(await client.getTokens()).toBeUndefined()
+      } finally {
+        await refusing.close()
+      }
+    })
+
+    it('says nothing-to-revoke when there was no credential to revoke', async () => {
+      const client = await signedInClient(server)
+      await client.logout()
+      server.revocations.length = 0
+
+      // Signing out of a provider you are not signed into posts nothing, so
+      // calling that "revoked" would be the same false assurance as before.
+      expect(await client.logout({ revoke: true })).toEqual({
+        signedOut: true,
+        revocation: 'nothing-to-revoke',
+      })
+      expect(server.revocations).toHaveLength(0)
+    })
+
+    it('says not-requested for a plain logout', async () => {
+      const client = await signedInClient(server)
+
+      expect(await client.logout()).toEqual({ signedOut: true, revocation: 'not-requested' })
+      expect(server.revocations).toHaveLength(0)
+    })
+  })
+
   it('a revoked session cannot be refreshed back to life', async () => {
     const client = await signedInClient(server)
     await client.revoke()

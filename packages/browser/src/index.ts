@@ -33,7 +33,15 @@ export interface BrowserClientOptions extends AuthClientOptions {
 
 /** An {@link AuthClient} preconfigured for the browser. */
 export function createBrowserAuthClient(options: BrowserClientOptions): AuthClient {
-  return createAuthClient({ storage: sessionStorageAdapter(), ...options })
+  /* Resolved with `??` *after* the spread: `{ storage: props.storage }` is the
+     ordinary way to forward an optional prop, and it puts a present-but-
+     `undefined` key in `options`. Spreading over a default would let that key
+     erase it, leaving core to fall back to `memoryStorage()` — which both
+     breaks flows that cross a page load (`startRedirectLogin` /
+     `handleRedirectCallback` lose the PKCE verifier; the popup flow survives
+     because the record stays in memory on the same instance) and throws away
+     the SSR refusal that `sessionStorageAdapter()` returns off-browser. */
+  return createAuthClient({ ...options, storage: options.storage ?? sessionStorageAdapter() })
 }
 
 export interface BrowserLoginOptions extends Omit<BrowserClientOptions, 'provider'> {

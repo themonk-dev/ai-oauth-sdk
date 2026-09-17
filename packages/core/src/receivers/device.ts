@@ -1,9 +1,10 @@
 import { createDefaultCrypto, type CryptoAdapter } from '../crypto/adapter.js'
 import { OAuthError } from '../errors.js'
 import { createPkce } from '../pkce.js'
-import { encodeQuery } from '../query.js'
+import { encodeQuery, parseQuery } from '../query.js'
 import { fetchWithSignal } from '../http.js'
 import { safeSnippet } from '../redact.js'
+import { readExpiresIn } from '../token.js'
 import type { DeviceCodeResponse, FetchLike, ProviderConfig, TokenSet } from '../types.js'
 
 export type { DeviceCodeResponse } from '../types.js'
@@ -145,6 +146,55 @@ const MAX_SERVER_ERRORS = 3
  */
 const SERVER_ERROR_BACKOFF_MS = 1_000
 
+/** A non-empty string, or nothing. Keeps the `??` chains below readable. */
+function stringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined
+}
+
+/**
+ * Pulls the error a poll response *names* out of it, without quoting the body.
+ *
+ * Three shapes get here. The conventional `{"error":…,"error_description":…}`;
+ * OpenAI's nested `{"error":{"type":…,"message":…}}`, which `readTokenError`
+ * unwraps on the redirect path; and a form-encoded body, which never parsed as
+ * JSON at all — `form` is the text only when `JSON.parse` threw, and only its
+ * `error` and `error_description` keys are ever read out of it.
+ *
+ * Both the untransformed body and the provider's transform of it are consulted,
+ * in that order: a normaliser written for the success shape usually returns the
+ * token fields alone and drops `error` on the floor, but one that moves the
+ * code into the standard field should be honoured too.
+ *
+ * Values come back exactly as the provider sent them. The caller compares them
+ * against the spec codes and redacts on the way out — same rule as
+ * `readTokenError`, for the same reason.
+ */
+function readPollError(
+  raw: Record<string, unknown>,
+  parsed: Record<string, unknown>,
+  form: string,
+): { error?: string; description?: string } {
+  const nested =
+    typeof raw['error'] === 'object' && raw['error'] !== null
+      ? (raw['error'] as Record<string, unknown>)
+      : undefined
+  const encoded = form ? parseQuery(form) : {}
+
+  return {
+    error:
+      stringField(raw['error']) ??
+      stringField(parsed['error']) ??
+      stringField(nested?.['type']) ??
+      stringField(nested?.['code']) ??
+      stringField(encoded['error']),
+    description:
+      stringField(raw['error_description']) ??
+      stringField(parsed['error_description']) ??
+      stringField(nested?.['message']) ??
+      stringField(encoded['error_description']),
+  }
+}
+
 export interface PollDeviceTokenInput {
   provider: ProviderConfig
   clientId: string
@@ -164,6 +214,10 @@ export interface PollDeviceTokenInput {
  * someone's proxy. For the same reason a 5xx keeps polling: it is the
  * provider's infrastructure talking, not a verdict on the grant, and giving up
  * would throw away a code the user may already have approved.
+ *
+ * A successful body is shaped by the same provider hooks the redirect path
+ * uses — `parseTokenResponse` then `enrichTokens` — so a device login and a
+ * redirect login of the same account store the same {@link TokenSet}.
  *
  * That tolerance is bounded at {@link MAX_SERVER_ERRORS}. A gateway that is
  * simply down answers every poll, and retrying to the device code's expiry
@@ -201,29 +255,66 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
     )
     const text = await response.text().catch(() => '')
     let raw: Record<string, unknown> = {}
+    let isJson = false
 
     try {
-      raw = JSON.parse(text) as Record<string, unknown>
+      const decoded: unknown = JSON.parse(text)
+
+      // `'null'`, `'3'` and `'"x"'` all parse without throwing, and a bare
+      // `null` would then make every `raw[...]` read below a TypeError rather
+      // than a poll failure. Only an object is a token response.
+      if (typeof decoded === 'object' && decoded !== null) {
+        raw = decoded as Record<string, unknown>
+        isJson = true
+      }
     } catch {
       raw = {}
     }
 
-    if (response.ok && typeof raw['access_token'] === 'string') {
-      return {
-        accessToken: raw['access_token'],
-        ...(typeof raw['refresh_token'] === 'string' ? { refreshToken: raw['refresh_token'] } : {}),
-        ...(typeof raw['expires_in'] === 'number'
-          ? { expiresAt: Date.now() + raw['expires_in'] * 1000 }
+    // Same shaping the redirect path applies, in the same order: the provider's
+    // `parseTokenResponse` runs on a success body *before* anything is read out
+    // of it, and only there, because a provider with a non-standard success
+    // shape may still report errors the conventional way — so the error below
+    // is read from the untransformed body first, and from the transform only as
+    // a fallback. Skipping the transform entirely read an unconventional 200 as
+    // a failure and quoted the body — a live credential — into the error below,
+    // while burning the grant it described.
+    const parsed =
+      response.ok && provider.parseTokenResponse ? provider.parseTokenResponse(raw) : raw
+    const accessToken = parsed['access_token']
+
+    if (response.ok && typeof accessToken === 'string' && accessToken) {
+      // `readExpiresIn` rather than a bare `typeof === 'number'`: a provider
+      // that sends the digits as a JSON string would otherwise leave the grant
+      // with no `expiresAt` at all, and `isExpired` reads a missing one as
+      // "never expires". Same coercion the redirect path applies.
+      const expiresIn = readExpiresIn(parsed['expires_in'])
+      const tokens: TokenSet = {
+        accessToken,
+        ...(typeof parsed['refresh_token'] === 'string' && parsed['refresh_token']
+          ? { refreshToken: parsed['refresh_token'] }
           : {}),
-        tokenType: typeof raw['token_type'] === 'string' ? raw['token_type'] : 'Bearer',
-        ...(typeof raw['scope'] === 'string' ? { scope: raw['scope'] } : {}),
-        ...(typeof raw['id_token'] === 'string' ? { idToken: raw['id_token'] } : {}),
+        ...(expiresIn === undefined ? {} : { expiresAt: Date.now() + expiresIn * 1000 }),
+        tokenType: typeof parsed['token_type'] === 'string' ? parsed['token_type'] : 'Bearer',
+        ...(typeof parsed['scope'] === 'string' ? { scope: parsed['scope'] } : {}),
+        ...(typeof parsed['id_token'] === 'string' ? { idToken: parsed['id_token'] } : {}),
         provider: provider.id,
-        raw,
+        raw: parsed,
       }
+      const enriched = provider.enrichTokens?.(parsed, tokens)
+
+      return enriched ? { ...tokens, ...enriched } : tokens
     }
 
-    const error = typeof raw['error'] === 'string' ? raw['error'] : 'unknown_error'
+    const failure = readPollError(raw, parsed, isJson ? '' : text)
+    // What the loop does next is decided by the code the *server* sent, not by
+    // what survived the provider's transform: a normaliser returning the four
+    // token fields drops `error`, and a provider that answers a pending grant
+    // with HTTP 200 — GitHub's device endpoint does — then came out of the
+    // transform naming nothing, so poll #1 reported `invalid_token_response`
+    // before the user had a chance to approve. `slow_down` at 200 was lost the
+    // same way.
+    const error = stringField(raw['error']) ?? stringField(parsed['error']) ?? 'unknown_error'
 
     if (error === 'authorization_pending') {
       continue
@@ -240,11 +331,32 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
       continue
     }
 
-    const described = raw['error_description']
-    const detail =
-      typeof described === 'string' && described
-        ? safeSnippet(described, 120)
-        : safeSnippet(text, 120)
+    // A 200 that names nothing at all — no `error`, no `error_description`, in
+    // any of the shapes above — and still could not be shaped into a token. As
+    // far as the provider is concerned this body is a *successful* token
+    // response, so it may be the credential itself: say what is missing and
+    // quote nothing. `redact.ts` matches known parameter names and known token
+    // shapes; an unrecognised secret under an unrecognised key is neither, and
+    // the 120-character cap is not a redaction.
+    //
+    // A 200 that *does* name one is a described failure, not an unreadable
+    // body, and stays `device_flow_failed`: the CLI hangs its
+    // `devicePrerequisite` hint off that code, and suppressing the body is no
+    // reason to throw away the two fields that say what went wrong.
+    if (response.ok && !failure.error && !failure.description) {
+      throw new OAuthError(
+        'invalid_token_response',
+        `Device token response for "${provider.id}" did not include an access_token.`,
+        { status: response.status },
+      )
+    }
+
+    // The body snippet is the last resort, and only for a status that already
+    // says failure: on a 200 the body is the provider's idea of success and may
+    // carry the credential, so an error it *names* is quoted and the body
+    // around it is not.
+    const fallback = response.ok ? '' : safeSnippet(text, 120)
+    const detail = failure.description ? safeSnippet(failure.description, 120) : fallback
     // `error` is the provider's string too, so it gets the same treatment as
     // the description beside it — a gateway that reflects the request back puts
     // the `device_code` and `code_verifier` we just posted into this field, and
@@ -252,7 +364,7 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
     // the way out: the comparisons above must keep matching the raw value, not
     // a value that happens to survive `safeSnippet` because spec codes are
     // short. Same rule as `readTokenError`.
-    const reported = safeSnippet(error, 120)
+    const reported = safeSnippet(failure.error ?? error, 120)
     throw new OAuthError(
       'device_flow_failed',
       `Device authorization failed: ${reported}${detail ? ` (${detail})` : ''}`,

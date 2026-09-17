@@ -3,8 +3,22 @@ import { OAuthError } from '../errors.js'
 import { parseStandardCallback } from '../providers/define.js'
 import type { CallbackReceiver, CallbackResult, ReceiverContext } from '../types.js'
 
-/** Port used when a loopback provider accepts any, since nothing will listen. */
-const PASTE_FALLBACK_PORT = 1455
+/**
+ * Port used when a loopback provider accepts any, since nothing will listen.
+ *
+ * It must collide with no `loopbackPort` any provider declares (`openai` 1455,
+ * `xai` 56121) and with nothing else likely to be running: the browser still
+ * *sends* the redirect, carrying `?code=…&state=…`, so whatever holds the port
+ * reads the authorization code. This value used to be 1455 — the port this SDK
+ * itself publishes for `openai` and the one the Codex CLI binds — which handed
+ * every gemini / openrouter / azure-ai / custom paste login's code to an
+ * unrelated local process. PKCE keeps such a code from being redeemable, so
+ * what is at stake is its confidentiality, but there is no reason to spend it.
+ *
+ * Hence the IANA dynamic range, which is registered to nobody. Any replacement
+ * has to keep both properties.
+ */
+const PASTE_FALLBACK_PORT = 49_713
 
 export interface ManualReceiverOptions {
   /**
@@ -23,8 +37,9 @@ export interface ManualReceiverOptions {
  * still works there: the browser fails to reach the port, and the user copies
  * the code straight out of the address bar. So a loopback URI is synthesised
  * rather than refused, including for providers that accept any port (`0`),
- * where nothing is listening anyway and the value only has to round-trip
- * unchanged into the token request.
+ * where the value only has to round-trip unchanged into the token request —
+ * which is why {@link PASTE_FALLBACK_PORT} is chosen to be one nothing else
+ * answers on, rather than an arbitrary one.
  *
  * A hosted URI wins even for a loopback provider. Pasting needs a page that
  * *shows* the user a code, and that is exactly what a hosted callback is;

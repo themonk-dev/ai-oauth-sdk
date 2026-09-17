@@ -230,8 +230,12 @@ describe('hybridReceiver', () => {
 
     try {
       expect(started.redirectUri).toContain('/callback')
-      /* The prompt's own synthesised URI, since no server ever bound. */
-      expect(started.redirectUri).toContain(':1455/')
+      /*
+       * The prompt's own synthesised URI, since no server ever bound. The port
+       * mirrors `PASTE_FALLBACK_PORT` in core's manual receiver, which has to be
+       * one no bundled provider declares — 1455 was OpenAI's own loopback port.
+       */
+      expect(started.redirectUri).toContain(':49713/')
     } finally {
       await started.close()
     }

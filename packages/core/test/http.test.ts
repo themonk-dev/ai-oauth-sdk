@@ -1,7 +1,18 @@
+import { getEventListeners } from 'node:events'
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchWithSignal, resetSignalSupportCache } from '../src/http.js'
 import type { FetchLike } from '../src/types.js'
+
+/** Stands in for a `fetch` that rejects a signal made in another realm. */
+class ForeignSignalRequest {
+  constructor(_url: string, init?: { signal?: unknown }) {
+    if (init?.signal) {
+      throw new TypeError('Expected signal to be an instance of AbortSignal')
+    }
+  }
+}
 
 afterEach(() => {
   resetSignalSupportCache()
@@ -136,5 +147,38 @@ describe('fetchWithSignal', () => {
 
     await fetchWithSignal(fetchImpl, 'http://x.test/', {}, controller.signal)
     expect(seen[0]?.signal).toBe(controller.signal)
+  })
+
+  it('leaves no abort listener behind once a fallback request completes', async () => {
+    vi.stubGlobal('Request', ForeignSignalRequest)
+
+    const fetchImpl: FetchLike = async () => okResponse()
+    // A device-code poll loop reuses one controller for every attempt, so a
+    // listener per completed request accumulates silently: an AbortSignal emits
+    // no MaxListenersExceededWarning.
+    const controller = new AbortController()
+
+    for (let i = 0; i < 10; i++) {
+      await fetchWithSignal(fetchImpl, 'http://x.test/', {}, controller.signal)
+    }
+
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+  })
+
+  it('leaves no abort listener behind when a fallback request fails', async () => {
+    vi.stubGlobal('Request', ForeignSignalRequest)
+
+    const fetchImpl: FetchLike = async () => {
+      throw new Error('ECONNRESET')
+    }
+    const controller = new AbortController()
+
+    for (let i = 0; i < 10; i++) {
+      await expect(
+        fetchWithSignal(fetchImpl, 'http://x.test/', {}, controller.signal),
+      ).rejects.toThrow('ECONNRESET')
+    }
+
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
   })
 })

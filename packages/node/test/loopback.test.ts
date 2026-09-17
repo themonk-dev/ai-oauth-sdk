@@ -107,6 +107,19 @@ const hasIpv6 = await new Promise<boolean>((resolve) => {
   probe.listen(0, '::1', () => probe.close(() => resolve(true)))
 })
 
+/**
+ * Whether a second loopback address is bindable, as it is on Linux where the
+ * whole `127.0.0.0/8` is loopback.
+ *
+ * It gives the "advertised literal is not the bound one" arrangement an IPv4
+ * spelling, so the case can be exercised where there is no IPv6 to reach for.
+ */
+const hasSecondLoopback = await new Promise<boolean>((resolve) => {
+  const probe = createServer()
+  probe.once('error', () => resolve(false))
+  probe.listen(0, '127.0.0.2', () => probe.close(() => resolve(true)))
+})
+
 /** Whether a promise has settled, without consuming its result. */
 const isSettled = async (promise: Promise<unknown>): Promise<boolean> => {
   const pending = Symbol('pending')
@@ -200,6 +213,44 @@ describe('loopbackReceiver', () => {
     } finally {
       await started.close()
     }
+  })
+
+  // `buildLoopbackRedirectUri` adds the leading slash when it builds the URI,
+  // so a path given without one was advertised as `/cb` and then matched against
+  // `cb`. Nothing can match that: every request 404d, the genuine callback
+  // included, and `login()` applies a deadline only when it is given one — so
+  // the login simply never returned.
+  describe('normalises the callback path once, for advertising and matching alike', () => {
+    it('serves a path handed to the receiver without a leading slash', async () => {
+      const started = await loopbackReceiver({ port: 0, path: 'cb' }).start({
+        provider: testProvider(server.url),
+      })
+
+      try {
+        expect(new URL(started.redirectUri).pathname).toBe('/cb')
+        const response = await rawGet(`${started.redirectUri}?code=abc&state=xyz`, navigationHeaders)
+        expect(response.status).toBe(200)
+        await expect(started.wait()).resolves.toMatchObject({ code: 'abc' })
+      } finally {
+        await started.close()
+      }
+    })
+
+    it('serves a path a provider declares without a leading slash', async () => {
+      const started = await loopbackReceiver({ port: 0 }).start({
+        provider: testProvider(server.url, {
+          redirect: { mode: 'loopback', loopbackPort: 0, loopbackPath: 'auth/callback' },
+        }),
+      })
+
+      try {
+        expect(new URL(started.redirectUri).pathname).toBe('/auth/callback')
+        const response = await rawGet(`${started.redirectUri}?code=abc&state=xyz`, navigationHeaders)
+        expect(response.status).toBe(200)
+      } finally {
+        await started.close()
+      }
+    })
   })
 
   it('rejects when the provider reports a denial', async () => {
@@ -579,6 +630,183 @@ describe('loopbackReceiver', () => {
         await squatter.release()
       }
     })
+
+    /*
+     * The bind host and the advertised host are separate options and routinely
+     * differ, so "the advertised host is an IP literal" says nothing about
+     * whether anything is listening on it. Advertising an address that was never
+     * bound is not a theft risk — nothing receives the callback at all, and PKCE
+     * makes a code nobody can redeem — it is a login that can only hang, with no
+     * diagnostic anywhere.
+     */
+    describe('never advertises an address it has not bound', () => {
+      it.skipIf(!hasIpv6)('binds the ::1 it advertises while its bind host is 127.0.0.1', async () => {
+        const started = await loopbackReceiver({ port: 0, redirectHost: '[::1]' }).start({
+          provider: testProvider(server.url),
+        })
+
+        try {
+          expect(started.redirectUri).toContain('http://[::1]:')
+          const viaIpv6 = await rawGet(`${started.redirectUri}?code=six&state=xyz`, navigationHeaders)
+          expect(viaIpv6.status).toBe(200)
+          await expect(started.wait()).resolves.toMatchObject({ code: 'six' })
+        } finally {
+          await started.close()
+        }
+      })
+
+      it.skipIf(!hasIpv6)('brackets an IPv6 literal that arrived without them', async () => {
+        // `http://::1:46515/callback` is not a URL. Handed to the authorization
+        // server it comes back as an unparseable redirect_uri, which is the
+        // same dead end one step earlier.
+        const started = await loopbackReceiver({ port: 0, redirectHost: '::1' }).start({
+          provider: testProvider(server.url),
+        })
+
+        try {
+          const url = new URL(started.redirectUri)
+          expect(url.hostname).toBe('[::1]')
+          expect(url.pathname).toBe('/callback')
+          const viaIpv6 = await rawGet(`${started.redirectUri}?code=six&state=xyz`, navigationHeaders)
+          expect(viaIpv6.status).toBe(200)
+        } finally {
+          await started.close()
+        }
+      })
+
+      it.skipIf(hasIpv6)('refuses at setup where the advertised address does not exist', async () => {
+        // Reachable from a provider descriptor alone — `[::1]` is a loopback
+        // host this SDK blesses — so it is not only a caller mistake.
+        await expect(
+          loopbackReceiver({ port: 0 }).start({
+            provider: testProvider(server.url, {
+              redirect: { mode: 'loopback', loopbackPort: 0, loopbackHost: '[::1]' },
+            }),
+          }),
+        ).rejects.toMatchObject({
+          code: 'configuration_error',
+          message: expect.stringMatching(/not available on this machine/),
+        })
+      })
+
+      it.skipIf(hasIpv6)('names the URI form of the host it would have advertised', async () => {
+        // The bare literal is normalised on the way in, so even the refusal
+        // quotes the `[::1]` that would have gone into the redirect URI.
+        await expect(
+          loopbackReceiver({ port: 0, redirectHost: '::1' }).start({
+            provider: testProvider(server.url),
+          }),
+        ).rejects.toMatchObject({ message: expect.stringContaining('"[::1]"') })
+      })
+    })
+
+    /*
+     * A bind host is not always one address. `0.0.0.0` and `::` are what a
+     * devcontainer, a WSL shell or a VM image sets so the port is reachable
+     * from the host, while the redirect URI still names a loopback literal the
+     * browser can use — bind-wide, advertise-narrow. The wildcard is already
+     * listening on that literal, so asking whether it *equals* the literal
+     * rather than whether it *covers* it binds the same port twice and reads
+     * the kernel's `EADDRINUSE` — our own socket — as a foreign holder.
+     */
+    describe('treats a wildcard bind host as covering the address it advertises', () => {
+      it('serves the 127.0.0.1 it advertises while bound to 0.0.0.0', async () => {
+        const started = await loopbackReceiver({
+          port: 0,
+          host: '0.0.0.0',
+          redirectHost: '127.0.0.1',
+        }).start({ provider: testProvider(server.url) })
+
+        try {
+          // Byte-identical to what the same options advertise without a
+          // wildcard bind: the coverage changes, the promise does not.
+          const url = new URL(started.redirectUri)
+          expect(url.hostname).toBe('127.0.0.1')
+          expect(url.pathname).toBe('/callback')
+
+          // And the address it named really answers, which is the half a bind
+          // that never happened cannot prove on its own.
+          const result = await rawGet(`${started.redirectUri}?code=wide&state=xyz`, navigationHeaders)
+          expect(result.status).toBe(200)
+          await expect(started.wait()).resolves.toMatchObject({ code: 'wide' })
+        } finally {
+          await started.close()
+        }
+      })
+
+      it.skipIf(!hasIpv6)('serves the 127.0.0.1 it advertises while bound to ::', async () => {
+        // Node leaves `ipv6Only` off, so the IPv6 wildcard answers on the IPv4
+        // loopback too — the same arrangement one option over.
+        for (const host of ['::', '[::]']) {
+          const started = await loopbackReceiver({ port: 0, host, redirectHost: '127.0.0.1' }).start({
+            provider: testProvider(server.url),
+          })
+
+          try {
+            expect(new URL(started.redirectUri).hostname, host).toBe('127.0.0.1')
+            const result = await rawGet(`${started.redirectUri}?code=wide&state=xyz`, navigationHeaders)
+            expect(result.status, host).toBe(200)
+          } finally {
+            await started.close()
+          }
+        }
+      })
+
+      it.skipIf(!hasIpv6)('still binds an advertised ::1 that the IPv4 wildcard cannot answer for', async () => {
+        // Coverage is per family: an IPv4 socket never receives an IPv6
+        // connection, so `0.0.0.0` leaves `[::1]` as unbound as `127.0.0.1`
+        // would. Waving every wildcard through would reinstate exactly the
+        // hang this whole describe block is about.
+        const started = await loopbackReceiver({
+          port: 0,
+          host: '0.0.0.0',
+          redirectHost: '[::1]',
+        }).start({ provider: testProvider(server.url) })
+
+        try {
+          expect(started.redirectUri).toContain('http://[::1]:')
+          const viaIpv6 = await rawGet(`${started.redirectUri}?code=six&state=xyz`, navigationHeaders)
+          expect(viaIpv6.status).toBe(200)
+          await expect(started.wait()).resolves.toMatchObject({ code: 'six' })
+        } finally {
+          await started.close()
+        }
+      })
+    })
+
+    it.skipIf(!hasSecondLoopback)(
+      'still refuses a required address a foreign process holds, without circular advice',
+      async () => {
+        // The other half of the wildcard case: a bind host that genuinely does
+        // not cover the advertised literal, with somebody else on it. That is
+        // a real refusal and it stays — but the remedy cannot be the
+        // `redirectHost` the URI already names, which is what it used to say.
+        const squatter = createServer()
+        await new Promise<void>((resolve) => squatter.listen(0, '127.0.0.1', resolve))
+        const port = (squatter.address() as AddressInfo).port
+
+        try {
+          await expect(
+            loopbackReceiver({ port, host: '127.0.0.2', redirectHost: '127.0.0.1' }).start({
+              provider: testProvider(server.url),
+            }),
+          ).rejects.toMatchObject({
+            code: 'configuration_error',
+            message: expect.stringMatching(/held by another process[\s\S]*is that address/),
+          })
+
+          await expect(
+            loopbackReceiver({ port, host: '127.0.0.2', redirectHost: '127.0.0.1' }).start({
+              provider: testProvider(server.url),
+            }),
+          ).rejects.toMatchObject({
+            message: expect.not.stringContaining("redirectHost: '127.0.0.1'"),
+          })
+        } finally {
+          await new Promise<void>((resolve) => squatter.close(() => resolve()))
+        }
+      },
+    )
 
     it('leaves a provider that advertises the IP literal on one address', async () => {
       // `xai` already names `127.0.0.1`, which nothing else can answer for, so

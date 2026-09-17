@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { isIPv6, type AddressInfo } from 'node:net'
 
 import {
   OAuthError,
@@ -22,7 +22,12 @@ export interface LoopbackReceiverOptions {
   port?: number
   /** Path to listen on. Defaults to the provider's declared path. */
   path?: string
-  /** Interface to bind. Defaults to 127.0.0.1 — never bind 0.0.0.0 for this. */
+  /**
+   * Interface to bind. Defaults to 127.0.0.1, and nothing here ever widens that
+   * on its own. A caller that does pass a wildcard — `0.0.0.0` or `::`, which a
+   * devcontainer or VM routinely needs — is taken to be listening on the
+   * loopback address the redirect URI names, so it is not bound a second time.
+   */
   host?: string
   /** Host used when building the redirect URI. Defaults to the provider's. */
   redirectHost?: string
@@ -122,10 +127,75 @@ function stateOfAuthorizationUrl(url: string): string | undefined {
 }
 
 /**
- * Host forms that name one address outright. Nothing else can answer for them,
- * so a receiver advertising one of these already binds everything it promises.
+ * Addresses that name one interface outright, in the bare form `listen()` takes.
+ *
+ * A host given as one of these promises exactly that address and nothing else
+ * can answer for it — which cuts both ways. There is no sibling to cover, and
+ * equally no slack: a receiver that advertises one of these and binds a
+ * different one has promised the browser an address it is not listening on.
  */
-const ipLiteralHosts = new Set(['127.0.0.1', '::1', '[::1]'])
+const ipLiteralAddresses = new Set(['127.0.0.1', '::1'])
+
+/**
+ * An IPv6 literal without its brackets, which is the form `listen()` wants.
+ *
+ * The two forms arrive interchangeably — `[::1]` is what a URL authority needs
+ * and what `packages/core` blesses as a loopback host, `::1` is what a person
+ * types into a `host` option — so both are normalised here rather than at each
+ * use.
+ */
+function bindAddress(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host
+}
+
+/**
+ * The same address in the form a URL authority needs.
+ *
+ * Without this an advertised `::1` builds `http://::1:46515/callback`, which is
+ * not a URL at all: the authorization server rejects it, and nothing in the
+ * flow ever says why.
+ */
+function uriHost(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+}
+
+/**
+ * The address family a bind host stands for when it names every address on the
+ * machine rather than one of them, or nothing when it names one.
+ *
+ * `0.0.0.0` is the IPv4 wildcard; `::` is the IPv6 one and reaches here in any
+ * of the zero spellings IPv6 allows (`::0`, `0:0:0:0:0:0:0:0`, and `[::]` with
+ * its brackets already stripped), so that side is asked structurally rather
+ * than by listing them. Bind-wide while advertising a loopback literal is the
+ * ordinary devcontainer, WSL and VM arrangement, so these are hosts the
+ * receiver is handed in practice even though it never chooses one itself.
+ */
+function wildcardFamily(host: string): 4 | 6 | undefined {
+  if (host === '0.0.0.0') {
+    return 4
+  }
+
+  return isIPv6(host) && !/[1-9a-f]/i.test(host) ? 6 : undefined
+}
+
+/**
+ * Whether binding `primaryHost` already answers for `address`.
+ *
+ * A wildcard is the whole point of the question: it is not the advertised
+ * address, but it is listening on it, so binding it again would collide with
+ * our own socket — `EADDRINUSE` from the kernel, reported as a foreign holder.
+ * `0.0.0.0` answers for every IPv4 address and nothing on IPv6; `::` is
+ * dual-stack, because Node leaves `ipv6Only` off, so it answers for both.
+ */
+function covers(primaryHost: string, address: string): boolean {
+  if (primaryHost === address) {
+    return true
+  }
+
+  const family = wildcardFamily(primaryHost)
+
+  return family === 6 || (family === 4 && !address.includes(':'))
+}
 
 /** The other address a hostname like `localhost` routinely also resolves to. */
 const siblingAddresses: Record<string, string> = { '127.0.0.1': '::1', '::1': '127.0.0.1' }
@@ -155,16 +225,44 @@ const EPHEMERAL_BIND_ATTEMPTS = 5
  */
 const familyUnavailable = new Set(['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EINVAL', 'EPROTONOSUPPORT'])
 
+/** An address to bind beside the primary one, and how badly it is needed. */
+interface ExtraAddress {
+  host: string
+  /**
+   * True when the redirect URI names this address outright.
+   *
+   * A host that cannot offer a `required` address is a dead configuration
+   * rather than a degraded one: the browser will go there and nowhere else, so
+   * there is nothing for an IPv4-only fallback to catch.
+   */
+  required: boolean
+}
+
 /**
- * The address a hostname resolves to besides `bindHost`, or `undefined` when
- * there is nothing extra to cover.
+ * The addresses to bind besides `primaryHost` so that everything the redirect
+ * URI promises is actually answered.
+ *
+ * The advertised host and the bound one are separate options and routinely
+ * differ — `redirectHost` (or the provider's `loopbackHost`) sets the first,
+ * `host` the second — so the question is never "is the advertised host an IP
+ * literal", it is "is the advertised host covered by what we bound".
+ *
+ * A literal is covered when the bind host answers for it — because it is that
+ * address, or because it is a wildcard that already includes it; otherwise it
+ * has to be bound as well, or the login can never complete. A name like
+ * `localhost` covers every address it resolves to, which on a dual-stack
+ * machine is both loopback addresses — hence the sibling.
  */
-function siblingBindHost(advertisedHost: string, bindHost: string): string | undefined {
-  if (ipLiteralHosts.has(advertisedHost)) {
-    return undefined
+function extraAddresses(advertisedAddress: string, primaryHost: string): ExtraAddress[] {
+  if (ipLiteralAddresses.has(advertisedAddress)) {
+    return covers(primaryHost, advertisedAddress)
+      ? []
+      : [{ host: advertisedAddress, required: true }]
   }
 
-  return siblingAddresses[bindHost]
+  const sibling = siblingAddresses[primaryHost]
+
+  return sibling ? [{ host: sibling, required: false }] : []
 }
 
 /**
@@ -302,10 +400,22 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
     id: 'loopback',
     async start(context: ReceiverContext) {
       const { provider } = context
-      const path = options.path ?? provider.redirect.loopbackPath ?? '/callback'
-      const bindHost = options.host ?? '127.0.0.1'
+      // Normalised once, here, and used for both the URI that is advertised and
+      // the comparison every request is matched against. `buildLoopbackRedirectUri`
+      // adds the leading slash when it builds the URI, so a `path` of `cb` was
+      // advertised as `/cb` and then compared against `cb` — which no request
+      // can match, so every request 404d, the genuine callback included.
+      const rawPath = options.path ?? provider.redirect.loopbackPath ?? '/callback'
+      const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
+      const bindHost = bindAddress(options.host ?? '127.0.0.1')
       const primaryHost = loopbackNames.has(bindHost) ? '127.0.0.1' : bindHost
       const requestedPort = options.port ?? provider.redirect.loopbackPort ?? 0
+      // What the authorization server will be told, and the address form of the
+      // same thing. These are what the bind below has to live up to.
+      const advertisedAddress = bindAddress(
+        options.redirectHost ?? provider.redirect.loopbackHost ?? 'localhost',
+      )
+      const advertisedHost = uriHost(advertisedAddress)
 
       let resolveCallback: (result: CallbackResult) => void
       let rejectCallback: (error: unknown) => void
@@ -447,7 +557,10 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        const url = new URL(request.url ?? '/', `http://${bindHost}`)
+        // Only the path and query are read; the base exists to make the request
+        // target absolute. It still has to be a *parseable* authority, which a
+        // bare IPv6 address is not.
+        const url = new URL(request.url ?? '/', `http://${uriHost(primaryHost)}`)
 
         if (url.pathname !== path) {
           response.writeHead(404, { ...securityHeaders, 'Content-Type': 'text/plain' })
@@ -518,6 +631,13 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * it. A host with IPv6 disabled cannot resolve `localhost` to `::1`
        * either, so there is nothing there to take and IPv4 alone is complete.
        *
+       * An address the URI names *outright* is the opposite: there is no other
+       * address the browser might use instead, so "this machine has no IPv6" is
+       * not a degraded case to wave through — it is a login that could only
+       * hang. `redirectHost: '[::1]'` with the default bind, or a provider
+       * declaring `loopbackHost: '[::1]'`, is exactly that arrangement, and it
+       * is refused at setup with a diagnostic rather than started.
+       *
        * A fixed published port gets one attempt, because a squatted sibling is
        * the attack and there is no other port to move to. An ephemeral port may
        * simply have collided with something already there, so it takes another —
@@ -525,11 +645,9 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * to matter, and each retry is a fresh draw.
        */
       const listenOnEveryAddress = async (): Promise<number> => {
-        const advertisedHost =
-          options.redirectHost ?? provider.redirect.loopbackHost ?? 'localhost'
-        const siblingHost = siblingBindHost(advertisedHost, primaryHost)
+        const extras = extraAddresses(advertisedAddress, primaryHost)
 
-        if (!siblingHost) {
+        if (extras.length === 0) {
           return listen(server, requestedPort, primaryHost)
         }
 
@@ -545,28 +663,76 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         try {
           for (let attempt = 1; attempt <= attempts; attempt++) {
             const port = await listen(server, requestedPort, primaryHost)
-            const sibling = createServer(handleRequest)
-            const outcome = await tryListen(sibling, port, siblingHost)
+            const bound: Server[] = []
+            let fatal: OAuthError | undefined
+            let contested: ExtraAddress | undefined
 
-            if (outcome === 'bound') {
-              servers.push(sibling)
+            for (const extra of extras) {
+              const other = createServer(handleRequest)
+              const outcome = await tryListen(other, port, extra.host)
+
+              if (outcome === 'bound') {
+                bound.push(other)
+
+                continue
+              }
+
+              if (outcome === 'no-family') {
+                if (!extra.required) {
+                  continue
+                }
+
+                /* No port will conjure an address family, so this one does not
+                   retry: the redirect URI names an address this machine cannot
+                   have, and a login started under it could only hang. */
+                fatal = new OAuthError(
+                  'configuration_error',
+                  `The redirect URI for this login names "${advertisedHost}", but ${extra.host} ` +
+                    'is not available on this machine. The browser would be sent to an address ' +
+                    'nothing can listen on, so this login was refused rather than started. ' +
+                    'Advertise a host this machine has — `127.0.0.1`, or `localhost` — with ' +
+                    "`redirectHost`, or enable IPv6.",
+                )
+                break
+              }
+
+              contested = extra
+              break
+            }
+
+            if (fatal) {
+              await Promise.all(bound.map(closeServer))
+
+              throw fatal
+            }
+
+            if (!contested) {
+              servers.push(...bound)
 
               return port
             }
 
-            if (outcome === 'no-family') {
-              return port
-            }
+            await Promise.all(bound.map(closeServer))
 
             if (attempt === attempts) {
+              /* The remedy differs with the case, because advising the address
+                 the URI already names would send the reader in a circle. Where
+                 the URI names the contested address outright there is no other
+                 host to advertise — only a free port, or a different one. */
               throw new OAuthError(
                 'configuration_error',
-                `Port ${port} on ${siblingHost} is held by another process, but the redirect ` +
-                  `URI for this login names "${advertisedHost}", which resolves to both ` +
-                  `${primaryHost} and ${siblingHost}. The browser may hand the authorization ` +
-                  'code to whoever holds the other address, so this login was refused rather ' +
-                  'than started. Free that port, or pass `redirectHost: \'127.0.0.1\'` to ' +
-                  'loopbackReceiver() if the provider accepts the IP literal.',
+                `Port ${port} on ${contested.host} is held by another process, but the redirect ` +
+                  `URI for this login names "${advertisedHost}", which ` +
+                  (contested.required
+                    ? `is that address. The browser would hand the authorization code straight ` +
+                      'to whoever holds it, so this login was refused rather than started. Free ' +
+                      'that port, or pass a different `port` (or 0 to pick a free one) if the ' +
+                      'provider allows it.'
+                    : `resolves to both ${primaryHost} and ${contested.host}. The browser may ` +
+                      'hand the authorization code to whoever holds the other address, so this ' +
+                      'login was refused rather than started. Free that port, or pass ' +
+                      `\`redirectHost: '${uriHost(primaryHost)}'\` to loopbackReceiver() if the ` +
+                      'provider accepts the IP literal.'),
               )
             }
 
@@ -596,7 +762,10 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         ...provider,
         redirect: {
           ...provider.redirect,
-          ...(options.redirectHost ? { loopbackHost: options.redirectHost } : {}),
+          // The normalised forms, so what is advertised is exactly what was
+          // reasoned about above — and is a URL: an IPv6 literal needs its
+          // brackets here however it arrived.
+          loopbackHost: advertisedHost,
           loopbackPath: path,
         },
       }

@@ -54,9 +54,11 @@ interface CommandContext {
  * refresh token and Google's published client secret to whatever endpoint was
  * named, and reports success. Nobody points a built-in at a different token
  * endpoint meaning that; they mean "a provider of my own", which needs an id of
- * its own. The rest of the file already draws that line — `recallProvider` is
- * guarded by the same check on the next line, and `login` refuses to
+ * its own. The rest of the file already draws that line — `login` refuses to
  * `rememberProvider` a built-in id — so this closes the one path that was not.
+ *
+ * A remembered custom id is the same hazard with a different owner for the
+ * "known endpoints"; `assertEndpointsMatch` covers that one.
  */
 function customProvider(providerId: string, args: ParsedArgs): ProviderConfig | undefined {
   const authorizationUrl = flagString(args.flags, 'authorize-url')
@@ -107,6 +109,25 @@ function storageFor(args: ParsedArgs) {
 }
 
 /**
+ * Where a custom provider's descriptor lives, keyed the way its tokens are.
+ *
+ * Tokens are stored per account — `tokens:<id>` for the default one,
+ * `tokens:<id>:<account>` for a named one — and the descriptor records the
+ * endpoints *that* credential was minted against, so it has to be keyed
+ * alongside it. A single `provider:<id>` shared by every account is rewritten
+ * by whichever account signed in last, which turns the endpoint check upside
+ * down: an account whose own endpoints no longer match the shared descriptor is
+ * refused its correct invocation, while the same command with no flags at all
+ * runs its credential against the *other* account's endpoints — exactly the
+ * hazard the check exists to close.
+ */
+function descriptorKey(providerId: string, args: ParsedArgs): string {
+  const accountKey = flagString(args.flags, 'account')
+
+  return PROVIDER_KEY_PREFIX + providerId + (accountKey ? `:${accountKey}` : '')
+}
+
+/**
  * Remembers a custom provider's descriptor next to its tokens.
  *
  * Without this, `ai-oauth-sdk login acme --authorize-url … --token-url …` would
@@ -120,14 +141,27 @@ function storageFor(args: ParsedArgs) {
  */
 async function rememberProvider(provider: ProviderConfig, args: ParsedArgs): Promise<void> {
   const { clientSecret: _omitted, ...withoutSecret } = provider
-  await storageFor(args).set(PROVIDER_KEY_PREFIX + provider.id, JSON.stringify(withoutSecret))
+  await storageFor(args).set(descriptorKey(provider.id, args), JSON.stringify(withoutSecret))
 }
 
+/**
+ * Reads back the descriptor for this id and account.
+ *
+ * Descriptors written before they were keyed per account sit at the unsuffixed
+ * `provider:<id>`, and an account that has not signed in since is still
+ * resolvable only through them, so that key is the fallback — never the
+ * preference, since a per-account descriptor is the one that actually describes
+ * the credential in hand.
+ */
 async function recallProvider(
   providerId: string,
   args: ParsedArgs,
 ): Promise<ProviderConfig | undefined> {
-  const stored = await storageFor(args).get(PROVIDER_KEY_PREFIX + providerId)
+  const storage = storageFor(args)
+  const key = descriptorKey(providerId, args)
+  const legacyKey = PROVIDER_KEY_PREFIX + providerId
+  const stored =
+    (await storage.get(key)) ?? (key === legacyKey ? undefined : await storage.get(legacyKey))
 
   if (!stored) {
     return undefined
@@ -138,6 +172,142 @@ async function recallProvider(
   } catch {
     return undefined
   }
+}
+
+/** The endpoint flags that have to agree with what a session was minted against. */
+const COMPARED_ENDPOINTS = [
+  ['authorizationUrl', '--authorize-url'],
+  ['tokenUrl', '--token-url'],
+] as const
+
+/**
+ * One endpoint reduced to what actually decides where a credential goes.
+ *
+ * `undefined` for anything that is not a URL, which has no canonical form to
+ * compare.
+ */
+function canonicalEndpoint(endpoint: string): string | undefined {
+  let parsed: URL
+
+  try {
+    parsed = new URL(endpoint)
+  } catch {
+    return undefined
+  }
+
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/$/, '')}${parsed.search}${parsed.hash}`
+}
+
+/**
+ * Whether two spellings name the same endpoint.
+ *
+ * Compared as URLs rather than as strings, because the differences that carry
+ * no meaning — host case, an explicit default port, a trailing slash on the
+ * path — are exactly the ones a saved command line collects, and refusing them
+ * breaks working scripts without protecting anybody. `URL` lowercases the
+ * scheme and host and drops a default port; the one further liberty taken here
+ * is a single trailing slash, since `/token` and `/token/` are the same
+ * resource to every server that serves either.
+ *
+ * Everything that could send the credential somewhere else still counts:
+ * scheme, host, port, path, query and fragment. Something unparseable is
+ * compared verbatim rather than waved through.
+ */
+function sameEndpoint(stored: string, given: string): boolean {
+  const canonicalStored = canonicalEndpoint(stored)
+  const canonicalGiven = canonicalEndpoint(given)
+
+  if (canonicalStored === undefined || canonicalGiven === undefined) {
+    return stored === given
+  }
+
+  return canonicalStored === canonicalGiven
+}
+
+/**
+ * Refuses to run a stored session against endpoints it was not signed in
+ * against.
+ *
+ * `customProvider` only guards built-in ids, on the reasoning that a built-in's
+ * credentials are not the flags' to re-aim. A remembered custom provider is in
+ * exactly the same position: the descriptor records the endpoints the session's
+ * tokens were minted against (see `descriptorKey`), and the flags rebuild
+ * the descriptor around that same id. So `refresh acme --token-url <other>`
+ * loaded `tokens:acme` and POSTed the refresh token to `<other>` — no warning,
+ * exit 0, and the response overwrote the stored tokens. Nothing exotic gets
+ * there: a script or a copied command line that carries the login flags forward
+ * with one host edited to a staging box, a proxy, or a typo.
+ *
+ * A flat refusal would be wrong, though — providers do move endpoints, so
+ * changing a custom provider's token URL has to stay possible. What cannot stay
+ * possible is doing it *by accident with the old credential in hand*, so the
+ * deliberate path is `login`, which mints a fresh credential against the new
+ * endpoints and re-remembers them (see `checkEndpoints` below). Every other
+ * command that spends the credential is refused.
+ *
+ * A descriptor missing the URL under comparison is refused too. "No stored
+ * endpoint" is not "no opinion": the check cannot be run, and the command would
+ * still POST the stored credential to whatever the flag names — which is the
+ * whole thing being prevented.
+ */
+function assertEndpointsMatch(
+  providerId: string,
+  remembered: ProviderConfig,
+  supplied: ProviderConfig,
+): void {
+  for (const [field, flag] of COMPARED_ENDPOINTS) {
+    const stored = remembered[field]
+    const given = supplied[field]
+
+    if (!given) {
+      continue
+    }
+
+    if (!stored) {
+      throw new CliError(
+        `The descriptor stored for "${providerId}" records no ${field}, so ${flag} ${given} ` +
+          'cannot be checked against the endpoint that issued the stored credential — and this ' +
+          'command would send that credential to it.',
+        `Drop the endpoint flags, or, to use these ones, sign in against them deliberately: ` +
+          `ai-oauth-sdk login ${providerId} ${flag} ${given} …`,
+      )
+    }
+
+    if (!sameEndpoint(stored, given)) {
+      throw new CliError(
+        `${flag} does not match the endpoint "${providerId}" was signed in against: ` +
+          `stored ${stored}, given ${given}. The credential stored for "${providerId}" was ` +
+          'issued by the first, and this command would send it to the second.',
+        `Drop the endpoint flags to use the stored ones, or, if ${providerId} really has moved, ` +
+          `sign in against the new endpoints deliberately: ai-oauth-sdk login ${providerId} ${flag} ${given} …`,
+      )
+    }
+  }
+}
+
+/**
+ * The descriptor a command runs against, for an id that is not a built-in.
+ *
+ * Endpoint flags win, as they always have — but only once they have been
+ * checked against the descriptor remembered at login. Pass
+ * `checkEndpoints: false` for a command that spends no stored credential at
+ * either endpoint: `login`, which mints a new one against them, and `logout`,
+ * which spends nothing at all.
+ */
+async function describeProvider(
+  providerId: string,
+  args: ParsedArgs,
+  options: { checkEndpoints?: boolean } = {},
+): Promise<ProviderConfig | undefined> {
+  const supplied = customProvider(providerId, args)
+  const remembered =
+    providerId in providers ? undefined : await recallProvider(providerId, args)
+
+  if (supplied && remembered && options.checkEndpoints !== false) {
+    assertEndpointsMatch(providerId, remembered, supplied)
+  }
+
+  return supplied ?? remembered
 }
 
 /**
@@ -164,7 +334,11 @@ function resolveClientId(providerId: string, args: ParsedArgs): string | undefin
  * the exchange without it, and an installed-app secret is non-confidential by
  * design. Either channel overrides it.
  */
-async function clientFor(providerId: string, args: ParsedArgs): Promise<AuthClient> {
+async function clientFor(
+  providerId: string,
+  args: ParsedArgs,
+  options: { checkEndpoints?: boolean } = {},
+): Promise<AuthClient> {
   const clientId = resolveClientId(providerId, args)
   const clientSecret =
     flagString(args.flags, 'client-secret') ??
@@ -174,9 +348,7 @@ async function clientFor(providerId: string, args: ParsedArgs): Promise<AuthClie
   const authDir = flagString(args.flags, 'auth-dir')
   const scopes = flagString(args.flags, 'scopes')
 
-  const custom =
-    customProvider(providerId, args) ??
-    (providerId in providers ? undefined : await recallProvider(providerId, args))
+  const custom = await describeProvider(providerId, args, options)
 
   try {
     return createNodeAuthClient({
@@ -248,10 +420,15 @@ function requireProvider(args: ParsedArgs, command: string): string {
  * coming. That also makes `--paste` impossible for those providers, and the
  * combination is rejected here rather than in `pickReceiver`, which the
  * device-only path never reaches.
+ *
+ * This is the one command that may point an already-remembered custom provider
+ * at different endpoints: it spends no stored credential, and the descriptor it
+ * remembers below is the new one. That makes it the deliberate way to follow a
+ * provider that has moved.
  */
 export async function login({ args, json }: CommandContext): Promise<void> {
   const providerId = requireProvider(args, 'login')
-  const client = await clientFor(providerId, args)
+  const client = await clientFor(providerId, args, { checkEndpoints: false })
   const provider = client.provider
 
   if (provider.experimental) {
@@ -532,30 +709,68 @@ export async function list({ args, json }: CommandContext): Promise<void> {
  *
  * A custom provider's descriptor is written at login so later commands can
  * resolve the id. Once the tokens are gone it is orphaned, so it goes too —
- * otherwise `logout` leaves the credential file dirtier than it found it.
+ * otherwise `logout` leaves the credential file dirtier than it found it. Only
+ * this account's descriptor, though: the others still describe live sessions.
+ *
+ * This is the one credential-spending-looking command exempt from the endpoint
+ * check, because it spends nothing at either endpoint — `--revoke` talks to
+ * `revocationUrl`, which is not among the compared flags. Refusing it would
+ * only take away the command a user reaches for to clean up after a descriptor
+ * that has gone wrong, and it is the command a script is most likely to run
+ * with the whole flag set copied from `login`.
+ *
+ * `revoked` reports what the provider did, not what was asked for. It used to
+ * be `--revoke` echoed back, which was wrong in both of the cases that matter:
+ * most built-ins declare no revocation endpoint at all, and one that does can
+ * answer 5xx — `AuthClient.logout` swallows that so the user is still signed
+ * out locally. Either way the refresh token is still live at the provider,
+ * while `revoked: true` told an offboarding script it was dead. The local
+ * tokens are gone by then, so there is not even a credential left to retry
+ * with; saying so on stderr is the least that is owed.
  */
 export async function logout({ args, json }: CommandContext): Promise<void> {
   const providerId = requireProvider(args, 'logout')
-  const client = await clientFor(providerId, args)
+  const client = await clientFor(providerId, args, { checkEndpoints: false })
   const shouldRevoke = flagBoolean(args.flags, 'revoke')
 
   if (shouldRevoke && !client.provider.revocationUrl) {
     warn(`${client.provider.label} has no revocation endpoint — clearing locally only.`)
   }
 
-  await client.logout(shouldRevoke ? { revoke: true } : {})
+  const result = await client.logout(shouldRevoke ? { revoke: true } : {})
 
-  if (!(providerId in providers) && !flagString(args.flags, 'account')) {
-    await storageFor(args).delete(PROVIDER_KEY_PREFIX + providerId)
+  if (result.revocation === 'failed') {
+    warn(
+      `${client.provider.label} refused the revocation — the token is still live there. ` +
+        `(${result.revocationError?.message ?? 'unknown error'})`,
+    )
+  }
+
+  if (!(providerId in providers)) {
+    await storageFor(args).delete(descriptorKey(providerId, args))
   }
 
   if (json) {
-    outputJson({ provider: providerId, signedOut: true, revoked: shouldRevoke })
+    outputJson({
+      provider: providerId,
+      signedOut: result.signedOut,
+      revoked: result.revocation === 'revoked',
+      revocation: result.revocation,
+      revocationError: result.revocationError
+        ? { code: result.revocationError.code, message: result.revocationError.message }
+        : null,
+    })
 
     return
   }
 
   success(`Signed out of ${client.provider.label}.`)
+
+  if (result.revocation === 'revoked') {
+    info(dim('  token revoked at the provider'))
+  } else if (shouldRevoke) {
+    info(dim('  local tokens cleared; the token was not revoked at the provider'))
+  }
 }
 
 export async function refresh({ args, json }: CommandContext): Promise<void> {

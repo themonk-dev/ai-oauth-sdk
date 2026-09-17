@@ -306,6 +306,47 @@ describe('logout', () => {
   it('is safe to run when not signed in', async () => {
     expect(await run(['logout', 'openai', '--auth-dir', dir])).toBe(0)
   })
+
+  /**
+   * `revoked` used to be `--revoke` echoed back. Five of the seven built-ins
+   * declare no revocation endpoint, so the majority case was `revoked: true`
+   * over a refresh token that is still live at the provider — and with the
+   * local copy deleted there is nothing left to retry with. A script gating an
+   * offboarding step on `.revoked` was reading a constant.
+   */
+  it('reports revoked: false when the provider has no revocation endpoint', async () => {
+    await seedSession('tokens:openai', {
+      accessToken: 'a',
+      refreshToken: 'STILL-LIVE-AT-THE-PROVIDER',
+      tokenType: 'Bearer',
+      provider: 'openai',
+      raw: {},
+    })
+
+    expect(await run(['logout', 'openai', '--auth-dir', dir, '--revoke', '--json'])).toBe(0)
+    expect(JSON.parse(out())).toEqual({
+      provider: 'openai',
+      signedOut: true,
+      revoked: false,
+      revocation: 'unsupported',
+      // Present and null, like every other nullable field the CLI emits, so a
+      // consumer reads `.revocationError?.code` without a key-existence guard.
+      revocationError: null,
+    })
+    expect(err()).toContain('no revocation endpoint')
+  })
+
+  it('still reports revoked: false for a logout that never asked to revoke', async () => {
+    await seedSession('tokens:openai', {
+      accessToken: 'a',
+      tokenType: 'Bearer',
+      provider: 'openai',
+      raw: {},
+    })
+
+    expect(await run(['logout', 'openai', '--auth-dir', dir, '--json'])).toBe(0)
+    expect(JSON.parse(out())).toMatchObject({ revoked: false, revocation: 'not-requested' })
+  })
 })
 
 describe('exec', () => {

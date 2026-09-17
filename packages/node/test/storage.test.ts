@@ -1,6 +1,6 @@
 import { mkdtemp, readdir, rm, stat, readFile, symlink, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fileStorage } from '../src/storage.js'
@@ -132,8 +132,82 @@ describe('fileStorage', () => {
     expect(await storage.get('k')).toBe('v')
   })
 
-  it('deleting an absent key is a no-op', async () => {
-    const storage = fileStorage({ dir })
+  it('deleting an absent key touches nothing on disk', async () => {
+    // A no-op has to be a no-op all the way down: `delete` of a key that is not
+    // there must not create the credential directory, because doing so makes it
+    // throw `ENOENT ... mkdir` on a read-only home where it used to resolve
+    // silently. `logout` calls this on providers that were never logged in.
+    const store = join(dir, 'never-created')
+    const storage = fileStorage({ dir: store })
+
     await expect(storage.delete('nothing')).resolves.toBeUndefined()
+    expect(await stat(store).catch(() => null)).toBeNull()
+  })
+
+  // `set` and `delete` are read-modify-writes over the whole file, so anything
+  // that can run two of them at once can lose a key. A queue per `fileStorage()`
+  // instance only covers callers that share the instance — and nothing in this
+  // SDK guarantees they do.
+  describe('serialises writes to one file across every writer in this process', () => {
+    it('does not lose writes between two instances over the same file', async () => {
+      // The ordinary shape: `createNodeAuthClient` builds a fresh
+      // `fileStorage()` per client, so one client per provider is already two
+      // instances over one `auth.json`. Two concurrent refreshes then roll one
+      // provider's rotated token back to the value it had before, which shows up
+      // much later as an `invalid_grant` on a session that looked fine.
+      const first = fileStorage({ dir })
+      const second = fileStorage({ dir })
+
+      await Promise.all(
+        Array.from({ length: 20 }, (_, i) =>
+          i % 2 === 0 ? first.set(`first-${i}`, String(i)) : second.set(`second-${i}`, String(i)),
+        ),
+      )
+
+      const record = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8'))
+      expect(Object.keys(record)).toHaveLength(20)
+    })
+
+    it('shares one chain between instances spelling the directory differently', async () => {
+      // The chain is keyed by the absolute path, so a caller that passes a
+      // relative `dir` — `--dir ./creds` — lands on the same chain as one that
+      // passed the absolute spelling of it. Keying by the raw option instead
+      // gives them a chain each, and they lose each other's keys.
+      const spelling = relative(process.cwd(), dir)
+      // Guard the premise: if this ever came back absolute the two spellings
+      // would be one, and the test would pass while pinning nothing.
+      expect(isAbsolute(spelling)).toBe(false)
+
+      const first = fileStorage({ dir })
+      const second = fileStorage({ dir: spelling })
+
+      await Promise.all(
+        Array.from({ length: 20 }, (_, i) =>
+          i % 2 === 0
+            ? first.set(`absolute-${i}`, String(i))
+            : second.set(`relative-${i}`, String(i)),
+        ),
+      )
+
+      const record = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8'))
+      expect(Object.keys(record)).toHaveLength(20)
+    })
+  })
+
+  it('keeps an absolute `file` inside `dir`', async () => {
+    // `file` names a file in `dir`; it is not a second way to choose a path.
+    // Resolving the two against each other lets `file` win outright, so a value
+    // that reached this option from a config file or a flag could put the
+    // token file anywhere on the disk the process can write.
+    const store = join(dir, 'store')
+    const escape = join(dir, 'escape.json')
+    const storage = fileStorage({ dir: store, file: escape })
+
+    await storage.set('k', 'v')
+
+    // Nothing was written at the absolute path, and the record is inside the
+    // store, under the absolute name taken as the relative one it is.
+    expect(await stat(escape).catch(() => null)).toBeNull()
+    expect(JSON.parse(await readFile(join(store, escape), 'utf8'))).toEqual({ k: 'v' })
   })
 })
