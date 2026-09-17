@@ -112,9 +112,14 @@ export function resolveProvider(
     tokenRequest: { ...base.tokenRequest, ...overrides.tokenRequest },
   }
 
-  if (overrides.scopes?.length) {
-    merged.scopes = overrides.scopes
-  }
+  /* The spread above has already copied `overrides.scopes`, empty array
+     included, so this is the line that makes an empty override a no-op rather
+     than a way to silently ask for no scopes at all. A caller passing `[]`
+     means "I am not overriding these", not "strip the ones the descriptor
+     declares" — the latter would emit an authorize URL with no `scope`
+     parameter and let the authorization server pick whatever default it likes.
+     A *base* descriptor with no scopes (OpenRouter) still emits none. */
+  merged.scopes = overrides.scopes?.length ? overrides.scopes : base.scopes
 
   return merged
 }
@@ -194,9 +199,25 @@ function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' 
  * The message names the field and the offending value, because the failure
  * surfaces at client construction time far from whoever runs the discovery
  * endpoint.
+ *
+ * The loopback tolerance is inherited only when the issuer was itself loopback,
+ * for the reason {@link assertSecureDiscoveryResponse} spells out: a local
+ * development server naming its own `http://127.0.0.1:<port>` endpoints is
+ * ordinary, but a public `https` issuer naming one is not — it would point the
+ * authorization request, or the POST carrying the code, the PKCE verifier and
+ * the client secret, at whatever local process happens to hold that port.
  */
-function assertSecureDiscoveredEndpoint(field: string, value: string, source: string): void {
-  const verdict = classifyDiscoveryUrl(value)
+function assertSecureDiscoveredEndpoint(
+  field: string,
+  value: string,
+  source: string,
+  issuer: string,
+): void {
+  let verdict = classifyDiscoveryUrl(value)
+
+  if (verdict === 'ok' && isLoopbackUrl(value) && !isLoopbackUrl(issuer)) {
+    verdict = 'insecure'
+  }
 
   if (verdict === 'unparseable') {
     throw new OAuthError(
@@ -209,7 +230,8 @@ function assertSecureDiscoveredEndpoint(field: string, value: string, source: st
     throw new OAuthError(
       'configuration_error',
       `Discovery document at ${source} names an insecure ${field}: "${value}". ` +
-        'Endpoints taken from a discovery document must use https, except on loopback.',
+        'Endpoints taken from a discovery document must use https — or loopback, if that is ' +
+        'where the issuer already was.',
     )
   }
 }
@@ -377,11 +399,11 @@ export async function providerFromDiscovery(
   // does. Testing only for `undefined` would let that document value through
   // unchecked, which is the whole case this guard exists for.
   if (input.authorizationUrl == null) {
-    assertSecureDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url)
+    assertSecureDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url, issuer)
   }
 
   if (input.tokenUrl == null) {
-    assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url)
+    assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url, issuer)
   }
 
   // The document's device endpoint always wins over `input.deviceAuthorizationUrl`
@@ -391,6 +413,7 @@ export async function providerFromDiscovery(
       'device_authorization_endpoint',
       document.device_authorization_endpoint,
       url,
+      issuer,
     )
   }
 

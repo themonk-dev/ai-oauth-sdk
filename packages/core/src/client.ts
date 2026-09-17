@@ -131,7 +131,7 @@ export class AuthClient {
       overrides.clientSecret = options.clientSecret
     }
 
-    if (options.scopes) {
+    if (options.scopes?.length) {
       overrides.scopes = options.scopes
     }
 
@@ -207,7 +207,12 @@ export class AuthClient {
       redirectUri,
       state,
       ...(pkce ? { codeChallenge: pkce.challenge, codeChallengeMethod: pkce.method } : {}),
-      ...(options.scopes ?? this.#scopes ? { scopes: options.scopes ?? this.#scopes } : {}),
+      /* An empty array is not a scope list, it is the absence of one: falling
+         through to the provider's own scopes here is what keeps `scopes: []`
+         from quietly dropping the `scope` parameter altogether. */
+      ...((options.scopes ?? this.#scopes)?.length
+        ? { scopes: options.scopes ?? this.#scopes }
+        : {}),
       extraParams: { ...this.#extraAuthParams, ...options.extraParams },
     })
 
@@ -255,8 +260,23 @@ export class AuthClient {
           },
         )
 
+        /* Only a `state` this client actually started a flow for is allowed to
+           reach the registry. `reject()` buffers the failure for a `waitFor`
+           that may not have arrived yet, and that buffer is a fixed-size FIFO
+           over every state at once — so an unauthenticated caller posting
+           `?error=…&state=<random>` to a public `/callback` a thousand times
+           evicts the buffered results of genuine logins, which then wait out
+           their timeout having already succeeded. The denial is the point: the
+           attacker needs no code, no secret and no valid state, only the URL.
+
+           The pending record is read, not consumed: a denial is not a
+           completion, and the flow's own timeout is what ends it. */
         if (parsed.state) {
-          this.#registry.reject(parsed.state, error)
+          const pending = await this.#registry.get(parsed.state)
+
+          if (pending && this.#ownsProviderId(pending.provider)) {
+            this.#registry.reject(parsed.state, error)
+          }
         }
 
         throw error
@@ -294,8 +314,16 @@ export class AuthClient {
       )
     }
 
+    /* Whether this call ever owned the `state`, and so whether a failure below
+       is this flow's news to report. An unknown `state` throws out of
+       `consume()` before this flips, which keeps a drive-by `?code=x&state=…`
+       out of the registry's buffer — the same eviction the error branch above
+       guards against, reached through the `catch`. */
+    let consumed = false
+
     try {
       const pending = await this.#registry.consume(state)
+      consumed = true
 
       /* Pending records are keyed by `state` alone, and one storage is
          routinely shared by every client an app builds — so a callback routed
@@ -336,7 +364,19 @@ export class AuthClient {
 
       return tokens
     } catch (error) {
-      this.#registry.reject(state, error)
+      /* `state_expired` is thrown after `consume()` has already deleted the
+         record, so `consumed` never flips even though the state was ours —
+         and only a record that existed can produce it, which makes it as good
+         an ownership proof as `consumed` itself. Without this the waiter on a
+         flow whose user sat too long at the consent screen is never settled
+         at all: `waitFor` installs no timer unless it was given one. */
+      const wasOurs =
+        consumed || (error instanceof OAuthError && error.code === 'state_expired')
+
+      if (wasOurs) {
+        this.#registry.reject(state, error)
+      }
+
       throw error
     }
   }
