@@ -83,9 +83,23 @@ export interface UseAuthResult extends AuthState {
 export function useAuth(options: UseAuthOptions): UseAuthResult {
   const { receiver, restoreOnMount = true, onSuccess, onError, origin, ...clientOptions } = options
 
+  /* The whole descriptor, not just its `id`: endpoints are part of what the
+     client does, and `azureAi()` hard-codes `id: 'azure-ai'` while scoping
+     `authorizationUrl`/`tokenUrl` to a tenant — so keying on the id alone
+     returned the old tenant's client, and with it the old tenant's cached
+     access token, after a tenant switch. Two limits worth knowing: function
+     fields (`parseCallback`, `enrichTokens`, `apiHeaders`,
+     `transformRequestBody`) do not survive `JSON.stringify`, so descriptors
+     differing only in a hook still hash equal; and the output depends on key
+     order, which is stable here because `defineProvider` spreads a fixed
+     literal. Re-keying the memo does not separate *persistent* storage —
+     both clients still read `tokens:<id>` — which is what `accountKey` is
+     for. */
   const clientKey = JSON.stringify({
     provider:
-      typeof clientOptions.provider === 'string' ? clientOptions.provider : clientOptions.provider.id,
+      typeof clientOptions.provider === 'string'
+        ? clientOptions.provider
+        : JSON.stringify(clientOptions.provider),
     clientId: clientOptions.clientId,
     redirectUri: clientOptions.redirectUri,
     scopes: clientOptions.scopes,

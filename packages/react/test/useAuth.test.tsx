@@ -217,6 +217,42 @@ describe('useAuth', () => {
     )
   })
 
+  it('rebuilds the client when the descriptor changes but its id does not', async () => {
+    // `azureAi()` is the real case: `id: 'azure-ai'` is fixed while the
+    // endpoints are tenant-scoped, so a memo keyed on the id alone handed back
+    // the old tenant's client — still pointed at the old tenant, and still
+    // serving its cached access token — after a tenant switch. Re-keying only
+    // separates the in-memory clients; two of them for one id still read the
+    // same `tokens:<id>` record out of a persistent storage, which is what
+    // `accountKey` is for.
+    function Tenanted({ url }: { url: string }) {
+      const auth = useAuth({
+        provider: defineProvider({
+          id: 'tenanted',
+          label: 'Tenanted',
+          clientId: 'test-client',
+          authorizationUrl: `${url}/authorize`,
+          tokenUrl: `${url}/token`,
+          scopes: ['openid'],
+          redirect: { mode: 'custom' },
+        }),
+        storage: memoryStorage(),
+      })
+
+      return <span data-testid="token-url">{auth.client.provider.tokenUrl}</span>
+    }
+
+    const view = render(<Tenanted url="https://tenant-one.test" />)
+    await waitFor(() =>
+      expect(screen.getByTestId('token-url').textContent).toBe('https://tenant-one.test/token'),
+    )
+
+    view.rerender(<Tenanted url="https://tenant-two.test" />)
+    await waitFor(() =>
+      expect(screen.getByTestId('token-url').textContent).toBe('https://tenant-two.test/token'),
+    )
+  })
+
   it('does not warn about state updates after unmount', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const view = render(<SignIn storage={memoryStorage()} receiver={hangingReceiver()} />)

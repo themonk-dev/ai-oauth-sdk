@@ -304,6 +304,30 @@ describe('resolveProvider', () => {
     expect(openai.scopes).toEqual(['openid', 'profile', 'email', 'offline_access'])
   })
 
+  it('treats an empty scopes override as no override at all', () => {
+    // `[]` is the absence of an override, not a request for no scopes: the
+    // spread copies it over the descriptor's own, and an authorize URL with no
+    // `scope` parameter lets the authorization server pick whatever default it
+    // likes — silently, and with no way to tell from the URL that the scopes
+    // asked for were ever dropped.
+    expect(resolveProvider('openai', { scopes: [] }).scopes).toEqual(openai.scopes)
+    // A base descriptor that declares none still has none.
+    expect(resolveProvider(openrouter, { clientId: 'c' }).scopes).toEqual([])
+  })
+
+  it('keeps the descriptor scopes when a client is built with scopes: []', async () => {
+    const client = createAuthClient({
+      provider: 'claude',
+      clientId: 'c',
+      scopes: [],
+      redirectUri: 'http://localhost:9999/callback',
+      storage: memoryStorage(),
+    })
+    const { url } = await client.createAuthorization()
+
+    expect(new URL(url).searchParams.get('scope')).toBe(claude.scopes.join(' '))
+  })
+
   it('throws a helpful error for an unknown id', () => {
     expect(() => resolveProvider('nope')).toThrowError(OAuthError)
     expect(() => resolveProvider('nope')).toThrowError(/Built-ins: openai, claude, gemini, xai/)

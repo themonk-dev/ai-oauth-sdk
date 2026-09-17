@@ -197,6 +197,40 @@ describe('providerFromDiscovery', () => {
     expect(provider.deviceAuthorizationUrl).toBe('http://[::1]:8123/device')
   })
 
+  it('refuses loopback endpoints named by a public https issuer', async () => {
+    // The loopback tolerance belongs to a local development issuer naming its
+    // own endpoints. A public https issuer naming one is the same downgrade the
+    // redirect check below refuses: it hands the authorization request, and the
+    // POST carrying the code, the verifier and the client secret, to whatever
+    // local process holds that port.
+    for (const document of [
+      { authorization_endpoint: 'http://127.0.0.1:9999/authorize', token_endpoint: 'https://acme.test/token' },
+      { authorization_endpoint: 'https://acme.test/authorize', token_endpoint: 'http://localhost:9999/token' },
+      {
+        authorization_endpoint: 'https://acme.test/authorize',
+        token_endpoint: 'https://acme.test/token',
+        device_authorization_endpoint: 'http://[::1]:9999/device',
+      },
+    ]) {
+      const fetchImpl: FetchLike = async () =>
+        new Response(JSON.stringify(document), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+
+      await expect(
+        providerFromDiscovery(
+          'https://acme.test',
+          { id: 'acme', label: 'Acme', clientSecret: 'super-secret', redirect: { mode: 'loopback' } },
+          fetchImpl,
+        ),
+      ).rejects.toMatchObject({
+        code: 'configuration_error',
+        message: expect.stringMatching(/names an insecure .*_endpoint/),
+      })
+    }
+  })
+
   it('leaves an integrator-supplied http tokenUrl alone', async () => {
     // Not document-sourced, so it is the integrator's own config — the same
     // value `defineProvider` would accept without comment.

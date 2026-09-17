@@ -239,6 +239,82 @@ describe('pending authorizations are bound to their provider', () => {
   })
 })
 
+describe('a callback for no pending flow cannot evict buffered results', () => {
+  /* The buffer holding results for a `waitFor` that has not arrived yet is a
+     fixed-size FIFO over every state at once, so anything that writes to it
+     from an unauthenticated request is a way to push genuine logins out of it.
+     They then wait out their timeout having already succeeded. `maxSettled`
+     defaults to 1000 and the client does not expose it, so these drive the real
+     number. */
+  const junkCallbacks = 1000
+
+  it('ignores an error callback for a state it never issued', async () => {
+    const client = createAuthClient({
+      provider: testProvider(server.url),
+      redirectUri: 'http://localhost:9999/callback',
+      storage: memoryStorage(),
+    })
+    const authorization = await client.createAuthorization()
+    const { code, state } = await followAuthorization(authorization.url)
+
+    // Completed with nobody waiting yet: the tokens are in the buffer.
+    await client.completeAuthorization({ code, state })
+
+    for (let i = 0; i < junkCallbacks; i++) {
+      await expect(
+        client.completeAuthorization({
+          callbackUrl: `http://localhost:9999/callback?error=access_denied&state=drive-by-${i}`,
+        }),
+      ).rejects.toMatchObject({ code: 'authorization_denied' })
+    }
+
+    await expect(
+      client.waitForAuthorization(authorization.state, { timeoutMs: 100 }),
+    ).resolves.toMatchObject({ accessToken: 'access-1' })
+  })
+
+  it('ignores a code callback for a state it never issued', async () => {
+    // The same buffer, reached the other way: `consume()` throws `unknown_state`
+    // and the failure used to be buffered under the attacker's state.
+    const client = createAuthClient({
+      provider: testProvider(server.url),
+      redirectUri: 'http://localhost:9999/callback',
+      storage: memoryStorage(),
+    })
+    const authorization = await client.createAuthorization()
+    const { code, state } = await followAuthorization(authorization.url)
+    await client.completeAuthorization({ code, state })
+
+    for (let i = 0; i < junkCallbacks; i++) {
+      await expect(
+        client.completeAuthorization({ code: 'INJECTED', state: `drive-by-${i}` }),
+      ).rejects.toMatchObject({ code: 'unknown_state' })
+    }
+
+    await expect(
+      client.waitForAuthorization(authorization.state, { timeoutMs: 100 }),
+    ).resolves.toMatchObject({ accessToken: 'access-1' })
+  })
+
+  it('still reports a denial to a waiter on the flow it belongs to', async () => {
+    // The guard must not cost a genuine denial its report.
+    const client = createAuthClient({
+      provider: testProvider(server.url),
+      redirectUri: 'http://localhost:9999/callback',
+      storage: memoryStorage(),
+    })
+    const authorization = await client.createAuthorization()
+    const waiting = client.waitForAuthorization(authorization.state)
+
+    await expect(
+      client.completeAuthorization({
+        callbackUrl: `http://localhost:9999/callback?error=access_denied&state=${authorization.state}`,
+      }),
+    ).rejects.toMatchObject({ code: 'authorization_denied' })
+    await expect(waiting).rejects.toMatchObject({ code: 'authorization_denied' })
+  })
+})
+
 describe('waitForAuthorization — the state-keyed handoff', () => {
   it('delivers tokens to a waiter that started before the callback', async () => {
     const client = createAuthClient({
