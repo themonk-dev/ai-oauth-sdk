@@ -72,6 +72,55 @@ describe('base64url', () => {
     expect(utf8Decode(base64UrlDecode('aGVsbG8='))).toBe('hello')
     expect(utf8Decode(base64UrlDecode('aGVsbG8'))).toBe('hello')
   })
+
+  /*
+   * Trailing padding used to be stripped with /=+$/, which backtracks
+   * quadratically once a run of '=' is followed by anything else — and a
+   * `decodeJwtPayload` call sits directly on the bytes a token endpoint sends,
+   * with no length bound anywhere before it. The two tests below pin the two
+   * halves: that nothing about the output moved, and that the input shape that
+   * used to take seconds now takes milliseconds.
+   */
+  it('decodes every padding and alphabet shape the same way', () => {
+    const cases: { input: string; bytes: number[]; backing: number }[] = [
+      { input: '', bytes: [], backing: 0 },
+      { input: 'aGVsbG8', bytes: [104, 101, 108, 108, 111], backing: 5 },
+      { input: 'aGVsbG8=', bytes: [104, 101, 108, 108, 111], backing: 5 },
+      { input: 'aGVsbG8==', bytes: [104, 101, 108, 108, 111], backing: 5 },
+      { input: 'aGVsbG8===', bytes: [104, 101, 108, 108, 111], backing: 5 },
+      { input: '-_8', bytes: [251, 255], backing: 2 },
+      { input: '+/8=', bytes: [251, 255], backing: 2 },
+      { input: '++//', bytes: [251, 239, 255], backing: 3 },
+      { input: '--__', bytes: [251, 239, 255], backing: 3 },
+      { input: 'a=b=c=d', bytes: [105, 183, 29], backing: 5 },
+      { input: '!!!', bytes: [], backing: 2 },
+      { input: '====', bytes: [], backing: 0 },
+      { input: 'aGVsbG8*&^', bytes: [104, 101, 108, 108, 111], backing: 7 },
+    ]
+
+    for (const { input, bytes, backing } of cases) {
+      const decoded = base64UrlDecode(input)
+      expect(Array.from(decoded), input).toEqual(bytes)
+      /* Not only the contents. A consumer reading `result.buffer` sees the
+         backing store, and simply dropping the strip instead of scanning would
+         over-allocate it — `Array.from` would still agree while
+         `new Uint8Array(result.buffer)` quietly gained trailing zeroes. */
+      expect(decoded.buffer.byteLength, `${input} backing store`).toBe(backing)
+    }
+  })
+
+  it('decodes a long run of padding without stalling', () => {
+    /* JWT-shaped, because that is how it arrives: header.payload.signature
+       where a segment is a long run of '=' with one ordinary character after
+       it. Against the old regex this took roughly 7.6 seconds and grew
+       fourfold with every doubling; a second is a very generous ceiling for
+       the linear scan that replaced it. */
+    const hostile = `${'='.repeat(100_000)}A`
+    const started = Date.now()
+    base64UrlDecode(hostile)
+
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
 })
 
 describe('utf8 fallback encoder', () => {

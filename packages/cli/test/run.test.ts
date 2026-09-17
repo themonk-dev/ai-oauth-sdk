@@ -171,6 +171,49 @@ describe('flags that are not real', () => {
     expect(await run(['login', 'github-copilot', '--paste', '--auth-dir', dir])).toBe(1)
     expect(err()).toContain('--paste cannot complete it')
   })
+
+  /*
+   * The guard skipped every one-character key on the theory that those are the
+   * short flags. They are not — an unrecognised `-x` is stored as the
+   * two-character key `-x` precisely so it can be caught — so what the skip
+   * actually waved through was every `--<char>` long option. Abbreviating
+   * `--account` to `--a` therefore selected no account at all and the command
+   * printed the default one's credential, with exit 0 and nothing on stderr,
+   * while the longer typo `--ac` was rejected correctly.
+   */
+  it('rejects --a rather than printing the wrong account’s token', async () => {
+    await seedSession(
+      'tokens:openai:work',
+      {
+        accessToken: 'sk-work-token',
+        tokenType: 'Bearer',
+        provider: 'openai',
+        raw: {},
+      },
+      { 'tokens:openai': JSON.stringify({
+        accessToken: 'sk-personal-token',
+        tokenType: 'Bearer',
+        provider: 'openai',
+        raw: {},
+      }) },
+    )
+
+    expect(await run(['token', 'openai', '--a', 'work', '--auth-dir', dir])).toBe(1)
+    expect(out()).not.toContain('sk-personal-token')
+    expect(err()).toContain('Unknown option "--a"')
+  })
+
+  it('still reads the account when the flag is spelled out', async () => {
+    await seedSession('tokens:openai:work', {
+      accessToken: 'sk-work-token',
+      tokenType: 'Bearer',
+      provider: 'openai',
+      raw: {},
+    })
+
+    expect(await run(['token', 'openai', '--account', 'work', '--auth-dir', dir])).toBe(0)
+    expect(out().trim()).toBe('sk-work-token')
+  })
 })
 
 describe('list', () => {
@@ -249,6 +292,44 @@ describe('whoami', () => {
 
     expect(await run(['whoami', 'openai', '--auth-dir', dir, '--json'])).toBe(0)
     expect(JSON.parse(out())).toMatchObject({ provider: 'openai', accountId: 'acct-1' })
+  })
+
+  /*
+   * `email` is read out of an id_token the provider signed, so it is the
+   * provider's text arriving on our stderr. With ESC intact it does not have to
+   * settle for looking odd: it can erase the lines above it and repaint them.
+   */
+  it('strips terminal escapes out of the provider-supplied account name', async () => {
+    await seedSession('tokens:openai', {
+      accessToken: 'a',
+      tokenType: 'Bearer',
+      provider: 'openai',
+      email: 'real@example.com\u001B[2K\u001B[1Aattacker@evil.example',
+      raw: {},
+    })
+
+    expect(await run(['whoami', 'openai', '--auth-dir', dir])).toBe(0)
+    expect(err()).not.toContain('\u001B[2K')
+    expect(err()).toContain('real@example.com')
+  })
+
+  /*
+   * `scope` is read off the token response rather than the id_token, so it is a
+   * separate sink two lines below `account` and was missed on the first pass.
+   */
+  it('strips terminal escapes out of the provider-supplied scope list', async () => {
+    await seedSession('tokens:openai', {
+      accessToken: 'a',
+      tokenType: 'Bearer',
+      provider: 'openai',
+      scope: 'openid\u001B[2K\u001B[1A\u001B[32mHOSTILE-SCOPE',
+      raw: {},
+    })
+
+    expect(await run(['whoami', 'openai', '--auth-dir', dir])).toBe(0)
+    expect(err()).not.toContain('\u001B[2K')
+    expect(err()).not.toContain('\u001B[1A')
+    expect(err()).toContain('openid')
   })
 })
 

@@ -63,6 +63,68 @@ describe('parseArgs', () => {
     const parsed = parseArgs(['--port', '-1'])
     expect(parsed.flags['port']).toBe(true)
   })
+
+  /*
+   * Every key here is a string the user typed, so the record cannot be an
+   * object literal: `--__proto__ x` assigned to one is a silent no-op and the
+   * flag vanished entirely, and `--constructor` read a value straight off
+   * `Object.prototype`.
+   */
+  it('stores a flag named after an Object.prototype member', () => {
+    const parsed = parseArgs(['login', '--__proto__', 'evil'])
+
+    expect(Object.keys(parsed.flags)).toEqual(['__proto__'])
+    expect(parsed.flags['__proto__']).toBe('evil')
+    expect(findUnknownFlag(parsed.flags)?.name).toBe('--__proto__')
+  })
+
+  it('does not read a hint through the prototype chain', () => {
+    const hint = findUnknownFlag(parseArgs(['login', '--constructor']).flags)?.hint
+
+    expect(hint).toBe('Run `ai-oauth-sdk --help` for the full list.')
+    expect(hint).not.toContain('native code')
+  })
+})
+
+/*
+ * `findUnknownFlag` skipped every one-character key, on the theory that those
+ * are the short flags. They are not: `parseArgs` only ever stores a bare
+ * one-character key for a real short flag, and an unrecognised `-x` keeps its
+ * dash as the two-character key `-x`. So the skip was whitelisting every
+ * *double*-dash single-character option. With two accounts stored,
+ * `token acme --a work` printed the personal account's token and exited 0,
+ * while the two-character typo `--ac` was rejected correctly.
+ */
+describe('findUnknownFlag — single-character options', () => {
+  it.each(['a', 'c', 'e', 'p', 's'])('rejects the abbreviation --%s', (char) => {
+    const unknown = findUnknownFlag(parseArgs(['token', 'acme', `--${char}`, 'work']).flags)
+
+    expect(unknown?.name).toBe(`--${char}`)
+  })
+
+  it('rejects an abbreviation of a flag that really exists', () => {
+    // `--a` is not `--account`, and guessing that it was is how the wrong
+    // credential gets printed.
+    expect(findUnknownFlag(parseArgs(['token', 'acme', '--a=work']).flags)?.name).toBe('--a')
+  })
+
+  it('still accepts the real short flags, alone and bundled', () => {
+    expect(findUnknownFlag(parseArgs(['-h']).flags)).toBeUndefined()
+    expect(findUnknownFlag(parseArgs(['-v']).flags)).toBeUndefined()
+    expect(findUnknownFlag(parseArgs(['-vh']).flags)).toBeUndefined()
+  })
+
+  it('still reports the one-dash long options it always reported', () => {
+    expect(findUnknownFlag(parseArgs(['-device']).flags)?.name).toBe('-device')
+    expect(findUnknownFlag(parseArgs(['-x']).flags)?.name).toBe('-x')
+  })
+
+  it('accepts --h and --v, which are spelled like the flags they name', () => {
+    // `parseArgs` stores these under the same bare key as `-h`/`-v`, and the
+    // commands read them from there, so rejecting them would be a regression.
+    expect(findUnknownFlag(parseArgs(['--h']).flags)).toBeUndefined()
+    expect(findUnknownFlag(parseArgs(['--v']).flags)).toBeUndefined()
+  })
 })
 
 describe('flag readers', () => {

@@ -63,11 +63,25 @@ export function redactSecrets(text: string): string {
 }
 
 /**
+ * Whitespace, plus the control characters `\s` does not cover.
+ *
+ * "Collapsed onto one line" was only ever true of what JavaScript counts as
+ * whitespace, and `\s` matches none of ESC, BEL, NUL, DEL, the rest of C0, or
+ * the C1 range — U+0085 NEL included, which really is a line break. So a
+ * snippet of a provider's response body reached a terminal with its escape
+ * sequences intact and could repaint the line above it. Callers that render
+ * these messages should still do their own escaping for their own medium;
+ * folding the controls in here is defence in depth, in keeping with the rest of
+ * this file.
+ */
+const COLLAPSIBLE = /[\s\x00-\x08\x0B-\x1F\x7F-\x9F]+/g
+
+/**
  * Prepares an untrusted response body for inclusion in an error message:
  * redacted, collapsed onto one line, and truncated.
  */
 export function safeSnippet(text: string, maxLength = 200): string {
-  const collapsed = redactSecrets(text).replace(/\s+/g, ' ').trim()
+  const collapsed = redactSecrets(text).replace(COLLAPSIBLE, ' ').trim()
 
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength)}…` : collapsed
 }

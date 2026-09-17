@@ -14,15 +14,37 @@
  */
 
 /**
+ * Matches one well-formed surrogate pair, or a single surrogate left on its
+ * own. The pair alternative comes first so a valid astral character is claimed
+ * whole and never mistaken for two strays.
+ */
+const SURROGATE = /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g
+
+/**
  * Percent-encodes one component the way the URL standard's
  * application/x-www-form-urlencoded serialiser does.
  *
  * `encodeURIComponent` is close but not equal: it renders a space as `%20`
  * rather than `+`, and it leaves `!'()~` untouched where the form serialiser
  * escapes them. (`*` stays literal in both.)
+ *
+ * Lone surrogates are replaced with U+FFFD first, which is what the URL
+ * standard's serialiser — and therefore `URLSearchParams` — already does with
+ * them; `encodeURIComponent` instead throws a bare `URIError`. That matters
+ * because `JSON.parse` passes a lone surrogate straight through, so a token
+ * endpoint answering with `"refresh_token": "rt\ud800"` gets it stored
+ * verbatim, and every later refresh of a `style: 'form'` provider would throw
+ * a `URIError` out of the token request. `errors.ts` promises that every
+ * failure this SDK produces is an `OAuthError`, and a `URIError` escaping here
+ * breaks that: it sails through the `refresh_failed` wrapper untouched, so the
+ * caller's documented "catch `refresh_failed`, prompt a re-login" branch never
+ * runs. Substituting fails closed instead — the mangled credential is rejected
+ * by the server and surfaces as an ordinary `refresh_failed`.
  */
 function encodeComponent(value: string): string {
-  return encodeURIComponent(value)
+  const wellFormed = value.replace(SURROGATE, (match) => (match.length === 2 ? match : '�'))
+
+  return encodeURIComponent(wellFormed)
     .replace(/%20/g, '+')
     .replace(/[!'()~]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
 }

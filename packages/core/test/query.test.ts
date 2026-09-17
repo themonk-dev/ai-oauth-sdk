@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildAuthorizationUrl } from '../src/authorize.js'
+import { isOAuthError } from '../src/errors.js'
 import { defineProvider, parseStandardCallback } from '../src/providers/index.js'
 import { appendQuery, encodeQuery, parseQuery } from '../src/query.js'
+import { refreshTokens } from '../src/token.js'
 
 const provider = defineProvider({
   id: 'demo',
@@ -57,6 +59,83 @@ describe('encodeQuery — parity with URLSearchParams', () => {
     expect(encodeQuery({ 'a key': 'a value' })).toBe(
       new URLSearchParams({ 'a key': 'a value' }).toString(),
     )
+  })
+
+  /*
+   * `encodeURIComponent` throws a bare `URIError` on an unpaired surrogate, and
+   * `JSON.parse` passes one straight through — so a token endpoint answering
+   * with `"refresh_token": "rt\ud800"` got it stored verbatim, and every later
+   * refresh of a form-style provider threw a `URIError` out of the token
+   * request. `errors.ts` promises that every failure this SDK raises is an
+   * `OAuthError`; a `URIError` sails past the `refresh_failed` wrapper, so the
+   * caller's documented "catch `refresh_failed`, re-login" branch never ran.
+   *
+   * Substituting U+FFFD is what `URLSearchParams` already does, and it fails
+   * closed: the mangled credential is refused by the server and surfaces as an
+   * ordinary `refresh_failed`.
+   */
+  it('replaces lone surrogates instead of throwing, exactly as URLSearchParams does', () => {
+    const values = [
+      'rt\ud800',
+      '\udc00leading-low',
+      'mid\ud83ddle',
+      'pair😀-is-fine',
+      '\ud800\ud800',
+    ]
+
+    for (const value of values) {
+      expect(() => encodeQuery({ k: value }), JSON.stringify(value)).not.toThrow()
+      expect(encodeQuery({ k: value }), JSON.stringify(value)).toBe(
+        new URLSearchParams({ k: value }).toString(),
+      )
+    }
+  })
+
+  it('leaves a well-formed astral character alone', () => {
+    expect(encodeQuery({ k: '🔑' })).toBe(new URLSearchParams({ k: '🔑' }).toString())
+    expect(parseQuery(encodeQuery({ k: '🔑' }))).toEqual({ k: '🔑' })
+  })
+
+  it('replaces a lone surrogate in a key too', () => {
+    expect(encodeQuery({ 'k\ud800': 'v' })).toBe(
+      new URLSearchParams({ 'k\ud800': 'v' }).toString(),
+    )
+  })
+
+  /* The reason the encoder must not throw, stated end to end. */
+  it('keeps a malformed refresh token inside the OAuthError contract', async () => {
+    const formProvider = defineProvider({
+      id: 'form-style',
+      label: 'Form Style',
+      clientId: 'c',
+      authorizationUrl: 'https://provider.test/authorize',
+      tokenUrl: 'https://provider.test/token',
+      scopes: [],
+      /* Form encoding is the default, and it is the style that goes through
+         `encodeQuery`; a `style: 'json'` provider survives a lone surrogate
+         because `JSON.stringify` escapes it. */
+      redirect: { mode: 'custom' },
+    })
+
+    const error = await refreshTokens({
+      provider: formProvider,
+      clientId: 'c',
+      tokens: {
+        accessToken: 'at',
+        refreshToken: 'rt\ud800',
+        tokenType: 'Bearer',
+        provider: 'form-style',
+        raw: {},
+      },
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: 'invalid_grant' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    }).catch((caught: unknown) => caught)
+
+    expect(isOAuthError(error)).toBe(true)
+    expect(isOAuthError(error) && error.code).toBe('refresh_failed')
   })
 })
 

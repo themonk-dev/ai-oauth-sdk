@@ -24,7 +24,15 @@ export interface ParsedArgs {
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  const flags: Record<string, string | boolean> = {}
+  /* Null-prototype, because every key here is a string the user typed.
+     `--__proto__ x` assigned to an object literal is a silent no-op, so the
+     flag disappeared instead of being reported as unknown, and `--constructor`
+     read a value back off `Object.prototype`. */
+  const flags: Record<string, string | boolean> = Object.create(null) as Record<
+    string,
+    string | boolean
+  >
+
   const positionals: string[] = []
   const passthrough: string[] = []
 
@@ -112,15 +120,20 @@ export const KNOWN_FLAGS = [
  * `--loopback` is the one people reach for, because it is the mode everything
  * else is named against — but it is the default, so accepting it silently made
  * it look like an override that did nothing.
+ *
+ * A `Map` rather than an object literal, because the lookup key is whatever the
+ * user typed: `SUGGESTIONS['constructor']` on a literal reads through to
+ * `Object.prototype` and offers `function Object() { [native code] }` as the
+ * hint for `--constructor`.
  */
-const SUGGESTIONS: Record<string, string> = {
-  loopback: 'loopback is the default — drop the flag, or use --paste / --device',
-  browser: 'the browser flow is the default — drop the flag',
-  'device-code': 'use --device',
-  'client_id': 'use --client-id',
-  'auth-directory': 'use --auth-dir',
-  scope: 'use --scopes',
-}
+const SUGGESTIONS = new Map<string, string>([
+  ['loopback', 'loopback is the default — drop the flag, or use --paste / --device'],
+  ['browser', 'the browser flow is the default — drop the flag'],
+  ['device-code', 'use --device'],
+  ['client_id', 'use --client-id'],
+  ['auth-directory', 'use --auth-dir'],
+  ['scope', 'use --scopes'],
+])
 
 /**
  * Returns a message for the first unrecognised flag, or undefined.
@@ -129,8 +142,15 @@ const SUGGESTIONS: Record<string, string> = {
  * keeps the one dash the user typed, everything else gets the two it was
  * missing.
  *
- * Short flags are skipped: they are single characters, handled by the commands
- * directly rather than listed in {@link KNOWN_FLAGS}.
+ * The real short flags are skipped: they are single characters, handled by the
+ * commands directly rather than listed in {@link KNOWN_FLAGS}. Only those
+ * — skipping every one-character key instead waved through each `--<char>`
+ * long option too, because {@link parseArgs} stores those under the same bare
+ * one-character key. `token acme --a work` therefore passed the guard, `--a`
+ * was read by nothing, and the command printed the default account's token
+ * with exit 0 while the user believed they had asked for `--account work`.
+ * An unrecognised *short* flag never reaches here as one character: `-x` is
+ * stored under the two-character key `-x` precisely so it does not.
  */
 export function findUnknownFlag(
   flags: Record<string, string | boolean>,
@@ -138,7 +158,7 @@ export function findUnknownFlag(
   const known = new Set<string>(KNOWN_FLAGS)
 
   for (const name of Object.keys(flags)) {
-    if (name.length === 1 || known.has(name)) {
+    if ((name.length === 1 && SHORT_FLAGS.has(name)) || known.has(name)) {
       continue
     }
 
@@ -151,7 +171,7 @@ export function findUnknownFlag(
 
     return {
       name: shown,
-      hint: SUGGESTIONS[bare] ?? `Run \`ai-oauth-sdk --help\` for the full list.`,
+      hint: SUGGESTIONS.get(bare) ?? `Run \`ai-oauth-sdk --help\` for the full list.`,
     }
   }
 

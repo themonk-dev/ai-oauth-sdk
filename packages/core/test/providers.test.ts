@@ -207,6 +207,51 @@ describe('buildAuthorizationUrl', () => {
     expect(url.searchParams.get('codex_cli_simplified_flow')).toBe('false')
     expect(url.searchParams.get('prompt')).toBe('login')
   })
+
+  /*
+   * `extraParams` is for the things a provider takes beyond the protocol —
+   * `login_hint`, `prompt`, a vendor toggle. The parameters that bind the
+   * request to the flow we just started are not among them, and they used to
+   * be written before the spread, so a caller-supplied map replaced them.
+   *
+   * Defence in depth rather than a hole being closed: the flow already fails
+   * shut, because the pending record keeps the honest `state` and the exchange
+   * replays the honest `redirect_uri` whatever went out on the URL. This makes
+   * the guarantee structural instead of something reconstructed from checks
+   * three files away.
+   */
+  it('does not let extraParams override the protocol parameters', () => {
+    const url = new URL(
+      buildAuthorizationUrl({
+        provider: openai,
+        clientId: 'honest-client',
+        redirectUri: 'http://localhost:1455/auth/callback',
+        state: 'honest-state',
+        codeChallenge: 'honest-challenge',
+        scopes: ['openid'],
+        extraParams: {
+          response_type: 'token',
+          client_id: 'attacker-client',
+          redirect_uri: 'https://evil.example/steal',
+          state: 'attacker-state',
+          scope: 'attacker:scope',
+          code_challenge: 'attacker-challenge',
+          code_challenge_method: 'plain',
+          login_hint: 'user@example.com',
+        },
+      }),
+    )
+
+    expect(url.searchParams.get('response_type')).toBe('code')
+    expect(url.searchParams.get('client_id')).toBe('honest-client')
+    expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:1455/auth/callback')
+    expect(url.searchParams.get('state')).toBe('honest-state')
+    expect(url.searchParams.get('scope')).toBe('openid')
+    expect(url.searchParams.get('code_challenge')).toBe('honest-challenge')
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256')
+    /* Everything else `extraParams` asked for still lands. */
+    expect(url.searchParams.get('login_hint')).toBe('user@example.com')
+  })
 })
 
 describe('readCallback — the shared receiver path', () => {
