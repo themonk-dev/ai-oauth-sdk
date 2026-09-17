@@ -1,9 +1,9 @@
 import { mkdtemp, readdir, rm, stat, readFile, symlink, writeFile, mkdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fileStorage } from '../src/storage.js'
+import { defaultAuthDir, fileStorage } from '../src/storage.js'
 
 let dir: string
 
@@ -135,5 +135,64 @@ describe('fileStorage', () => {
   it('deleting an absent key is a no-op', async () => {
     const storage = fileStorage({ dir })
     await expect(storage.delete('nothing')).resolves.toBeUndefined()
+  })
+})
+
+/*
+ * `AI_OAUTH_SDK_HOME=""` is what a compose file, a CI `env:` block or
+ * `export AI_OAUTH_SDK_HOME="$UNSET_VAR"` produces, and `join('', 'auth.json')`
+ * is the relative path `auth.json`. That put a refresh token in the process
+ * CWD — in CI, the checked-out repository — while the CLI reported it as
+ * `${defaultAuthDir()}/auth.json`, an absolute path that does not exist.
+ */
+describe('defaultAuthDir', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('reads an empty AI_OAUTH_SDK_HOME as unset, not as the process CWD', () => {
+    vi.stubEnv('AI_OAUTH_SDK_HOME', '')
+    expect(defaultAuthDir()).toBe(join(homedir(), '.ai-oauth-sdk'))
+  })
+
+  it('still honours a relative AI_OAUTH_SDK_HOME', () => {
+    vi.stubEnv('AI_OAUTH_SDK_HOME', '.creds')
+    expect(defaultAuthDir()).toBe('.creds')
+  })
+
+  it('uses it when it names a directory', () => {
+    vi.stubEnv('AI_OAUTH_SDK_HOME', dir)
+    expect(defaultAuthDir()).toBe(dir)
+  })
+
+  /* The end of the same path: nothing is written next to whatever the CLI was
+     invoked from. `dir: ''` is the direct-library spelling of the same missing
+     value, and falls back for the same reason. */
+  it('keeps the credential file out of the CWD when the value is empty', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'aioauth-cwd-'))
+    const original = process.cwd()
+    /* Really change directory: a relative path is resolved by the syscall
+       against the process's own cwd, so a stubbed `process.cwd()` would not
+       reproduce this at all. */
+    process.chdir(cwd)
+
+    try {
+      vi.stubEnv('AI_OAUTH_SDK_HOME', '')
+      /* `homedir()` reads these, so the fallback lands somewhere disposable
+         rather than in the machine's real credential store. */
+      vi.stubEnv('HOME', dir)
+      vi.stubEnv('USERPROFILE', dir)
+
+      /* `dir: ''` is the direct-library spelling of the same missing value. */
+      for (const storage of [fileStorage(), fileStorage({ dir: '' })]) {
+        await storage.set('tokens:acme', '{"refreshToken":"secret"}')
+      }
+
+      expect(await readdir(cwd)).toEqual([])
+      expect(await readdir(join(dir, '.ai-oauth-sdk'))).toEqual(['auth.json'])
+    } finally {
+      process.chdir(original)
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 })

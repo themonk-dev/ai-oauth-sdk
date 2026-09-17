@@ -182,6 +182,15 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
 
         return tokens
       } catch (caught) {
+        /* Same reading as in `login`: a refresh the client abandoned because
+           the user signed out mid-flight is a user action, not a failure to
+           put in front of them. */
+        if (isOAuthError(caught) && caught.code === 'aborted') {
+          setState({ isLoading: false })
+
+          return undefined
+        }
+
         setState({ isLoading: false, error: toError(caught) })
         options.onError?.(caught)
 

@@ -93,6 +93,75 @@ describe('providerFromDiscovery', () => {
     expect(provider.tokenUrl).toBe('https://override.test/token')
   })
 
+  /**
+   * The device endpoint used to be the one value a pin could not protect: it
+   * was spread in after `...input`, so the document won unconditionally. What
+   * the winning host gets is not the `client_id` and the PKCE challenge it is
+   * handed — both are public — but the whole device response, `user_code` and
+   * `verification_uri` included, which a CLI reads out to the user verbatim.
+   */
+  it('lets an explicit deviceAuthorizationUrl override the document', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'https://document.test/device',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      authorizationUrl: 'https://pinned.test/authorize',
+      tokenUrl: 'https://pinned.test/token',
+      deviceAuthorizationUrl: 'https://pinned.test/device',
+      redirect: { mode: 'loopback' },
+    })
+
+    expect(provider.deviceAuthorizationUrl).toBe('https://pinned.test/device')
+    expect(provider.authorizationUrl).toBe('https://pinned.test/authorize')
+    expect(provider.tokenUrl).toBe('https://pinned.test/token')
+  })
+
+  it('leaves an integrator-supplied http deviceAuthorizationUrl alone', async () => {
+    // The same rule the pinned `tokenUrl` gets below: pinned is the
+    // integrator's own config, so it is neither replaced nor validated.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'https://document.test/device',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      deviceAuthorizationUrl: 'http://internal-gateway.acme.test/device',
+      redirect: { mode: 'loopback' },
+    })
+
+    expect(provider.deviceAuthorizationUrl).toBe('http://internal-gateway.acme.test/device')
+  })
+
+  it('still checks the document when deviceAuthorizationUrl is passed as null', async () => {
+    // `??` falls through on `null`, so the document's value wins — and has to
+    // be checked. Same trap as the `tokenUrl` case at the end of this file.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'http://attacker.test/device',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, {
+        id: 'acme',
+        label: 'Acme',
+        deviceAuthorizationUrl: null as unknown as undefined,
+        redirect: { mode: 'loopback' },
+      }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/device_authorization_endpoint.*"http:\/\/attacker\.test\/device"/),
+    })
+  })
+
   it('defaults scopes to openid when the document lists none', async () => {
     const issuer = await startDiscoveryServer({
       authorization_endpoint: 'https://acme.test/authorize',
@@ -574,6 +643,60 @@ describe('manualReceiver', () => {
     await started.present('https://provider.test/authorize?x=1')
     expect(seen).toEqual(['https://provider.test/authorize?x=1'])
     expect(opened).toEqual(['https://provider.test/authorize?x=1'])
+  })
+
+  /*
+   * The retry hook is opt-in, and the two tests above are why: a receiver that
+   * is the only way a login can finish must not loop on a value the user cannot
+   * fix. Without `retry` a paste is asked for exactly once.
+   */
+  it('asks once when no retry is supplied', async () => {
+    let asked = 0
+    const started = await manualReceiver({
+      prompt: async () => {
+        asked += 1
+
+        return 'nothing parseable'
+      },
+    }).start({ provider })
+
+    await started.present('https://provider.test/authorize')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'invalid_token_response' })
+    expect(asked).toBe(1)
+  })
+
+  it('asks again while retry says to, and reports why each time', async () => {
+    const pastes = ['nothing parseable', 'https://provider.test/callback?error=access_denied']
+    const reported: string[] = []
+    const started = await manualReceiver({
+      prompt: async () => pastes.shift() ?? 'https://provider.test/callback?code=third',
+      retry: (error, attempts) => {
+        reported.push(`${attempts}:${error.code}`)
+
+        /* The caller decides per error, which is how a denial ends the login
+           and a slip does not. */
+        return error.code === 'invalid_token_response'
+      },
+    }).start({ provider })
+
+    await started.present('https://provider.test/authorize')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'authorization_denied' })
+    expect(reported).toEqual(['1:invalid_token_response', '2:authorization_denied'])
+  })
+
+  it('never retries a prompt that rejected, so an abandoned read stays abandoned', async () => {
+    let asked = 0
+    const started = await manualReceiver({
+      prompt: async () => {
+        asked += 1
+        throw new Error('aborted')
+      },
+      retry: () => true,
+    }).start({ provider })
+
+    await started.present('https://provider.test/authorize')
+    await expect(started.wait()).rejects.toThrow('aborted')
+    expect(asked).toBe(1)
   })
 
   it('does not leak an unhandled rejection when wait() is never called', async () => {

@@ -15,6 +15,7 @@ import {
   ProviderId,
   providers,
   readCallback,
+  reservedProviderIds,
   resolveProvider,
   xai,
 } from '../src/providers/index.js'
@@ -372,5 +373,73 @@ describe('renamed provider ids', () => {
     const client = createAuthClient({ provider: 'claude', clientId: 'c', storage })
 
     expect((await client.getTokens())?.accessToken).toBe('new')
+  })
+
+  /**
+   * A shed id is a name, and a name can be claimed — `ai-oauth-sdk login
+   * anthropic --token-url …` was enough to write this record. Adopting it would
+   * move a stranger's credential onto `tokens:claude` and refresh it against
+   * Claude's endpoint under Claude's client id.
+   */
+  it('refuses a credential stored under a shed id by a different issuer', async () => {
+    const storage = memoryStorage()
+    const planted = JSON.stringify({
+      accessToken: 'not-from-anthropic',
+      refreshToken: 'not-from-anthropic-either',
+      tokenType: 'Bearer',
+      provider: 'anthropic',
+      tokenEndpointOrigin: 'https://vendor.example',
+      raw: {},
+    })
+    await storage.set('tokens:anthropic', planted)
+
+    const client = createAuthClient({ provider: 'claude', clientId: 'c', storage })
+
+    expect(await client.getTokens()).toBeUndefined()
+    // Not ours to adopt, so not moved onto our key — and not deleted either.
+    expect(await storage.get('tokens:claude')).toBeNull()
+    expect(await storage.get('tokens:anthropic')).toBe(planted)
+  })
+
+  it('adopts one the same issuer recorded', async () => {
+    const storage = memoryStorage()
+    const tokens = {
+      accessToken: 'a',
+      tokenType: 'Bearer',
+      provider: 'anthropic',
+      tokenEndpointOrigin: new URL(claude.tokenUrl).origin,
+      raw: {},
+    }
+    await storage.set('tokens:anthropic', JSON.stringify(tokens))
+
+    const client = createAuthClient({ provider: 'claude', clientId: 'c', storage })
+
+    expect(await client.getTokens()).toEqual(tokens)
+    expect(await storage.get('tokens:anthropic')).toBeNull()
+  })
+})
+
+describe('reservedProviderIds', () => {
+  /**
+   * The set is what anything reserving a name consults, so it has to keep step
+   * with the alias table rather than being a second copy of it that drifts.
+   */
+  it('holds every id a built-in answers to, current and shed', () => {
+    for (const [id, provider] of Object.entries(providers)) {
+      expect(reservedProviderIds.has(id), id).toBe(true)
+
+      for (const previousId of provider.previousIds ?? []) {
+        expect(reservedProviderIds.has(previousId), previousId).toBe(true)
+      }
+    }
+
+    // Azure AI is a factory, so its descriptor is not in the table.
+    for (const previousId of azureAi({ clientId: 'x' }).previousIds ?? []) {
+      expect(reservedProviderIds.has(previousId), previousId).toBe(true)
+    }
+
+    expect([...reservedProviderIds]).toEqual(
+      expect.arrayContaining(['anthropic', 'google', 'microsoft']),
+    )
   })
 })

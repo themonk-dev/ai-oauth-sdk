@@ -16,6 +16,16 @@ export interface AzureAiProviderOptions {
 }
 
 /**
+ * The id this provider used to have.
+ *
+ * A constant rather than a literal in the descriptor below, because `azureAi`
+ * is a factory and its descriptor is therefore absent from the `providers`
+ * table — so `reservedProviderIds` has nowhere else to read this from without
+ * building a throwaway provider.
+ */
+export const azureAiPreviousIds = ['microsoft'] as const
+
+/**
  * Azure AI, reached with an Entra ID sign-in.
  *
  * Entra ID is the login. The token is minted for the Azure AI Services resource
@@ -43,7 +53,7 @@ export function azureAi(options: AzureAiProviderOptions): ProviderConfig {
 
   return defineProvider({
     id: 'azure-ai',
-    previousIds: ['microsoft'],
+    previousIds: [...azureAiPreviousIds],
     label: 'Azure AI',
     clientId: options.clientId,
     authorizationUrl: `${base}/authorize`,

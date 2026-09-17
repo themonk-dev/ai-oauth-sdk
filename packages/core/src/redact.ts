@@ -21,6 +21,11 @@ const SECRET_PARAMS = [
   'client_secret',
   'code_verifier',
   'device_code',
+  // OpenAI's device flow names its codes differently, and the pair is a
+  // credential: the approved poll answers `device_auth_id` + `user_code` with
+  // an authorization code *and* the verifier to redeem it with.
+  'device_auth_id',
+  'user_code',
   'token',
   'code',
   'assertion',

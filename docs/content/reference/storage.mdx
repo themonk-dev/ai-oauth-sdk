@@ -71,11 +71,22 @@ import { localStorageAdapter, sessionStorageAdapter } from '@ai-oauth-sdk/browse
 but not the tab, which is the safer choice for a bearer token in a page.
 
 Both adapters fall back to memory where the browser throws on access — Safari private mode,
-sandboxed iframes — and in a Web Worker, which has no web storage but is still one user's browser.
-Where there is no browser at all, which in practice means server-side rendering, constructing one
-stays harmless but reading or writing through it rejects: an in-memory store on a server is a single
-`Map` shared by every request it serves. Ask for `memoryStorage()` explicitly if that is genuinely
-what you want there.
+sandboxed iframes — and in a browser Web Worker, which has no web storage but is still one user's
+browser. Where there is no browser at all, which in practice means server-side rendering,
+constructing one stays harmless but reading or writing through it rejects: an in-memory store on a
+server is a single `Map` shared by every request it serves. Ask for `memoryStorage()` explicitly if
+that is genuinely what you want there.
+
+<Callout type="warn" title="Cloudflare Workers is a server, whatever its global is called">
+  workerd — Cloudflare Workers and Pages Functions, `@cloudflare/next-on-pages`,
+  `adapter-cloudflare`, Nitro's `cloudflare_module` — exposes `WorkerGlobalScope` on its global, but
+  one isolate serves request after request from different users. So "is this a Web Worker?" is
+  answered by the parts of the worker API that workerd does not implement (`WorkerNavigator`, a
+  `location`), and the adapters refuse there rather than handing back a `Map` that would pool every
+  user's tokens. Any runtime they cannot positively identify as a browser worker is refused for the
+  same reason. If you are somewhere genuinely per-user that they do not recognise, pass `storage:`
+  explicitly.
+</Callout>
 
 ### React Native
 

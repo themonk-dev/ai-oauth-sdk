@@ -93,6 +93,24 @@ export interface DeviceLoginOptions {
 const TOKENS_PREFIX = 'tokens:'
 
 /**
+ * The origin a provider's tokens are minted at, which is what a stored record
+ * is stamped with and later compared against.
+ *
+ * The origin rather than the whole URL: a provider moving `/oauth/token` to
+ * `/v2/token` is a routine deployment and is still the same issuer, while a
+ * different origin never is. Unparseable yields `undefined`, so a descriptor
+ * with a malformed `tokenUrl` — which can never complete an exchange anyway —
+ * stamps nothing rather than stamping garbage.
+ */
+function tokenEndpointOriginOf(tokenUrl: string): string | undefined {
+  try {
+    return new URL(tokenUrl).origin
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * The orchestrator.
  *
  * Three ways to use it, in increasing order of "I want it done for me":
@@ -114,11 +132,18 @@ export class AuthClient {
   readonly #redirectUri: string | undefined
   readonly #scopes: string[] | undefined
   readonly #extraAuthParams: Record<string, string> | undefined
+  /** Stamped onto everything this client persists. See {@link tokenEndpointOriginOf}. */
+  readonly #tokenEndpointOrigin: string | undefined
 
   /** Guarantees concurrent callers share one refresh instead of racing. */
   #refreshInFlight: Promise<TokenSet> | undefined
   #cachedTokens: TokenSet | undefined
   #tokensLoaded = false
+  /**
+   * Bumped by {@link logout}. A refresh that captured an earlier value has been
+   * disowned since it started, and must not write what it comes back with.
+   */
+  #generation = 0
 
   constructor(options: AuthClientOptions) {
     const overrides: Partial<ProviderConfig> = {}
@@ -161,6 +186,7 @@ export class AuthClient {
     this.#redirectUri = options.redirectUri
     this.#scopes = options.scopes
     this.#extraAuthParams = options.extraAuthParams
+    this.#tokenEndpointOrigin = tokenEndpointOriginOf(this.provider.tokenUrl)
     this.#registry = new AuthorizationRegistry({
       storage: this.#storage,
       ...(options.stateTtlMs !== undefined ? { ttlMs: options.stateTtlMs } : {}),
@@ -196,6 +222,7 @@ export class AuthClient {
     await this.#registry.create({
       state,
       provider: this.provider.id,
+      ...(this.#tokenEndpointOrigin ? { tokenEndpointOrigin: this.#tokenEndpointOrigin } : {}),
       redirectUri,
       ...(pkce ? { codeVerifier: pkce.verifier } : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
@@ -215,16 +242,40 @@ export class AuthClient {
   }
 
   /**
-   * True when `providerId` names this provider — its current id, or one it used
-   * to have.
+   * True when a record written under `providerId` belongs to this provider —
+   * its current id, or one it used to have.
    *
    * Renamed providers are still the same issuer, so a flow started under an old
-   * id has to keep completing across the upgrade that renamed it. This is the
-   * same allowance {@link AuthClient.#readRenamedTokens} makes for credentials
-   * stored under a previous key.
+   * id has to keep completing across the upgrade that renamed it, and a
+   * credential stored under one has to keep being found. This is the single
+   * test behind both allowances; {@link AuthClient.#readRenamedTokens} makes
+   * the storage half.
+   *
+   * The current id is taken on the name alone, because that key is this
+   * client's own. A *previous* id is not: it is a name the provider let go of,
+   * and anything can pick a shed name up — a descriptor built with
+   * `defineProvider({ id: 'anthropic' })`, or `ai-oauth-sdk login anthropic
+   * --token-url …` from the shipped CLI, which reserved the current ids and not
+   * the shed ones. Honouring such a record on the name alone hands a different
+   * issuer whatever the genuine one stored: a refresh token POSTed to their
+   * endpoint under our client id, or a live `code` and `code_verifier`
+   * exchanged there.
+   *
+   * So a previous id has to agree on the token endpoint as well. Records
+   * carrying no origin are the ones written by the version that still used the
+   * old id — exactly the rename this allowance exists for — and are accepted,
+   * which is also what keeps an upgrade from signing everybody out.
    */
-  #ownsProviderId(providerId: string): boolean {
-    return providerId === this.provider.id || (this.provider.previousIds ?? []).includes(providerId)
+  #ownsProviderId(providerId: string, tokenEndpointOrigin?: string): boolean {
+    if (providerId === this.provider.id) {
+      return true
+    }
+
+    if (!(this.provider.previousIds ?? []).includes(providerId)) {
+      return false
+    }
+
+    return tokenEndpointOrigin === undefined || tokenEndpointOrigin === this.#tokenEndpointOrigin
   }
 
   /**
@@ -312,7 +363,7 @@ export class AuthClient {
          that reached the wrong client must not be replayable at the right one.
          `consumeLatest` was provider-scoped from the start; this is the same
          rule on the `state`-keyed path. */
-      if (!this.#ownsProviderId(pending.provider)) {
+      if (!this.#ownsProviderId(pending.provider, pending.tokenEndpointOrigin)) {
         throw new OAuthError(
           'state_mismatch',
           `Pending authorization for state "${state}" belongs to provider ` +
@@ -547,6 +598,12 @@ export class AuthClient {
    * Finds tokens saved under an id this provider used to have, and moves them
    * to the current key so the lookup only happens once.
    *
+   * Only a record {@link AuthClient.#ownsProviderId} vouches for is taken: a
+   * shed id is a name anyone can claim, and a credential minted somewhere else
+   * under that name must be left where it is rather than adopted, moved onto
+   * this provider's key and refreshed against this provider's endpoint. One
+   * that is refused is not deleted either — it is not ours to tidy.
+   *
    * The move is best-effort: a storage backend that cannot delete, or throws on
    * write, still hands back the credential it found.
    */
@@ -555,7 +612,7 @@ export class AuthClient {
       const key = this.#keyFor(previousId)
       const stored = await this.#storage.get(key)
 
-      if (!stored) {
+      if (!stored || !this.#ownsStoredTokens(stored, previousId)) {
         continue
       }
 
@@ -572,6 +629,23 @@ export class AuthClient {
     return null
   }
 
+  /**
+   * Whether a record found at `previousId`'s key is one this provider may
+   * adopt. Unparseable is not: it can never be used as a credential, and
+   * nothing is learned from it that would justify moving it.
+   */
+  #ownsStoredTokens(stored: string, previousId: string): boolean {
+    let record: TokenSet
+
+    try {
+      record = JSON.parse(stored) as TokenSet
+    } catch {
+      return false
+    }
+
+    return this.#ownsProviderId(previousId, record.tokenEndpointOrigin)
+  }
+
   async getTokens(): Promise<TokenSet | undefined> {
     if (this.#tokensLoaded) {
       return this.#cachedTokens
@@ -583,10 +657,22 @@ export class AuthClient {
     return this.#cachedTokens
   }
 
+  /**
+   * Writes a token set, stamped with the endpoint it belongs to.
+   *
+   * The stamp is what lets a later client tell a credential this provider
+   * minted from one that merely sits under a name it answers to; see
+   * {@link AuthClient.#ownsProviderId}. It is recorded on the way to storage
+   * rather than by whoever built the token set, so a caller migrating
+   * credentials in gets it for free.
+   */
   async setTokens(tokens: TokenSet): Promise<void> {
-    this.#cachedTokens = tokens
+    const record: TokenSet = this.#tokenEndpointOrigin
+      ? { ...tokens, tokenEndpointOrigin: this.#tokenEndpointOrigin }
+      : tokens
+    this.#cachedTokens = record
     this.#tokensLoaded = true
-    await this.#storage.set(this.#tokenKey, JSON.stringify(tokens))
+    await this.#storage.set(this.#tokenKey, JSON.stringify(record))
   }
 
   /** True when a token exists and has not passed the renewal window. */
@@ -634,11 +720,15 @@ export class AuthClient {
    * that rotate refresh tokens the loser's token is already dead — so take the
    * stored one if it is usable. `#refreshInFlight` covers in-process
    * concurrency; this covers the cross-process case, which no promise can.
+   *
+   * A sign-out that lands mid-flight wins: see {@link AuthClient.#assertNotSignedOut}.
    */
   async refresh(options: { signal?: AbortSignal } = {}): Promise<TokenSet> {
     if (this.#refreshInFlight) {
       return this.#refreshInFlight
     }
+
+    const generation = this.#generation
 
     const run = (async () => {
       const tokens = await this.getTokens()
@@ -648,6 +738,7 @@ export class AuthClient {
       }
 
       const stored = await this.#readStoredTokens()
+      this.#assertNotSignedOut(generation)
 
       if (
         stored &&
@@ -667,6 +758,7 @@ export class AuthClient {
         fetchImpl: this.#fetch,
         ...(options.signal ? { signal: options.signal } : {}),
       })
+      this.#assertNotSignedOut(generation)
       await this.setTokens(refreshed)
 
       return refreshed
@@ -677,8 +769,42 @@ export class AuthClient {
     try {
       return await run
     } finally {
-      this.#refreshInFlight = undefined
+      /* Only if it is still ours: `logout()` drops the slot, so a refresh
+         started after the sign-out owns it by the time this one settles. */
+      if (this.#refreshInFlight === run) {
+        this.#refreshInFlight = undefined
+      }
     }
+  }
+
+  /**
+   * Fails a refresh that was signed out from under it.
+   *
+   * `logout()` clears the cache and deletes the record, but a token request
+   * already dispatched cannot be recalled, and a rotating provider answers it
+   * with a fresh access *and* refresh token a round trip later. Writing that
+   * would put the session back — in memory and on disk, so the next process
+   * over the same store reads a credential the user signed out of, and nothing
+   * downstream ever heals it. Under `{ revoke: true }` it is worse than a
+   * stale record: the revocation went to the token the response has just
+   * replaced, and RFC 7009 §2.1 only *recommends* that revoking one of a pair
+   * cascades to the other, so on a provider that rotates without cascading the
+   * new token stays live at the provider as well as on disk.
+   *
+   * Rejecting rather than returning the token is the same decision as not
+   * writing it: a caller must not be handed a credential this client has
+   * disowned. `aborted` because that is what it is — the caller's own
+   * `logout()` cancelled the work, exactly as a `signal` would have.
+   */
+  #assertNotSignedOut(generation: number): void {
+    if (generation === this.#generation) {
+      return
+    }
+
+    throw new OAuthError(
+      'aborted',
+      `Refresh for "${this.provider.id}" was discarded: the session was signed out while it ran.`,
+    )
   }
 
   /**
@@ -730,6 +856,13 @@ export class AuthClient {
    * Pass `{ revoke: true }` to also tell the provider, where it supports it.
    * Local state is cleared either way — a failed revocation must not leave the
    * user apparently still signed in.
+   *
+   * A refresh already in flight is disowned rather than waited for. It cannot
+   * be recalled, so signing out is recorded as a generation the run no longer
+   * belongs to and its result is discarded when it lands; dropping the shared
+   * promise as well keeps a `getAccessToken()` issued after the sign-out from
+   * joining a run whose result is now unusable. This method still does not
+   * await the network and still cannot throw on its own account.
    */
   async logout(options: { revoke?: boolean; signal?: AbortSignal } = {}): Promise<void> {
     if (options.revoke && this.provider.revocationUrl) {
@@ -740,6 +873,8 @@ export class AuthClient {
       }
     }
 
+    this.#generation++
+    this.#refreshInFlight = undefined
     this.#cachedTokens = undefined
     this.#tokensLoaded = true
     await this.#storage.delete(this.#tokenKey)

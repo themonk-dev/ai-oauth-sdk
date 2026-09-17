@@ -53,9 +53,23 @@ export interface HybridReceiverOptions extends LoopbackReceiverOptions {
  *   specific code — `start()` throws an `OAuthError` only when it has decided
  *   the login should not proceed, and any later reason it decides that should
  *   propagate here too without this file having to be edited again.
- * - **Only the prompt's *success* competes.** A blank line or a mistyped paste
- *   rejects that half, and letting a rejection win would tear down a server
- *   that was about to receive a perfectly good callback.
+ * - **A slip at the prompt does not compete. An answer does, either way.** A
+ *   blank line or a mistyped paste is not an answer, and letting it win would
+ *   tear down a server that was about to receive a perfectly good callback. But
+ *   it used to be discarded *and* leave nothing behind to read the next line
+ *   with, so the user typed the good value into a prompt that was already gone
+ *   and the login sat there until they killed it. So the prompt half retries
+ *   instead: it says what was wrong and asks again on the same open readline,
+ *   for as long as the server is still listening. The retry is switched on only
+ *   when there *is* a server — a loop the user cannot leave except by Ctrl-C is
+ *   the same wedge in different clothing.
+ *
+ *   What still travels is an `OAuthError`, which after the retry means one
+ *   thing: the user clicked Deny and pasted `?error=access_denied` back. That is
+ *   the provider's answer and no callback is coming, so it ends the login here
+ *   exactly as the same denial does when it arrives on the port instead.
+ *   Anything else — the abort below, a stdin that ended — retires this half
+ *   silently, because it is the read going away rather than an answer arriving.
  * - **Only the prompt announces, but both halves are presented.** The loopback
  *   half needs `present()` to learn the `state` it matches callbacks against,
  *   or the drive-by cancellation that check exists to stop is simply reopened
@@ -101,7 +115,10 @@ export function hybridReceiver(options: HybridReceiverOptions = {}): CallbackRec
 
       const abandonPrompt = new AbortController()
       const prompt = await promptReceiver({
-        ...(loopback ? { redirectUri: loopback.redirectUri } : {}),
+        /* Retrying is only offered alongside a listening server, which is the
+           other way this login can finish. Without one the prompt is the only
+           way out, and asking again forever is not one. */
+        ...(loopback ? { redirectUri: loopback.redirectUri, retryOnInvalidPaste: true } : {}),
         openBrowser: options.openBrowser !== false && !context.openUrl,
         ...(options.message ? { message: options.message } : {}),
         signal: abandonPrompt.signal,
@@ -122,9 +139,16 @@ export function hybridReceiver(options: HybridReceiverOptions = {}): CallbackRec
             return prompt.wait()
           }
 
-          const pastedOrNever = prompt
-            .wait()
-            .catch(() => new Promise<CallbackResult>(() => {}))
+          const pastedOrNever = prompt.wait().catch((error: unknown) => {
+            /* Same test as `start()` uses, for the same reason: an `OAuthError`
+               is this half deciding the login is over, and anything else is the
+               read merely ending. Only the decision is allowed to win. */
+            if (isOAuthError(error)) {
+              throw error
+            }
+
+            return new Promise<CallbackResult>(() => {})
+          })
 
           try {
             return await Promise.race([server, pastedOrNever])

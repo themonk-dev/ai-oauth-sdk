@@ -37,6 +37,22 @@ describe('redactSecrets', () => {
     expect(redacted).not.toContain('xyz789uvw012')
   })
 
+  /*
+   * OpenAI's device flow names its codes `device_auth_id` and `user_code`, and
+   * the pair is the approval credential rather than an identifier — the poll it
+   * unlocks answers with an authorization code and the verifier for it. Neither
+   * name is reachable through `code`, because `\b` does not fire inside
+   * `user_code`.
+   */
+  it('scrubs the OpenAI device codes, which are a credential as a pair', () => {
+    const redacted = redactSecrets(
+      JSON.stringify({ device_auth_id: 'da_01JQZK9Wb4X7yQ2n8VtR3sMhKq', user_code: 'WXYZ-1234' }),
+    )
+
+    expect(redacted).not.toContain('da_01JQZK9Wb4X7yQ2n8VtR3sMhKq')
+    expect(redacted).not.toContain('WXYZ-1234')
+  })
+
   it('scrubs a bare Authorization header value', () => {
     expect(redactSecrets('Authorization: Bearer abcdef1234567890')).not.toContain('abcdef1234567890')
   })

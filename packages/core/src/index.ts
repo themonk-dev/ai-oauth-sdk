@@ -32,6 +32,7 @@ export {
   publicClientIds,
   publicClientSecrets,
   providers,
+  reservedProviderIds,
   qwen,
   readCallback,
   resolveProvider,
