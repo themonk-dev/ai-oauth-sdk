@@ -174,6 +174,14 @@ the relaunched app mints a new `state` the old URL can never match — so pass t
 | `redirectUri` | `string` | **Required.** From AuthSession.makeRedirectUri(). |
 | `browserOptions` | `Record<string, unknown>` | Forwarded to openAuthSessionAsync. |
 
+Matches the session result to the attempt it presented, by `state`, and refuses one that disagrees
+or that carries none where one was presented. That matters on Android, which has no native auth
+session: `expo-web-browser` polyfills one and resolves from the first `Linking` deep link starting
+with the redirect URI, so any app can end the session. The refusal is `state_mismatch` and it is
+final — the polyfill has already stopped listening, so the sign-in is lost and `login()` has to be
+retried; what it prevents is a foreign URL being read as your callback and the failure being
+reported as the provider's denial. iOS and web use the native session and are unaffected.
+
 ## Writing one
 
 ```ts

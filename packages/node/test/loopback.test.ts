@@ -1,5 +1,5 @@
 import { createServer, request as httpRequest } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { connect, type AddressInfo } from 'node:net'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -53,6 +53,28 @@ const rawGet = (url: string, headers: Record<string, string> = {}) =>
     })
     call.on('error', reject)
     call.end()
+  })
+
+/**
+ * Writes a request line verbatim and returns the raw response.
+ *
+ * `http.request()` cannot stand in for the absolute-form cases: it builds the
+ * target from a parsed URL, so a target it cannot parse never leaves the
+ * client. Node's own server parser is laxer than that and hands these to the
+ * listener, which is the whole point.
+ */
+const rawRequestLine = (port: number, line: string) =>
+  new Promise<string>((resolve, reject) => {
+    let received = ''
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.write(`${line}\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`)
+    })
+    socket.setEncoding('utf8')
+    socket.on('data', (chunk: string) => {
+      received += chunk
+    })
+    socket.on('end', () => resolve(received))
+    socket.on('error', reject)
   })
 
 /** The `state` the presented receivers below all sign their attempt with. */
@@ -390,6 +412,84 @@ describe('loopbackReceiver', () => {
       )
       expect(real.status).toBe(200)
       await expect(waiting).resolves.toMatchObject({ code: 'ours' })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('refuses a request target it cannot parse, and survives it', async () => {
+    // Node's parser hands a malformed target to the listener rather than
+    // rejecting it at `clientError`, and a throw out of a `request` listener is
+    // caught by nothing — the embedding process exits, mid-login. No raw socket
+    // is needed to send one: `//[` is an ordinary origin-form target that a
+    // browser will happily put on the wire, so any page the user has open can
+    // navigate them to `http://127.0.0.1:1455//[` — a port `openai` publishes —
+    // and the request arrives past the fetch-metadata gate.
+    const started = await startPresented()
+    const waiting = started.wait()
+    const origin = new URL(started.redirectUri).origin
+
+    try {
+      for (const target of ['//[', '//[x']) {
+        const malformed = await rawGet(`${origin}${target}`, navigationHeaders)
+        expect(malformed.status, target).toBe(400)
+
+        // Refused like the drive-by it may well be: the login it could have
+        // cancelled is still running, and the port is still open for the real
+        // redirect.
+        expect(await isSettled(waiting), target).toBe(false)
+      }
+
+      const real = await rawGet(
+        `${started.redirectUri}?code=abc&state=${PRESENTED_STATE}`,
+        navigationHeaders,
+      )
+      expect(real.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc', state: PRESENTED_STATE })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('refuses a malformed absolute-form target, and stays up', async () => {
+    // The other shape the same throw arrives in, and the one only a raw socket
+    // can send: a request line whose target is absolute and unparseable.
+    const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+    const port = Number(new URL(started.redirectUri).port)
+    const waiting = started.wait()
+
+    try {
+      const malformed = await rawRequestLine(port, 'GET http://[ HTTP/1.1')
+      expect(malformed).toContain('400')
+      expect(await isSettled(waiting)).toBe(false)
+
+      // The process is still here, and so is the server.
+      const real = await rawGet(`${started.redirectUri}?code=abc&state=xyz`, navigationHeaders)
+      expect(real.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it.skipIf(!hasIpv6)('serves a callback when bound to the IPv6 literal', async () => {
+    // `host` is documented as the interface to bind, and `::1` is the only
+    // spelling `listen()` accepts — `[::1]` fails ENOTFOUND. Dropping it
+    // unbracketed into the parse base makes `http://::1`, which is not a URL,
+    // so every well-formed callback threw and no attacker was needed.
+    const started = await loopbackReceiver({ port: 0, host: '::1' }).start({
+      provider: testProvider(server.url),
+    })
+    const port = new URL(started.redirectUri).port
+    const waiting = started.wait()
+
+    try {
+      const response = await rawGet(
+        `http://[::1]:${port}/callback?code=six&state=xyz`,
+        navigationHeaders,
+      )
+      expect(response.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'six' })
     } finally {
       await started.close()
     }

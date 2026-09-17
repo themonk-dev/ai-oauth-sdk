@@ -102,7 +102,19 @@ export async function startFakeAuthServer(
   const deviceRequests: Array<Record<string, string>> = []
 
   const server: Server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://localhost')
+    // Node hands a malformed request target to the listener rather than
+    // rejecting it itself, and a throw from here would take the whole test
+    // worker down rather than failing one assertion.
+    let url: URL
+
+    try {
+      url = new URL(request.url ?? '/', 'http://localhost')
+    } catch {
+      response.writeHead(400)
+      response.end()
+
+      return
+    }
 
     // authorization endpoint
     if (url.pathname === '/authorize') {

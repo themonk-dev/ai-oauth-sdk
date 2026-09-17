@@ -5,7 +5,7 @@ import { isOAuthError, OAuthError } from '../src/errors.js'
 import { defineProvider } from '../src/providers/define.js'
 import { providers, publicClientIds } from '../src/providers/index.js'
 import { memoryStorage } from '../src/storage.js'
-import type { CallbackReceiver, ProviderConfig } from '../src/types.js'
+import type { AuthStorage, CallbackReceiver, ProviderConfig } from '../src/types.js'
 import { startFakeAuthServer, type FakeAuthServer } from './helpers/fakeAuthServer.js'
 
 let server: FakeAuthServer
@@ -562,6 +562,132 @@ describe('token persistence', () => {
     await client.logout()
     expect(await client.isAuthenticated()).toBe(false)
     expect(await client.getTokens()).toBeUndefined()
+  })
+
+  /* Asserting logout through the client that performed it proves nothing: its
+     own cache answers, and storage is never consulted. Every test here re-reads
+     with a second client over the same store — the next CLI invocation. */
+  describe('logout clears the keys the read path reads', () => {
+    const legacyTokens = JSON.stringify({
+      accessToken: 'access-legacy',
+      refreshToken: 'refresh-legacy',
+      provider: 'legacy-test',
+      expiresAt: Date.now() + 3_600_000,
+    })
+
+    it('clears credentials stored under a previous provider id', async () => {
+      const storage = memoryStorage()
+      const provider = testProvider(server.url, { previousIds: ['legacy-test'] })
+
+      // Signed in before the rename, so the credential sits under the old key.
+      await storage.set('tokens:legacy-test', legacyTokens)
+
+      const client = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      await client.logout()
+
+      expect(await storage.get('tokens:legacy-test')).toBeNull()
+      expect(await storage.get('tokens:test')).toBeNull()
+
+      // The next process must not find a session to migrate back.
+      const next = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      expect(await next.getTokens()).toBeUndefined()
+      expect(await next.isAuthenticated()).toBe(false)
+    })
+
+    it('clears the previous id even when the provider has no revocationUrl', async () => {
+      /* Claude's shape: `{ revoke: true }` finds nothing to revoke, so it skips
+         the token read that would otherwise have migrated the old key away. */
+      const storage = memoryStorage()
+      const provider = testProvider(server.url, { previousIds: ['legacy-test'] })
+      expect(provider.revocationUrl).toBeUndefined()
+
+      await storage.set('tokens:legacy-test', legacyTokens)
+
+      const client = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      await client.logout({ revoke: true })
+
+      expect(await storage.get('tokens:legacy-test')).toBeNull()
+
+      const next = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      expect(await next.getTokens()).toBeUndefined()
+      expect(await next.isAuthenticated()).toBe(false)
+    })
+
+    it('honours accountKey when clearing a previous id', async () => {
+      const storage = memoryStorage()
+      const provider = testProvider(server.url, { previousIds: ['legacy-test'] })
+
+      await storage.set('tokens:legacy-test:work', legacyTokens)
+      await storage.set('tokens:legacy-test:personal', legacyTokens)
+
+      const work = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+        accountKey: 'work',
+      })
+      await work.logout()
+
+      expect(await storage.get('tokens:legacy-test:work')).toBeNull()
+      // Signing out of one account must not sign the other out.
+      expect(await storage.get('tokens:legacy-test:personal')).toBe(legacyTokens)
+
+      const nextWork = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+        accountKey: 'work',
+      })
+      expect(await nextWork.getTokens()).toBeUndefined()
+      expect(await nextWork.isAuthenticated()).toBe(false)
+    })
+
+    it('clears the old key even when deleting the current one throws', async () => {
+      /* A keychain-style backend that objects to a key it does not hold. For a
+         renamed provider the absent key is the *current* one, so clearing that
+         first would put the throw in front of the credential that exists. */
+      const map = new Map<string, string>()
+      const storage: AuthStorage = {
+        get: async (key) => map.get(key) ?? null,
+        set: async (key, value) => void map.set(key, value),
+        delete: async (key) => {
+          if (!map.has(key)) {
+            throw new Error(`no such key: ${key}`)
+          }
+
+          map.delete(key)
+        },
+      }
+      const provider = testProvider(server.url, { previousIds: ['legacy-test'] })
+
+      map.set('tokens:legacy-test', legacyTokens)
+
+      const client = createAuthClient({
+        provider,
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      await expect(client.logout()).rejects.toThrow('no such key: tokens:test')
+
+      // The failure is reported, but the live credential is gone regardless.
+      expect(map.has('tokens:legacy-test')).toBe(false)
+    })
   })
 })
 

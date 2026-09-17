@@ -730,6 +730,26 @@ export class AuthClient {
    * Pass `{ revoke: true }` to also tell the provider, where it supports it.
    * Local state is cleared either way — a failed revocation must not leave the
    * user apparently still signed in.
+   *
+   * Previous ids are cleared alongside the current one, because reading a key
+   * you refuse to delete is the asymmetry that makes a sign-out a lie.
+   * {@link #ownsProviderId} and {@link #readRenamedTokens} both treat a
+   * previous id as this provider's own on the way in, so the way out has to
+   * cover the same keys: otherwise signing out of a renamed provider deletes a
+   * key that was never written, reports success, and leaves the live refresh
+   * token on disk for the next client to find and migrate back. Nothing else
+   * triggers the migration first — the no-revocation path never reads tokens at
+   * all — so this is the only place the old key gets cleared.
+   *
+   * The old keys go first, and each stands alone. A backend that throws on a
+   * key it does not hold must not strand the rest — the same allowance
+   * {@link #readRenamedTokens} makes for its own tidying — and for a renamed
+   * provider the key most likely to be absent is the *current* one, which is
+   * the whole reason this method needed fixing. Clearing it first would put
+   * the throw in front of the credential that actually exists. The current
+   * key's delete is deliberately left to propagate: a storage that cannot
+   * clear the key this client writes is a failed sign-out, and saying so is
+   * better than a quiet success.
    */
   async logout(options: { revoke?: boolean; signal?: AbortSignal } = {}): Promise<void> {
     if (options.revoke && this.provider.revocationUrl) {
@@ -742,6 +762,15 @@ export class AuthClient {
 
     this.#cachedTokens = undefined
     this.#tokensLoaded = true
+
+    for (const previousId of this.provider.previousIds ?? []) {
+      try {
+        await this.#storage.delete(this.#keyFor(previousId))
+      } catch {
+        /* one unclearable old key must not leave the others behind */
+      }
+    }
+
     await this.#storage.delete(this.#tokenKey)
   }
 }

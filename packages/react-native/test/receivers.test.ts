@@ -280,12 +280,56 @@ describe('authSessionReceiver', () => {
     await started.close()
   })
 
-  it('surfaces a denial carried on the result URL', async () => {
+  it('surfaces a denial that echoes the presented state', async () => {
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}?error=access_denied&state=xyz`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'authorization_denied' })
+
+    await started.close()
+  })
+
+  it('refuses a session result that does not belong to the attempt it presented', async () => {
+    // No Android version has the native auth session, so `openAuthSessionAsync`
+    // resolves from the first `Linking` event whose URL starts with the redirect
+    // URI — which any app on the device can fire. Without a `state` comparison
+    // an unsolicited denial fails a live sign-in as the provider's own.
     const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?error=access_denied` })
     const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
 
-    await started.present('https://provider.test/authorize')
-    await expect(started.wait()).rejects.toMatchObject({ code: 'authorization_denied' })
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'state_mismatch' })
+
+    await started.close()
+  })
+
+  it('refuses a session result whose state disagrees', async () => {
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}?error=access_denied&state=nope`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'state_mismatch' })
+
+    await started.close()
+  })
+
+  it('still takes a result from a provider that declares it echoes no state', async () => {
+    // Same exemption the deep-link receiver draws: a provider that has said its
+    // callback brings no `state` back can only send the result this refuses.
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=unechoed` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({
+      provider: defineProvider({ ...provider, echoesState: false }),
+    })
+
+    await started.present('https://provider.test/authorize?state=presented')
+    await expect(started.wait()).resolves.toMatchObject({ code: 'unechoed' })
 
     await started.close()
   })

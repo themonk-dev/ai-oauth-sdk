@@ -305,6 +305,18 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       const path = options.path ?? provider.redirect.loopbackPath ?? '/callback'
       const bindHost = options.host ?? '127.0.0.1'
       const primaryHost = loopbackNames.has(bindHost) ? '127.0.0.1' : bindHost
+      /**
+       * The bind host in the form a URL base accepts.
+       *
+       * `listen()` wants a bare IPv6 address — `'::1'`, since `'[::1]'` fails
+       * `ENOTFOUND` — and a URL wants the bracketed one, because `http://::1`
+       * is not a URL and `new URL()` throws on it. `host` is documented as
+       * "interface to bind" with no stated restriction and `'::1'` is a
+       * spelling this file already recognises, so the two forms have to be kept
+       * apart rather than one of them refused.
+       */
+      const baseHost =
+        primaryHost.includes(':') && !primaryHost.startsWith('[') ? `[${primaryHost}]` : primaryHost
       const requestedPort = options.port ?? provider.redirect.loopbackPort ?? 0
 
       let resolveCallback: (result: CallbackResult) => void
@@ -447,7 +459,28 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        const url = new URL(request.url ?? '/', `http://${bindHost}`)
+        // Node hands a malformed request target to this listener rather than
+        // rejecting it itself, so `new URL()` is reachable with something it
+        // will not parse — and a throw here is not caught by anything. Node
+        // does not guard its own listeners and a library must not install an
+        // `uncaughtException` handler, so the whole embedding process would
+        // exit. No raw socket is needed for it either: `//[` is a perfectly
+        // ordinary origin-form target, so a page navigating the user to
+        // `http://127.0.0.1:1455//[` sends a request that reaches here past
+        // the fetch-metadata gate above, at a port two bundled providers
+        // publish. A malformed target is answered like the drive-by it may
+        // well be — refused without settling, so a live login survives it and
+        // the server keeps listening for the real redirect.
+        let url: URL
+
+        try {
+          url = new URL(request.url ?? '/', `http://${baseHost}`)
+        } catch {
+          response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/plain' })
+          response.end('Bad request')
+
+          return
+        }
 
         if (url.pathname !== path) {
           response.writeHead(404, { ...securityHeaders, 'Content-Type': 'text/plain' })

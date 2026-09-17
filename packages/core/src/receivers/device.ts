@@ -75,6 +75,11 @@ export async function startDeviceAuthorization(
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body,
+      // No redirect following on a request whose body is a credential — see the
+      // reasoning on `postToTokenEndpoint` in token.ts. This body carries the
+      // client id and the PKCE challenge, and the response decides the URL the
+      // user is told to trust, so a followed hop chooses both.
+      redirect: 'error',
     },
     input.signal,
     'Device authorization request was aborted.',
@@ -195,6 +200,11 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         body,
+        // Same guard as token.ts, and the sharpest instance of it: this is a
+        // loop carrying `device_code` and `code_verifier`, firing every few
+        // seconds for up to a quarter of an hour, so one 308 exfiltrates the
+        // grant repeatedly rather than once.
+        redirect: 'error',
       },
       input.signal,
       'Device authorization polling was aborted.',
