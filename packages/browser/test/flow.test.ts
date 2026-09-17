@@ -161,6 +161,51 @@ describe('paste hints', () => {
   })
 })
 
+/**
+ * `location.hostname` keeps the brackets an IPv6 host is written with, so the
+ * loopback set has to be spelled the same way or an app served from `[::1]`
+ * looks like an ordinary public origin. The regression that spelling fixes is
+ * a dev server reachable at both `localhost:5173` and `[::1]:5173` — which is
+ * what any `--host` bind gives you on a dual-stack machine — where the two
+ * addresses for the same server disagree about which sign-in flow exists.
+ */
+describe('an IPv6 loopback origin', () => {
+  const ipv6Origin: BrowserOrigin = { protocol: 'http:', hostname: '[::1]', port: '5173' }
+
+  it('is recognised as loopback, the way the URL parser spells it', () => {
+    // This is the fact the set has to agree with, asserted rather than assumed.
+    expect(new URL('http://[::1]:5173/').hostname).toBe('[::1]')
+  })
+
+  it('gets the popup flow a provider accepting any loopback port offers', () => {
+    // Gemini rather than OpenRouter, deliberately: OpenRouter accepts an
+    // arbitrary HTTPS redirect, so it answers `popup` on any origin at all and
+    // would pass here whether `[::1]` reads as loopback or not. Gemini's
+    // client declares `acceptsHttpsRedirect: false`, so a popup is offered
+    // only where the origin is recognised as loopback.
+    const resolution = resolveBrowserFlow(providers.gemini, ipv6Origin)
+    expectPopup(resolution)
+    expect(resolution.redirectUri).toBe('http://[::1]:5173/')
+  })
+
+  it('builds a redirect URI the URL parser accepts', () => {
+    // An unbracketed hostname would concatenate to `http://::1:5173/`, which
+    // `new URL()` rejects — the failure would land on the provider rather than
+    // here, as an unregistered redirect.
+    const resolution = resolveBrowserFlow(providers.claude, ipv6Origin)
+    expectPopup(resolution)
+    expect(() => new URL(resolution.redirectUri)).not.toThrow()
+    expect(new URL(resolution.redirectUri).hostname).toBe('[::1]')
+  })
+
+  it('agrees with the same server’s localhost address on every built-in', () => {
+    // The whole point: one dev server, two addresses, one answer.
+    for (const [id, loopbackFlow] of MATRIX) {
+      expect(resolveBrowserFlow(providers[id], ipv6Origin).flow).toBe(loopbackFlow)
+    }
+  })
+})
+
 describe('a third-party provider declaring none of the new fields', () => {
   const provider: ProviderConfig = defineProvider({
     id: 'acme-plain',

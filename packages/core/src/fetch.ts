@@ -1,5 +1,6 @@
 import { OAuthError } from './errors.js'
 import { fetchWithSignal } from './http.js'
+import { appendQuery, parseQuery } from './query.js'
 import { DEFAULT_EXPIRY_SKEW_MS } from './token.js'
 import type { AuthClient } from './client.js'
 import type { FetchLike, ResolvedCredential, TokenSet } from './types.js'
@@ -63,9 +64,6 @@ function isReplayable(body: RequestInit['body']): boolean {
     (typeof Blob !== 'undefined' && body instanceof Blob)
   )
 }
-
-/** Origin a relative URL is parsed against so `URL` will accept it. */
-const PLACEHOLDER_ORIGIN = 'http://relative.invalid'
 
 /**
  * Applies the provider's `transformRequestBody`, when there is one and the body
@@ -212,25 +210,47 @@ export function createAuthenticatedFetch(
   }
 
   /**
-   * Parsed against a placeholder origin so a relative URL survives, then
-   * serialised back in whichever form it arrived as. Anything the URL already
-   * carries wins, so a caller can still override a provider default per request.
+   * Merges the provider's query parameters into a URL, letting anything the URL
+   * already carries win so a caller can still override a provider default per
+   * request.
+   *
+   * Done with the string helpers in `query.ts` rather than `URL`, for the
+   * reason that module exists at all: React Native's built-in URL shim
+   * implements the constructor and `toString` but *throws* from `searchParams`
+   * and `pathname`. Reading either here would have made every authenticated
+   * request fail on bare Hermes before it was sent — and not hypothetically,
+   * since the early return below only spares providers that contribute no
+   * parameters, and OpenAI's `apiQuery` contributes `client_version` to every
+   * single request. Splitting on `#` and `?` needs none of that, and works the
+   * same on a relative path as on an absolute URL, which the `URL` version had
+   * to special-case with a placeholder origin.
+   *
+   * The existing parameters are enumerated *first* and the provider's appended
+   * after, because object key order is what `encodeQuery` serialises in and the
+   * URL's own parameters came first before. `{ ...query, ...parseQuery(existing) }`
+   * would produce the same set in the wrong order.
    */
   const applyQuery = (url: string, query: Record<string, string>): string => {
     if (Object.keys(query).length === 0) {
       return url
     }
 
-    const absolute = /^[a-z][a-z0-9+.-]*:/i.test(url)
-    const parsed = new URL(url, absolute ? undefined : PLACEHOLDER_ORIGIN)
+    const withoutFragment = url.split('#')[0] ?? ''
+    const queryAt = withoutFragment.indexOf('?')
+    const existing = queryAt === -1 ? '' : withoutFragment.slice(queryAt + 1)
+
+    const merged = parseQuery(existing)
 
     for (const [key, value] of Object.entries(query)) {
-      if (!parsed.searchParams.has(key)) {
-        parsed.searchParams.set(key, value)
+      if (!(key in merged)) {
+        merged[key] = value
       }
     }
 
-    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
+    // `appendQuery` re-reads the same existing parameters and overwrites them
+    // with these, which for every key is the value it already had — so this
+    // hands off the base/query/fragment splitting rather than repeating it.
+    return appendQuery(url, merged)
   }
 
   /**

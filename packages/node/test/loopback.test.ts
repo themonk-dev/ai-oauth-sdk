@@ -1,5 +1,5 @@
 import { createServer, request as httpRequest } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { Server as NetServer, type AddressInfo } from 'node:net'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -593,6 +593,87 @@ describe('loopbackReceiver', () => {
         expect(started.redirectUri).toContain('127.0.0.1')
         const result = await rawGet(`${started.redirectUri}?code=literal&state=xyz`, navigationHeaders)
         expect(result.status).toBe(200)
+      } finally {
+        await started.close()
+      }
+    })
+  })
+
+  describe('a bare IPv6 bind host', () => {
+    /**
+     * Runs `bind` with `::1` rewritten to `127.0.0.1`, and nothing else
+     * changed.
+     *
+     * This machine has no IPv6, so `listen(port, '::1')` fails
+     * `EAFNOSUPPORT` and the receiver never gets far enough to serve anything.
+     * Shimming only the kernel call leaves the receiver in precisely the state
+     * a real dual-stack host puts it in the instant after a successful bind:
+     * `host: '::1'` still sitting in its closure, a listening socket, and a
+     * request about to arrive. That is the state the defect lives in — the bind
+     * was never the broken part.
+     *
+     * The patch is on `net.Server`, which `http.Server` extends, and it is
+     * restored in a `finally` so nothing outside the bind sees it.
+     */
+    const withIpv6BindShimmed = async <T>(run: () => Promise<T>): Promise<T> => {
+      const realListen = NetServer.prototype.listen
+      NetServer.prototype.listen = function shimmedListen(this: NetServer, ...args: unknown[]) {
+        return (realListen as (...rest: unknown[]) => NetServer).apply(
+          this,
+          args.map((argument) => (argument === '::1' ? '127.0.0.1' : argument)),
+        )
+      } as typeof realListen
+
+      try {
+        return await run()
+      } finally {
+        NetServer.prototype.listen = realListen
+      }
+    }
+
+    it('serves the callback rather than throwing out of the request handler', async () => {
+      // `'::1'` is not a legal URL authority unbracketed, and it is also the
+      // only spelling Node accepts as a bind host — `'[::1]'` goes to the
+      // resolver and fails `ENOTFOUND`. So a receiver asked for the IPv6
+      // loopback interface bound fine and then threw `Invalid URL` on the first
+      // request, from a stack with no `try` above it, no `error` event that
+      // covers it, and `login()`'s own `try` long since returned: an uncaught
+      // exception, and the process exits 1 mid-login.
+      //
+      // The advertised host is the IPv4 literal so the redirect URI is one this
+      // test can dial and no sibling bind is attempted; what is under test is
+      // the bind host, which stays `'::1'` throughout.
+      const started = await withIpv6BindShimmed(() =>
+        loopbackReceiver({ port: 0, host: '::1', redirectHost: '127.0.0.1' }).start({
+          provider: testProvider(server.url),
+        }),
+      )
+      const waiting = started.wait()
+
+      try {
+        const response = await rawGet(
+          `${started.redirectUri}?code=six&state=xyz`,
+          navigationHeaders,
+        )
+        expect(response.status).toBe(200)
+        await expect(waiting).resolves.toMatchObject({ code: 'six' })
+      } finally {
+        await started.close()
+      }
+    })
+
+    it('still answers a path that is not the callback', async () => {
+      // The base URL is read on every request, not only the one that settles,
+      // so the 404 path went down with everything else.
+      const started = await withIpv6BindShimmed(() =>
+        loopbackReceiver({ port: 0, host: '::1', redirectHost: '127.0.0.1' }).start({
+          provider: testProvider(server.url),
+        }),
+      )
+
+      try {
+        const origin = new URL(started.redirectUri).origin
+        expect((await rawGet(`${origin}/favicon.ico`)).status).toBe(404)
       } finally {
         await started.close()
       }

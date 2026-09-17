@@ -67,6 +67,25 @@ function broadcastCallback(payload: string) {
   channel.close()
 }
 
+/**
+ * An older redirect page's acknowledgement: a receiver from before
+ * announcements carried ids, which echoes nothing back.
+ */
+function acknowledgeWithoutId() {
+  const channel = new BroadcastChannel('aioauth:callback-channel')
+
+  channel.postMessage({ kind: 'received' })
+  channel.close()
+}
+
+/** An acknowledgement naming an announcement that is not the one under test. */
+function acknowledgeSomeoneElse() {
+  const channel = new BroadcastChannel('aioauth:callback-channel')
+
+  channel.postMessage({ kind: 'received', id: 'a-different-announcement' })
+  channel.close()
+}
+
 /** Lets a posted `BroadcastChannel` message reach its listeners. */
 const delivered = () => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -196,11 +215,18 @@ describe('popupReceiver', () => {
 
   /**
    * A `postMessage` reaches the window that opened the popup and nowhere else,
-   * so there is no second attempt it could have been meant for and nothing for
-   * the receiver to rule on. An app passing `window.location.href` rather than
-   * the default `window.location.search`, against a provider that appends a
-   * fragment, produces exactly the payload a `state` filter here would drop —
-   * and the client, which has the authoritative `state`, would rather be told.
+   * so with one sign-in in flight there is no second attempt it could have been
+   * meant for and nothing for the receiver to rule on. A payload whose `state`
+   * does not match is handed over regardless, because the client holds the
+   * authoritative `state` and would rather fail loudly on it than have this
+   * receiver drop the callback and hang.
+   *
+   * The payload is a whole `window.location.href` with a fragment on it, which
+   * is what an app passing `window.location.href` rather than the default
+   * `window.location.search` gives `postCallbackToOpener`. The fragment is the
+   * provider's, not part of the `state`, and `parseStandardCallback` splits it
+   * off before reading either — so what arrives is a clean `state` that happens
+   * not to be this attempt's.
    */
   it('hands a postMessage callback through whatever its state looks like', async () => {
     const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
@@ -209,9 +235,9 @@ describe('popupReceiver', () => {
     const waiting = started.wait()
     await started.present('https://provider.test/authorize?state=mine')
 
-    deliverCallback('https://app.test/callback?code=abc&state=mine#_=_')
+    deliverCallback('https://app.test/callback?code=abc&state=stale#_=_')
 
-    await expect(waiting).resolves.toEqual({ code: 'abc', state: 'mine#_=_' })
+    await expect(waiting).resolves.toEqual({ code: 'abc', state: 'stale' })
 
     await started.close()
   })
@@ -221,6 +247,208 @@ describe('popupReceiver', () => {
     expect(started.redirectUri).toBe('http://localhost/')
 
     await started.close()
+  })
+})
+
+/**
+ * A `postMessage` reaches one window, which is true and is not the same claim
+ * as "reaches one receiver". Two sign-ins started at once — a double-clicked
+ * button, or two provider buttons on one page — put two listeners on that same
+ * opener, and the browser hands every message to both. The receiver that did
+ * not open the popup then resolves with the other flow's callback, and the
+ * client, holding the authoritative `state`, reports a double-click as
+ * `state_mismatch … (possible CSRF)`.
+ *
+ * Two separate popups is the whole scenario; the window name plays no part in
+ * it, since the flows here settle from messages rather than from windows.
+ */
+describe('two popup sign-ins in flight at once', () => {
+  it('delivers a callback only to the attempt whose state it carries', async () => {
+    const first = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({ provider })
+    const second = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({ provider })
+
+    await first.present('https://provider.test/authorize?state=one')
+    await second.present('https://provider.test/authorize?state=two')
+
+    const watchedFirst = watch(first)
+
+    // The second popup finishes. Both listeners hear it.
+    deliverCallback('?code=c2&state=two')
+    await delivered()
+
+    await expect(second.wait()).resolves.toEqual({ code: 'c2', state: 'two' })
+    expect(watchedFirst.settled).toBe(false)
+
+    // And the first attempt is still live rather than poisoned, so its own
+    // callback still completes it.
+    deliverCallback('?code=c1&state=one')
+    await expect(first.wait()).resolves.toEqual({ code: 'c1', state: 'one' })
+
+    await first.close()
+    await second.close()
+  })
+
+  it('does not fail one attempt on the other’s denial', async () => {
+    const first = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({ provider })
+    const second = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({ provider })
+
+    await first.present('https://provider.test/authorize?state=one')
+    await second.present('https://provider.test/authorize?state=two')
+
+    const watchedFirst = watch(first)
+
+    deliverCallback('?error=access_denied&error_description=nope&state=two')
+    await delivered()
+
+    await expect(second.wait()).rejects.toMatchObject({ code: 'authorization_denied' })
+    expect(watchedFirst.settled).toBe(false)
+
+    await first.close()
+    await second.close()
+  })
+
+  /**
+   * The exemption the broadcast path already makes, kept identical here: a
+   * provider that echoes no `state` leaves nothing to tell two attempts apart,
+   * and refusing the callback on that basis would refuse the only callback such
+   * a provider can produce. Both attempts take it, which is the documented cost
+   * of `echoesState: false` rather than a gap in this filter.
+   */
+  it('still hands a callback to both when the provider echoes no state', async () => {
+    const unechoing = defineProvider({ ...provider, id: 'unechoing', echoesState: false })
+    const first = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: unechoing,
+    })
+    const second = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: unechoing,
+    })
+
+    await first.present('https://provider.test/authorize?state=one')
+    await second.present('https://provider.test/authorize?state=two')
+
+    deliverCallback('?code=whoever')
+
+    await expect(first.wait()).resolves.toEqual({ code: 'whoever' })
+    await expect(second.wait()).resolves.toEqual({ code: 'whoever' })
+
+    await first.close()
+    await second.close()
+  })
+
+  /**
+   * A finished sign-in stops counting. Otherwise the next lone login on the
+   * page would go on comparing `state` on the opener path, and a mismatch there
+   * — which is meant to reach the client and fail loudly as `state_mismatch` —
+   * would start hanging until the timeout instead.
+   */
+  it('leaves the next lone sign-in taking its callback as it comes', async () => {
+    const first = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({ provider })
+    const second = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({ provider })
+
+    await first.present('https://provider.test/authorize?state=one')
+    await second.present('https://provider.test/authorize?state=two')
+    await first.close()
+    await second.close()
+
+    const lone = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({ provider })
+    const waiting = lone.wait()
+    await lone.present('https://provider.test/authorize?state=mine')
+
+    // A `state` that does not match, handed over anyway, because with one
+    // receiver on the window there is no second attempt it could have been
+    // meant for and the client is the better judge of it.
+    deliverCallback('?code=abc&state=stale')
+
+    await expect(waiting).resolves.toEqual({ code: 'abc', state: 'stale' })
+
+    await lone.close()
+  })
+})
+
+/**
+ * A page served with `Cross-Origin-Opener-Policy: same-origin` — the standard
+ * hardening header — swaps the browsing-context group on the popup's first
+ * cross-origin navigation, whatever provider that is, because the popup's
+ * initial `about:blank` inherits the opener's COOP and no ordinary
+ * authorization page matches it. The opener's handle is disowned and reports
+ * `closed === true` for a window the user is still typing into, so the poll
+ * rejects every popup sign-in as abandoned.
+ *
+ * jsdom implements no COOP, so what these pin is the receiver's reaction to
+ * being told: a `pollForClose: false` receiver must not reject on a handle that
+ * claims to be closed, and must still complete from the message it goes on to
+ * receive.
+ */
+describe('popupReceiver with the close-poll turned off', () => {
+  it('does not fail the login when the handle reports closed from the start', async () => {
+    popup.closed = true
+    const started = await popupReceiver({
+      redirectUri: 'http://localhost/callback',
+      pollIntervalMs: 5,
+      pollForClose: false,
+    }).start({ provider })
+    const watched = watch(started)
+    await started.present('https://provider.test/authorize?state=mine')
+
+    // Several poll intervals, were the poll running at all.
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(watched.settled).toBe(false)
+
+    deliverCallback('?code=abc&state=mine')
+    await expect(started.wait()).resolves.toEqual({ code: 'abc', state: 'mine' })
+
+    await started.close()
+  })
+
+  /**
+   * The obvious fix — reading `popup.closed` once, straight after
+   * `window.open`, and skipping the poll if it is already true — cannot work,
+   * and this is why: the group swap happens when the popup commits its first
+   * cross-origin navigation, not when it opens, so the handle reads `false` at
+   * open time and flips underneath the poll a moment later. A receiver that
+   * has been told may not depend on the state of the handle at any particular
+   * moment.
+   */
+  it('honours the option even when the handle only starts lying later', async () => {
+    const started = await popupReceiver({
+      redirectUri: 'http://localhost/callback',
+      pollIntervalMs: 5,
+      pollForClose: false,
+    }).start({ provider })
+    const watched = watch(started)
+    await started.present('https://provider.test/authorize?state=mine')
+
+    // Open, honest, and only then disowned — the order a real COOP swap
+    // happens in.
+    expect(popup.closed).toBe(false)
+    popup.closed = true
+
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(watched.settled).toBe(false)
+
+    deliverCallback('?code=abc&state=mine')
+    await expect(started.wait()).resolves.toEqual({ code: 'abc', state: 'mine' })
+
+    await started.close()
+  })
+
+  it('polls by default, and when told to explicitly', async () => {
+    // The option only ever removes the poll; nothing about the default moves.
+    for (const options of [{}, { pollForClose: true }]) {
+      const started = await popupReceiver({
+        redirectUri: 'http://localhost/callback',
+        pollIntervalMs: 5,
+        ...options,
+      }).start({ provider })
+      const waiting = started.wait()
+      await started.present('https://provider.test/authorize')
+
+      popup.closed = true
+      await expect(waiting).rejects.toMatchObject({ code: 'aborted' })
+
+      await started.close()
+      popup.closed = false
+    }
   })
 })
 
@@ -362,6 +590,63 @@ describe('announceCallback', () => {
     // popup to be swept away.
     await expect(announceCallback('?code=nobody-home', 20)).resolves.toBe(false)
     expect(closeSpy).not.toHaveBeenCalled()
+  })
+
+  /**
+   * A `BroadcastChannel` carries acknowledgements as widely as it carries
+   * announcements. One receiver confirming its own callback therefore also
+   * reaches an unrelated `announceCallback` running in another tab, and an
+   * announcement that accepts any acknowledgement at all would take it —
+   * reporting a delivery that never happened, resolving `true`, and closing a
+   * window whose code nobody has. The shipped consumer of that boolean is the
+   * CDN example's callback page, which would skip its "not opened by a sign-in
+   * popup" message and sit on "Signing you in…" indefinitely.
+   */
+  it('ignores an acknowledgement meant for a different announcement', async () => {
+    // A `state` no receiver in this file ever presents, so the only thing that
+    // could settle this announcement is the stray acknowledgement itself.
+    const announced = announceCallback('?code=orphan&state=orphan-attempt', 60)
+    const watched = { settled: false }
+    announced.then(() => (watched.settled = true))
+
+    acknowledgeSomeoneElse()
+    await delivered()
+
+    expect(watched.settled).toBe(false)
+    expect(closeSpy).not.toHaveBeenCalled()
+
+    // And it goes on to time out honestly, which is what tells a page nobody
+    // was waiting on that it was opened by hand.
+    await expect(announced).resolves.toBe(false)
+    expect(closeSpy).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The tolerance that makes the id safe to introduce at all. The redirect page
+   * loads the SDK on its own — commonly from a CDN, commonly pinned elsewhere —
+   * so an announcer on this version has to keep accepting the id-less
+   * acknowledgement an older receiver sends. Refusing it would strand sign-ins
+   * that in fact completed, which is a worse failure than the one the id fixes.
+   */
+  it('still accepts an acknowledgement from a receiver too old to echo an id', async () => {
+    const announced = announceCallback('?code=mine&state=mine', 200)
+
+    acknowledgeWithoutId()
+
+    await expect(announced).resolves.toBe(true)
+  })
+
+  it('accepts the acknowledgement a current receiver sends back', async () => {
+    // The end-to-end pairing, to pin that the receiver echoes what it was sent
+    // rather than the two halves merely tolerating each other.
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: severingProvider,
+    })
+    await started.present('https://severe.test/authorize?state=xyz')
+
+    await expect(announceCallback('?code=abc&state=xyz')).resolves.toBe(true)
+
+    await started.close()
   })
 })
 

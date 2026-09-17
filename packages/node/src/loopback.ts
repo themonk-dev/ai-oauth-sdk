@@ -22,7 +22,13 @@ export interface LoopbackReceiverOptions {
   port?: number
   /** Path to listen on. Defaults to the provider's declared path. */
   path?: string
-  /** Interface to bind. Defaults to 127.0.0.1 — never bind 0.0.0.0 for this. */
+  /**
+   * Interface to bind. Defaults to 127.0.0.1 — never bind 0.0.0.0 for this.
+   *
+   * An IPv6 literal goes in unbracketed (`'::1'`): Node resolves `'[::1]'` as a
+   * hostname and fails, so that is the only form which ever binds the IPv6
+   * loopback interface.
+   */
   host?: string
   /** Host used when building the redirect URI. Defaults to the provider's. */
   redirectHost?: string
@@ -129,6 +135,24 @@ const ipLiteralHosts = new Set(['127.0.0.1', '::1', '[::1]'])
 
 /** The other address a hostname like `localhost` routinely also resolves to. */
 const siblingAddresses: Record<string, string> = { '127.0.0.1': '::1', '::1': '127.0.0.1' }
+
+/**
+ * A host written the way a URL authority requires.
+ *
+ * An IPv6 literal is only legal in an authority when it is bracketed, and a
+ * bind host cannot be written that way: Node hands `'[::1]'` to the resolver,
+ * which fails `ENOTFOUND`, so `'::1'` is the only spelling that ever binds the
+ * IPv6 loopback interface. The two forms therefore disagree by construction,
+ * and anything that interpolates a bind host into a URL has to reconcile them
+ * itself — `new URL('/', 'http://::1')` throws `Invalid URL`.
+ *
+ * A host already carrying its brackets is left alone, because `ipLiteralHosts`
+ * accepts `'[::1]'` as an advertised host and a caller may reasonably pass the
+ * same string here.
+ */
+function urlAuthorityHost(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+}
 
 /**
  * Names that mean "the loopback interface" rather than one address on it.
@@ -307,6 +331,20 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       const primaryHost = loopbackNames.has(bindHost) ? '127.0.0.1' : bindHost
       const requestedPort = options.port ?? provider.redirect.loopbackPort ?? 0
 
+      /**
+       * The base an incoming request path is resolved against.
+       *
+       * Only `pathname` and `search` are read back out of the result, so this
+       * is a syntactic placeholder and any valid host does the job. It is built
+       * from `primaryHost` rather than the raw option because that is the value
+       * that actually reached `listen()`, and it goes through
+       * {@link urlAuthorityHost} because `host: '::1'` — the only spelling that
+       * can bind the IPv6 loopback interface at all — is not a legal authority
+       * unbracketed. Computed once here rather than per request: it cannot
+       * change, and a throw down in the `request` handler has nowhere to go.
+       */
+      const requestBase = `http://${urlAuthorityHost(primaryHost)}`
+
       let resolveCallback: (result: CallbackResult) => void
       let rejectCallback: (error: unknown) => void
       const callbackPromise = new Promise<CallbackResult>((resolve, reject) => {
@@ -410,7 +448,7 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         response.once('close', () => void close())
       }
 
-      const handleRequest = (request: IncomingMessage, response: ServerResponse): void => {
+      const serveRequest = (request: IncomingMessage, response: ServerResponse): void => {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           response.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'text/plain' })
           response.end('Method not allowed')
@@ -447,7 +485,7 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        const url = new URL(request.url ?? '/', `http://${bindHost}`)
+        const url = new URL(request.url ?? '/', requestBase)
 
         if (url.pathname !== path) {
           response.writeHead(404, { ...securityHeaders, 'Content-Type': 'text/plain' })
@@ -482,6 +520,46 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         response.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
         response.end(options.successHtml ?? DEFAULT_SUCCESS_HTML)
         settle(response, () => resolveCallback(callback.result))
+      }
+
+      /**
+       * Serves one request, and never lets a throw escape into the `request`
+       * event.
+       *
+       * Nothing on that stack can catch one. There is no `try` above it; the
+       * server's `error` event reports socket failures, not handler throws; and
+       * `login()`'s own `try` sits on a different stack that returned the
+       * moment `start()` resolved. So an exception here reaches Node's uncaught
+       * handler and takes the process down — a CLI exiting 1 with a stack trace
+       * in the middle of a sign-in it was moments from completing.
+       *
+       * The refusal is deliberately inert. It writes a 400 and leaves the
+       * pending promise and the bound port exactly as it found them, which is
+       * the same posture the drive-by refusals above take and for the same
+       * reason: a request this receiver could not make sense of must not cancel
+       * a login whose real redirect is still on its way. `settle()` is what
+       * retires the server, so not calling it is what keeps "one callback, then
+       * close" meaning one *callback* rather than one request.
+       *
+       * Headers already on the wire are left alone — writing them twice throws
+       * `ERR_HTTP_HEADERS_SENT`, from a `catch` with nowhere left to report to
+       * — and a response already ended is not ended again. Either way the
+       * socket is not left hanging.
+       */
+      const handleRequest = (request: IncomingMessage, response: ServerResponse): void => {
+        try {
+          serveRequest(request, response)
+        } catch {
+          if (response.writableEnded) {
+            return
+          }
+
+          if (!response.headersSent) {
+            response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/plain' })
+          }
+
+          response.end('Bad request')
+        }
       }
 
       const server = createServer(handleRequest)

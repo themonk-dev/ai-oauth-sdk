@@ -50,7 +50,17 @@ export async function run(argv: string[]): Promise<number> {
     return 0
   }
 
-  const handler = args.command ? HANDLERS[args.command] : undefined
+  // `Object.hasOwn` rather than a bare index read: `HANDLERS` is a plain object
+  // literal, so `HANDLERS['constructor']` — or `'toString'`, `'valueOf'`,
+  // `'__proto__'` — finds something inherited from `Object.prototype`. That
+  // value is truthy, so the unknown-command branch below is skipped and the
+  // inherited member is called as though it were a command handler:
+  // `ai-oauth-sdk constructor` returned 0 with nothing on stdout or stderr at
+  // all, and `valueOf` surfaced an internal JS error in place of the message.
+  // The command name comes straight off the argv a user typed, so every name
+  // that is not one of the keys written above has to be rejected the same way
+  // `frobnicate` is.
+  const handler = args.command && Object.hasOwn(HANDLERS, args.command) ? HANDLERS[args.command] : undefined
 
   // An unknown command is reported ahead of an unknown option, because the
   // command is what decides which options are known in the first place.

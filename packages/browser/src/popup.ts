@@ -19,6 +19,31 @@ export interface PopupReceiverOptions {
   windowName?: string
   /** How often to check whether the user closed the popup. Default 400ms. */
   pollIntervalMs?: number
+  /**
+   * Whether to poll `popup.closed` to notice the user giving up. Default
+   * `true`. Set it to `false` when your own page is served with
+   * `Cross-Origin-Opener-Policy: same-origin`.
+   *
+   * That header — the standard hardening one, and a prerequisite for
+   * `crossOriginIsolated` — severs the opener from *your* side rather than the
+   * provider's, and does it for every provider rather than the one or two whose
+   * descriptors declare `authPage.seversOpener`. The popup's initial
+   * `about:blank` inherits your COOP; the provider's page almost certainly
+   * serves `unsafe-none`; the two do not match, so the browsing-context group
+   * swaps on that first cross-origin navigation and your handle to the popup is
+   * disowned. `popup.closed` then reads `true` for a window the user is still
+   * typing their password into, and the poll rejects the sign-in as abandoned
+   * within one interval. `same-origin-allow-popups` exists precisely to keep
+   * the opener across a popup and does not do this; only `same-origin` does.
+   *
+   * It has to be told rather than detected. A page cannot read its own COOP,
+   * and `crossOriginIsolated` answers `false` under `COOP: same-origin` without
+   * a matching COEP, so there is nothing to test. Turning the poll off costs
+   * only the ability to notice a closed window, the same trade a provider that
+   * severs the opener already makes — pass `timeoutMs` or a `signal` to
+   * `login()` so an abandoned sign-in still ends.
+   */
+  pollForClose?: boolean
 }
 
 const MESSAGE_TYPE = 'aioauth:callback'
@@ -37,7 +62,73 @@ const MESSAGE_TYPE = 'aioauth:callback'
  */
 const CALLBACK_CHANNEL = 'aioauth:callback-channel'
 
-type ChannelMessage = { kind: 'callback'; payload: string } | { kind: 'received' }
+/**
+ * An announcement and its acknowledgement, correlated by `id`.
+ *
+ * The `id` exists because the channel is a broadcast: an acknowledgement posted
+ * for one announcement reaches every context on the origin, so a bare
+ * `{ kind: 'received' }` also satisfies an unrelated {@link announceCallback}
+ * that happens to be in flight in another tab. That tab would then report a
+ * delivery that never happened and close itself, when what it should have done
+ * is time out, resolve `false`, and tell whoever is reading it that nothing was
+ * waiting for this page.
+ *
+ * It is not a security boundary and does not need to be unguessable. Anything
+ * that can post on this channel is already same-origin and could simply
+ * announce a callback of its own; the `id` only tells two honest announcements
+ * apart.
+ *
+ * Both fields are optional so a mixed pair still works. The redirect page loads
+ * this SDK independently of the app that opened it — often from a CDN, often
+ * pinned to a different version — so an announcer on this version has to keep
+ * accepting an acknowledgement from a receiver on an older one, which sends no
+ * `id` at all. See {@link announceCallback} for how that tolerance is spelled.
+ */
+type ChannelMessage =
+  | { kind: 'callback'; id?: string; payload: string }
+  | { kind: 'received'; id?: string }
+
+/**
+ * Counter behind the announcement ids, so two announcements from the same page
+ * — a second sign-in after a first — cannot collide on the random half alone.
+ */
+let announcementCounter = 0
+
+/**
+ * `Math.random` rather than `crypto.getRandomValues`, on purpose. This module
+ * runs on the redirect page, which is often a bare HTML file loading the SDK
+ * from a CDN, and `crypto` is unavailable there on any insecure origin — a
+ * plain `http://` page on a LAN address, which is a real way people serve a dev
+ * build. An id that is merely distinct costs nothing and works everywhere; the
+ * id is not relied on to be unpredictable.
+ */
+function announcementId(): string {
+  announcementCounter += 1
+
+  return `${announcementCounter}-${Math.random().toString(36).slice(2)}`
+}
+
+/**
+ * Every receiver currently listening on this window for a callback posted by
+ * the popup.
+ *
+ * `postMessage` reaching exactly the window that opened the popup is what lets
+ * a single receiver take a payload without judging it — but "one window" is not
+ * "one receiver". Two sign-ins started at once, from a double-clicked button or
+ * from two buttons on one page, attach two `message` listeners to the *same*
+ * opener, and the browser delivers every message to both. The one that did not
+ * open that popup then resolves with the other flow's callback, and the
+ * client — which does hold the authoritative `state` — reports the result as
+ * `state_mismatch … (possible CSRF)`, which is an alarming way to describe a
+ * double-click.
+ *
+ * Membership is what tells the receiver whether that ambiguity exists at all,
+ * so the `state` comparison can be confined to the case that needs it and the
+ * lone-receiver case can go on taking payloads exactly as it always has. See
+ * the message handler in {@link popupReceiver} for why that distinction is kept
+ * rather than filtering unconditionally.
+ */
+const listeningReceivers = new Set<object>()
 
 /**
  * The `state` in an authorization URL, or nothing where it carries none.
@@ -90,6 +181,22 @@ function stateOfAuthorizationUrl(url: string): string | undefined {
  * `login()` a `timeoutMs` or a `signal` there, or the promise waits as long as
  * the page lives.
  *
+ * The same severing can come from the consumer's side instead, and that case
+ * no descriptor can describe. A page served with `Cross-Origin-Opener-Policy:
+ * same-origin` — the standard hardening header — makes the browsing-context
+ * group swap on the popup's first cross-origin navigation whatever provider it
+ * navigates to, because the popup's initial `about:blank` inherits the
+ * opener's COOP and no ordinary authorization page matches it. Every popup
+ * sign-in from such an app then rejects with `aborted` while the user is still
+ * looking at the login form. Pass `pollForClose: false` there; it cannot be
+ * detected, only declared.
+ *
+ * That failure is unusually hard to trace back, which is worth knowing before
+ * dismissing the option as niche. `createAuthStore` in the core package
+ * swallows an `aborted` rejection deliberately — a user closing the popup is
+ * not an error worth showing — so in the React, Vue, Svelte and Solid bindings
+ * this arrives as a button that stops spinning and says nothing at all.
+ *
  * A callback heard on the `BroadcastChannel` is matched to this attempt by
  * `state`, because that channel reaches every context on the origin. A
  * provider that does not echo `state` (OpenRouter) leaves nothing to match on,
@@ -111,12 +218,38 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
       const redirectUri = options.redirectUri ?? window.location.href.split('#')[0]!
       const seversOpener = context.provider.authPage?.seversOpener === true
 
+      /**
+       * This receiver's identity in {@link listeningReceivers}. An empty object
+       * is enough: nothing reads it, and it only has to be distinct from every
+       * other live receiver's so that two of them count as two.
+       */
+      const receiverToken = {}
+
+      /**
+       * Leaves the set of attempts still competing for a callback.
+       *
+       * Called the moment this attempt settles rather than waiting for
+       * `close()`, because the set answers "could a payload arriving now have
+       * been meant for someone else?" and an attempt holding its answer is no
+       * longer one of the candidates. Settling first also means a caller that
+       * forgets to `close()` — or one whose own `finally` never runs — cannot
+       * leave a phantom competitor behind that has every later sign-in on the
+       * page filtering its callbacks by `state` for no reason.
+       */
+      const stopCompeting = () => listeningReceivers.delete(receiverToken)
+
       let popup: Window | null = null
       let resolveCallback: (result: CallbackResult) => void
       let rejectCallback: (error: unknown) => void
       const callbackPromise = new Promise<CallbackResult>((resolve, reject) => {
-        resolveCallback = resolve
-        rejectCallback = reject
+        resolveCallback = (result) => {
+          stopCompeting()
+          resolve(result)
+        }
+        rejectCallback = (error) => {
+          stopCompeting()
+          reject(error)
+        }
       })
       callbackPromise.catch(() => {})
 
@@ -222,15 +355,34 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
           return
         }
 
-        // Taken as it comes, with no `state` of its own to answer for: a
-        // `postMessage` reaches the window that opened the popup and nowhere
-        // else, so a payload arriving here was minted for this attempt by
-        // construction. Judging it again could only drop one the client is
-        // better placed to rule on.
-        read(data.payload).settle()
+        const callback = read(data.payload)
+
+        // With this receiver alone on the window, the payload is taken as it
+        // comes and with no `state` of its own to answer for: a `postMessage`
+        // reaches the window that opened the popup and nowhere else, so
+        // whatever arrives here was minted for this attempt by construction,
+        // and judging it again could only drop one the client is better placed
+        // to rule on. That matters for a real case rather than a theoretical
+        // one — an app handing `postCallbackToOpener` a whole
+        // `window.location.href` against a provider that appends a fragment
+        // produces a `state` this receiver reads as `mine#_=_`, and failing
+        // loudly with `state_mismatch` beats hanging until the timeout.
+        //
+        // A second receiver listening on the same window is what breaks that
+        // reasoning, because both of them then hear both popups' messages and
+        // the wrong one settles first. Only there is the comparison worth its
+        // cost, and it is the same predicate the broadcast path uses, so the
+        // "nothing to compare" and `echoesState: false` exemptions behave
+        // identically on both routes.
+        if (listeningReceivers.size > 1 && !belongsToThisAttempt(callback.state)) {
+          return
+        }
+
+        callback.settle()
       }
 
       window.addEventListener('message', onMessage)
+      listeningReceivers.add(receiverToken)
 
       // Opened for every provider, not only one that severs the opener: a
       // redirect page falls back to `announceCallback` whenever
@@ -256,7 +408,15 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
           // receiver that acknowledged another tab's callback would tell that
           // page it had been delivered while dropping it, and the tab that
           // was actually waiting for it would wait forever.
-          channel.postMessage({ kind: 'received' } satisfies ChannelMessage)
+          //
+          // The announcement's own id is echoed back, so the acknowledgement
+          // lands on the announcement it answers rather than on whichever one
+          // is listening. An announcer that sent no id gets none back, which
+          // is what an older announcer expects.
+          channel.postMessage({
+            kind: 'received',
+            ...(event.data.id === undefined ? {} : { id: event.data.id }),
+          } satisfies ChannelMessage)
         }
       }
 
@@ -279,6 +439,10 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
 
       const cleanup = () => {
         window.removeEventListener('message', onMessage)
+        // Usually already gone, since settling drops it — this covers the
+        // receiver closed without ever settling, which is what a `signal` or a
+        // timeout on a login nobody completed leaves behind.
+        stopCompeting()
         channel?.close()
 
         if (closedPoller) {
@@ -328,7 +492,18 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
           // so polling it would fail the sign-in instead of detecting the
           // user giving up. Where the opener stays intact this is the only
           // signal a closed window leaves behind, so it still runs there.
-          if (!seversOpener) {
+          //
+          // Skipped as well when the caller has said their own page carries
+          // `Cross-Origin-Opener-Policy: same-origin`, which produces the same
+          // severed handle from the other side of the relationship and for
+          // every provider rather than the declared ones — see
+          // `pollForClose`. Checking `popup.closed` here, right after
+          // `window.open`, would not catch that case and is not worth
+          // attempting: the group swap happens when the popup commits its
+          // first cross-origin navigation, which is after this line, so the
+          // handle still reads `closed === false` at this point and would go
+          // on to flip under the poll a moment later.
+          if (!seversOpener && options.pollForClose !== false) {
             closedPoller = setInterval(() => {
               if (popup?.closed) {
                 clearInterval(closedPoller)
@@ -411,6 +586,7 @@ export function announceCallback(
 
   return new Promise<boolean>((resolve) => {
     const channel = new BroadcastChannel(CALLBACK_CHANNEL)
+    const id = announcementId()
     let settled = false
 
     const finish = (received: boolean) => {
@@ -429,13 +605,36 @@ export function announceCallback(
     }
 
     channel.onmessage = (event: MessageEvent<ChannelMessage>) => {
-      if (event.data?.kind === 'received') {
-        finish(true)
+      if (event.data?.kind !== 'received') {
+        return
       }
+
+      // An acknowledgement counts when it names this announcement, or when it
+      // names none at all.
+      //
+      // The first is the point of the id: an acknowledgement reaches every
+      // context on the origin, so without it a receiver in one tab confirming
+      // its own callback would also satisfy an announcement running here for a
+      // different one — this page would report a delivery that never happened
+      // and close itself on a code nobody took.
+      //
+      // The second is required rather than lax. This page and the app that
+      // opened it load the SDK separately, so a redirect page on a version that
+      // sends an id can be answered by a receiver on a version that does not
+      // know about ids and echoes nothing. Refusing that acknowledgement would
+      // strand a sign-in that in fact completed, which is a far worse failure
+      // than the one the id exists to prevent — so the older shape stays
+      // acceptable, and the tightening only takes effect once both halves have
+      // been upgraded.
+      if (event.data.id !== undefined && event.data.id !== id) {
+        return
+      }
+
+      finish(true)
     }
 
     const timer = setTimeout(() => finish(false), timeoutMs)
 
-    channel.postMessage({ kind: 'callback', payload } satisfies ChannelMessage)
+    channel.postMessage({ kind: 'callback', id, payload } satisfies ChannelMessage)
   })
 }

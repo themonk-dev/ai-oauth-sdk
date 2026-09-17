@@ -235,6 +235,43 @@ describe('custom provider bookkeeping', () => {
     expect(stored['tokens:acme']).toBeUndefined()
   })
 
+  /**
+   * The descriptor is shared by every account slot, so its lifetime is decided
+   * by whether any session survives — not by whether `--account` was typed.
+   *
+   * `client.logout()` only ever clears its own account's record, so this
+   * `logout` with no `--account` removes `tokens:acme` (which does not exist)
+   * and leaves the named account alone. The guard used to read that missing
+   * flag as "nothing else is stored" and delete `provider:acme` anyway, which
+   * stranded a live refresh token: `list` still showed the session, while
+   * `token` and even `logout --account work` could no longer resolve the id.
+   */
+  it('keeps the descriptor when an unnamed logout leaves a named session behind', async () => {
+    await run(['login', 'acme', ...customFlags(server, ['--port', '0', '--account', 'work'])])
+    await run(['logout', 'acme', '--auth-dir', dir])
+
+    const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+    expect(stored['tokens:acme:work']).toBeTruthy()
+    expect(stored['provider:acme']).toBeTruthy()
+
+    // The surviving session is still usable, which is what the descriptor is for.
+    stdout = []
+    expect(await run(['token', 'acme', '--auth-dir', dir, '--account', 'work'])).toBe(0)
+    expect(out()).toBe('access-1\n')
+  })
+
+  // The mirror image of the same bug: passing `--account` used to keep the
+  // descriptor unconditionally, so signing out of the last session left
+  // `provider:acme` behind forever with nothing referring to it.
+  it('forgets the descriptor when the last named account signs out', async () => {
+    await run(['login', 'acme', ...customFlags(server, ['--port', '0', '--account', 'work'])])
+    await run(['logout', 'acme', '--auth-dir', dir, '--account', 'work'])
+
+    const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+    expect(stored['tokens:acme:work']).toBeUndefined()
+    expect(stored['provider:acme']).toBeUndefined()
+  })
+
   it('keeps the descriptor when only one account signs out', async () => {
     await run(['login', 'acme', ...customFlags(server, ['--port', '0', '--account', 'work'])])
     await run(['login', 'acme', ...customFlags(server, ['--port', '0', '--account', 'home'])])
@@ -344,6 +381,43 @@ describe('custom provider validation', () => {
 
       expect(await run(['token', 'gemini', '--auth-dir', dir])).toBe(0)
       expect(out()).toBe('still-valid\n')
+    })
+  })
+
+  /**
+   * `providers` and `publicClientIds` are plain object literals, so a bare
+   * membership test or index read walks `Object.prototype`. An id is whatever
+   * the user typed, and `constructor` is a thing people type: it was reported
+   * as a built-in it is not, and `publicClientIds['constructor']` handed back
+   * the `Object` *function* where the signature says `string`.
+   */
+  describe('an id that collides with Object.prototype', () => {
+    it('is not mistaken for a built-in, and has no published client id', async () => {
+      expect(
+        await run([
+          'login',
+          'constructor',
+          '--auth-dir',
+          dir,
+          '--authorize-url',
+          `${server.url}/authorize`,
+          '--token-url',
+          `${server.url}/token`,
+        ]),
+      ).toBe(1)
+      // The credential is missing, which is the honest complaint. Refusing it
+      // as a "built-in provider", or silently signing in as `Object`, is not.
+      expect(err()).toContain('--client-id')
+      expect(err()).not.toContain('built-in provider')
+    })
+
+    it('signs in as the ordinary custom provider it is', async () => {
+      expect(await run(['login', 'constructor', ...customFlags(server, ['--port', '0'])])).toBe(0)
+      expect(server.requests[0]?.['client_id']).toBe('cli-test-client')
+
+      const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+      expect(stored['tokens:constructor']).toBeTruthy()
+      expect(stored['provider:constructor']).toBeTruthy()
     })
   })
 
