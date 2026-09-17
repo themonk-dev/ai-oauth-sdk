@@ -226,6 +226,37 @@ function describeFlow(provider: ProviderConfig): string {
   return provider.redirect.mode
 }
 
+/**
+ * The provider id every command keys its work on.
+ *
+ * `:` is refused, because it is the credential store's own separator rather
+ * than an ordinary character. Core builds the token key as `tokens:<id>` and,
+ * when `--account` is given, appends `:<account>` (`AuthClient#keyFor`), so
+ * `openai:work` and `openai --account work` are not two providers — they are
+ * one record under two spellings. Remembered custom descriptors are keyed the
+ * same way, as `provider:<id>`.
+ *
+ * That aliasing is what made the guard on `--authorize-url`/`--token-url`
+ * bypassable. `customProvider` refuses a built-in id so that nobody can point
+ * one at endpoints of their own while it keeps using the credentials stored
+ * under that id — but it tests `providerId in providers`, an exact string
+ * match. `openai` is refused; `openai:work` is not a key of `providers`, so it
+ * was accepted as a provider of its own and built a descriptor that
+ * nevertheless read and wrote the session `login openai --account work` had
+ * stored. `ai-oauth-sdk refresh openai:work --token-url https://…` therefore
+ * posted a live refresh token to whatever endpoint the flags named, wrote the
+ * answer back over the real session, and exited 0 printing a success tick —
+ * after which the user's own `token openai --account work` handed their scripts
+ * the access token that endpoint had issued, with `list` showing nothing out of
+ * place.
+ *
+ * The check belongs here rather than in `customProvider` alone. Every
+ * provider-taking command resolves its argument through this one function, and
+ * an id that aliases another's storage key is wrong on all of them — `logout`
+ * and `whoami` reach the same record without ever touching an endpoint flag.
+ * `--account` is how a second session under one provider is named, which is
+ * what the hint points at.
+ */
 function requireProvider(args: ParsedArgs, command: string): string {
   const providerId = args.positionals[0]
 
@@ -233,6 +264,20 @@ function requireProvider(args: ParsedArgs, command: string): string {
     throw new CliError(
       `Missing provider for "${command}".`,
       `Try: ai-oauth-sdk ${command} openai    (see: ai-oauth-sdk providers)`,
+    )
+  }
+
+  if (providerId.includes(':')) {
+    const [base, ...rest] = providerId.split(':')
+    const account = rest.join(':')
+
+    throw new CliError(
+      `Invalid provider id "${providerId}": ":" separates the provider from the account in the ` +
+        'credential store, so an id containing one names another provider\'s records rather than ' +
+        'a provider of its own.',
+      base && account
+        ? `Try: ai-oauth-sdk ${command} ${base} --account ${account}`
+        : 'Use --account to keep several sessions under one provider.',
     )
   }
 
