@@ -21,6 +21,7 @@ import type {
   FetchLike,
   PendingAuthorization,
   ProviderConfig,
+  ReceiverContext,
   TokenSet,
 } from './types.js'
 
@@ -377,8 +378,15 @@ export class AuthClient {
    * controlled.
    */
   async login(options: LoginOptions): Promise<TokenSet> {
-    const context = {
+    /* `presents` is not a hint the receiver may take or leave: this method
+       always calls `present()`, a few lines down and after nothing but a
+       `createAuthorization()`, so a callback that beats it to the port belongs
+       to nobody — the URL it would be answering has not been built yet, let
+       alone handed to a browser. Saying so is what lets a receiver refuse one
+       without also refusing every caller that drives `start()` alone. */
+    const context: ReceiverContext = {
       provider: this.provider,
+      presents: true,
       ...(options.openUrl ? { openUrl: options.openUrl } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     }
@@ -528,19 +536,37 @@ export class AuthClient {
     return `${TOKENS_PREFIX}${providerId}${this.#accountKey ? `:${this.#accountKey}` : ''}`
   }
 
-  async #readStoredTokens(): Promise<TokenSet | undefined> {
+  /**
+   * The credential record as three outcomes rather than two.
+   *
+   * "Nothing there" and "there but unreadable" are the same absence to anyone
+   * who only wants the tokens, and {@link AuthClient.#readStoredTokens} keeps
+   * treating them that way. But {@link AuthClient.refresh} has to tell them
+   * apart: a record that is *gone* is a sign-out another process performed,
+   * while a record that will not parse is a damaged file, and the two call for
+   * opposite responses — refuse the one, self-heal over the other.
+   */
+  async #readStoredRecord(): Promise<
+    { status: 'missing' } | { status: 'present'; tokens: TokenSet } | { status: 'unreadable' }
+  > {
     const stored =
       (await this.#storage.get(this.#tokenKey)) ?? (await this.#readRenamedTokens())
 
     if (!stored) {
-      return undefined
+      return { status: 'missing' }
     }
 
     try {
-      return JSON.parse(stored) as TokenSet
+      return { status: 'present', tokens: JSON.parse(stored) as TokenSet }
     } catch {
-      return undefined
+      return { status: 'unreadable' }
     }
+  }
+
+  async #readStoredTokens(): Promise<TokenSet | undefined> {
+    const record = await this.#readStoredRecord()
+
+    return record.status === 'present' ? record.tokens : undefined
   }
 
   /**
@@ -634,6 +660,15 @@ export class AuthClient {
    * that rotate refresh tokens the loser's token is already dead — so take the
    * stored one if it is usable. `#refreshInFlight` covers in-process
    * concurrency; this covers the cross-process case, which no promise can.
+   *
+   * That same re-read is also how a sign-out performed elsewhere is honoured.
+   * A record that has gone missing while this client holds tokens in memory is
+   * a deletion rather than an absence — in-memory tokens only ever come from
+   * reading the record or from `setTokens()`, which writes before it returns,
+   * so the record demonstrably existed — and refreshing on the token still in
+   * memory would write a brand new credential back over the sign-out. Every
+   * later process would then read a session the user ended, which is the one
+   * thing `logout()` has to be able to promise.
    */
   async refresh(options: { signal?: AbortSignal } = {}): Promise<TokenSet> {
     if (this.#refreshInFlight) {
@@ -647,7 +682,30 @@ export class AuthClient {
         throw new OAuthError('refresh_failed', `No tokens stored for "${this.provider.id}".`)
       }
 
-      const stored = await this.#readStoredTokens()
+      const record = await this.#readStoredRecord()
+
+      /* The record is gone, and we are holding what used to be in it: another
+         process ran `logout()`. Refreshing here would mint a new access and
+         refresh token and `setTokens()` would put the credential file back,
+         undoing a sign-out that has already happened — so the cache is dropped
+         and the caller is told to sign in again instead.
+
+         Only a *missing* record counts. One that will not parse is a damaged
+         file, not a decision, and failing closed on it would turn today's
+         quiet self-heal — refresh, rewrite, carry on — into a forced login. */
+      if (record.status === 'missing') {
+        this.#cachedTokens = undefined
+        this.#tokensLoaded = true
+
+        throw new OAuthError(
+          'refresh_failed',
+          `The stored credential for "${this.provider.id}" was removed while this ` +
+            'client was holding it, which is what signing out elsewhere looks ' +
+            'like. Refusing to refresh it back into existence. Sign in again.',
+        )
+      }
+
+      const stored = record.status === 'present' ? record.tokens : undefined
 
       if (
         stored &&

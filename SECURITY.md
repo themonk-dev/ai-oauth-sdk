@@ -24,6 +24,24 @@ double-submit or a prefetched redirect gets one exchange rather than two. That s
 process: `AuthStorage` has no compare-and-swap, so two processes sharing one credential file can
 still both consume the same record.
 
+**A refresh will not put back a credential someone signed out of.** Storage is re-read before every
+refresh, because another process may have refreshed since — and the same read is what notices a
+record that has *gone*. A client holding tokens in memory got them by reading that record or by
+writing it, so a missing one is a deletion rather than an absence, and refreshing on the copy still
+in memory would mint a new access and refresh token and write the credential file straight back.
+Every later process would then read a session the user ended. So the refresh is refused and the
+cached copy dropped.
+
+Three limits on that, stated plainly. A record that is present but unreadable is a damaged file
+rather than a decision, and self-heals by refreshing over it — but only where the backend can tell
+the two apart, and the bundled `fileStorage` cannot: a credential file that will not parse is
+reported as empty, so there a damaged file forces a sign-in rather than healing. `logout()` deletes
+the key the provider uses now and not the ones it used before, so on a renamed provider — `claude`,
+`gemini`, `azure-ai` — a pre-0.4 record under the old id can outlive the sign-out and be migrated
+back on the next read. And there is no protection against a `getAccessToken()` that had already
+returned before the sign-out: that token is out of our hands and stays valid until the provider says
+otherwise, which is what `logout({ revoke: true })` is for.
+
 **Randomness never degrades.** With no `crypto.getRandomValues` available, the library throws rather
 than falling back to `Math.random()`. A guessable `state` or PKCE verifier defeats the point of
 both. SHA-256 does have a pure JavaScript fallback, because a hash handles no secrets, and that is
@@ -64,6 +82,17 @@ without settling the pending callback and the server keeps listening for the rea
 declaring `echoesState: false` has said no `state` will come back and is exempt, and a receiver
 driven directly, without `present()`, has no attempt to compare against and takes callbacks as they
 come.
+
+That last exemption is claimed by the caller rather than inferred from the receiver's own state,
+because the two are not the same thing during the gap between `start()` and `present()`. The port
+is bound before the `state` is minted, so for a moment a presenting receiver looks exactly like a
+never-presenting one — and a local process flooding a published fixed port lands in that window
+often enough to win logins. `login()` sets `presents` on the receiver context to say a `state` is
+coming, and a receiver so told refuses callbacks from the moment it binds until it has presented: no
+authorization URL has been handed to anyone yet, so nothing legitimate can be arriving. A caller
+driving `start()` itself says nothing and keeps the old behaviour, and a provider declaring
+`echoesState: false` stays exempt throughout, as above. A receiver that wraps another has to forward
+the flag; `hybridReceiver` does, to the loopback half it presents.
 
 **It binds every address the redirect URI's host resolves to**, which is not the same thing as
 binding one. Most providers register the `localhost` form of the redirect URI rather than the IP

@@ -472,6 +472,95 @@ describe('token refresh', () => {
     }
   })
 
+  it('refuses to refresh a credential another process signed out of', async () => {
+    const shortLived = await startFakeAuthServer({ expiresIn: 1 })
+
+    try {
+      // Two clients over one store, as two terminal windows would be.
+      const storage = memoryStorage()
+      const provider = testProvider(shortLived.url)
+      const mine = createAuthClient({ provider, redirectUri: 'http://localhost:9999/callback', storage })
+      const other = createAuthClient({ provider, redirectUri: 'http://localhost:9999/callback', storage })
+
+      const authorization = await mine.createAuthorization()
+      const { code, state } = await followAuthorization(authorization.url)
+      await mine.completeAuthorization({ code, state })
+
+      // The other window signs out, deleting the record. My client is still
+      // holding the token it cached before that happened.
+      await other.logout()
+
+      await expect(mine.refresh()).rejects.toMatchObject({
+        code: 'refresh_failed',
+        message: expect.stringMatching(/was removed/),
+      })
+      // Refreshing would have minted a new access *and* refresh token, and
+      // `setTokens()` would have written the credential straight back.
+      expect(shortLived.refreshCount).toBe(0)
+
+      const later = createAuthClient({ provider, redirectUri: 'http://localhost:9999/callback', storage })
+      expect(await later.isAuthenticated()).toBe(false)
+      // And the client that tried has dropped the copy it was holding, rather
+      // than reporting a session no store agrees exists.
+      expect(await mine.isAuthenticated()).toBe(false)
+    } finally {
+      await shortLived.close()
+    }
+  })
+
+  it('still refreshes over a stored record it cannot parse', async () => {
+    const shortLived = await startFakeAuthServer({ expiresIn: 1 })
+
+    try {
+      const storage = memoryStorage()
+      const client = createAuthClient({
+        provider: testProvider(shortLived.url),
+        redirectUri: 'http://localhost:9999/callback',
+        storage,
+      })
+      const authorization = await client.createAuthorization()
+      const { code, state } = await followAuthorization(authorization.url)
+      await client.completeAuthorization({ code, state })
+
+      // A truncated or otherwise damaged credential file. Unreadable is not a
+      // decision anyone took, so it must keep self-healing — treating it as a
+      // sign-out would turn a damaged file into a forced re-login.
+      await storage.set('tokens:test', '{"accessToken":"trunca')
+
+      const refreshed = await client.refresh()
+      expect(refreshed.accessToken).toBe('access-2')
+      expect(shortLived.refreshCount).toBe(1)
+      // The damage is repaired on the way past.
+      expect(JSON.parse((await storage.get('tokens:test'))!)).toMatchObject({
+        accessToken: 'access-2',
+      })
+    } finally {
+      await shortLived.close()
+    }
+  })
+
+  it('reports a plain "nothing stored" after this same client signed out', async () => {
+    const client = createAuthClient({
+      provider: testProvider(server.url),
+      redirectUri: 'http://localhost:9999/callback',
+      storage: memoryStorage(),
+    })
+    const authorization = await client.createAuthorization()
+    const { code, state } = await followAuthorization(authorization.url)
+    await client.completeAuthorization({ code, state })
+
+    await client.logout()
+
+    // `logout()` clears the cache as well as the record, so there is nothing in
+    // memory for the deletion branch to protect and the older, simpler message
+    // is still what a caller sees.
+    await expect(client.refresh()).rejects.toMatchObject({
+      code: 'refresh_failed',
+      message: expect.stringMatching(/No tokens stored/),
+    })
+    expect(server.refreshCount).toBe(0)
+  })
+
   it('still refreshes when the stored token is also expired', async () => {
     const shortLived = await startFakeAuthServer({ expiresIn: 1 })
 
