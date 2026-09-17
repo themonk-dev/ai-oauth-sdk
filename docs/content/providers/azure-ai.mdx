@@ -41,13 +41,24 @@ For tenant `T`, the endpoints are all under
 | Authorization | `/authorize` |
 | Token | `/token` |
 | Device | `/devicecode` |
-| Logout | `/logout` |
 | Userinfo | `https://graph.microsoft.com/oidc/userinfo` |
 
 Default scopes are `https://cognitiveservices.azure.com/.default`, `offline_access`, `openid` and
 `profile`. The first is the Azure AI Services resource, which is what grants access to the models;
 the `.default` suffix tells Entra to issue whatever the app registration has been consented for,
 rather than asking per-scope.
+
+## Signing out
+
+There is no revocation endpoint, because Entra does not publish one — its discovery document has no
+`revocation_endpoint`, and the `/oauth2/v2.0/logout` that sits beside the endpoints above is the
+OIDC `end_session_endpoint`, a front-channel URL the browser is navigated to in order to clear a
+sign-in session. It does not revoke a refresh token issued to your app.
+
+So `logout()` clears the local credential and says so, and `logout --revoke` warns that it cleared
+locally only rather than reporting a revocation that did not happen. To end the session itself, do
+it in the directory: Graph's `revokeSignInSessions` (`Revoke-MgUserSignInSession`), or
+**Entra ID > Users > Sign-ins**. Until then a leaked refresh token stays valid.
 
 ## Registering the app
 

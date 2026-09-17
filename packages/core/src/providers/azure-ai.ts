@@ -34,6 +34,11 @@ export interface AzureAiProviderOptions {
  * Register the app as a **public client** with a loopback redirect URI; Entra
  * then accepts PKCE without a client secret.
  *
+ * `logout()` clears the local credential and nothing else: Entra exposes no
+ * RFC 7009 revocation endpoint, so `{ revoke: true }` reports that rather than
+ * pretending. To end the session itself, revoke it in the directory — Graph's
+ * `revokeSignInSessions`, or Entra ID > Users > Sign-ins.
+ *
  * The id was `microsoft` before 0.4. `previousIds` carries that, so a stored
  * credential is found under the old key once and moved to the new one.
  */
@@ -49,7 +54,27 @@ export function azureAi(options: AzureAiProviderOptions): ProviderConfig {
     authorizationUrl: `${base}/authorize`,
     tokenUrl: `${base}/token`,
     deviceAuthorizationUrl: `${base}/devicecode`,
-    revocationUrl: `${base}/logout`,
+    /* No `revocationUrl`, deliberately. Entra publishes no RFC 7009
+       `revocation_endpoint` — its discovery document has no such field — and the
+       `/oauth2/v2.0/logout` that sits beside the endpoints above is the OIDC
+       `end_session_endpoint`, a front-channel URL the *browser* is navigated to
+       in order to clear the sign-in session. It does not revoke a refresh token
+       issued to this client.
+
+       Naming it here was worse than naming nothing. `revokeToken` POSTs the
+       refresh token to whatever this field holds and treats HTTP 400 as success
+       alongside 2xx, per RFC 7009, where an unknown or already-revoked token is
+       a terminal outcome rather than a failure — so both answers the logout page
+       can give read as "revoked". `logout({ revoke: true })` swallows what is
+       left, and the CLI only warns "clearing locally only" when this field is
+       absent. The result was that `logout --revoke` reported a revocation that
+       had not happened, on the one provider where it had not, at exactly the
+       moment a user reaches for it: after a credential has leaked. Absent, every
+       one of those paths says plainly that nothing was revoked.
+
+       Ending an Entra session is a directory operation, not an OAuth one: Graph's
+       `revokeSignInSessions` (`Revoke-MgUserSignInSession`), or Entra ID > Users >
+       Sign-ins. */
     userInfoUrl: 'https://graph.microsoft.com/oidc/userinfo',
     scopes: options.scopes ?? [
       'https://cognitiveservices.azure.com/.default',

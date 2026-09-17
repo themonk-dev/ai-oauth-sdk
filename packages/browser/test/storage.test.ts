@@ -128,18 +128,38 @@ describe('without web storage', () => {
     }
   }
 
+  /** Defines global classes for the duration of a test, and takes them away again. */
+  function defineGlobals(...names: string[]) {
+    for (const name of names) {
+      Object.defineProperty(globalThis, name, { value: class {}, configurable: true })
+    }
+
+    return () => {
+      for (const name of names) {
+        Reflect.deleteProperty(globalThis, name)
+      }
+    }
+  }
+
   /**
-   * Stands in for a Web Worker scope: no web storage and no `window`, exactly
-   * as on a server, and told apart from one only by `WorkerGlobalScope` — which
-   * is why the adapters look for that rather than for the storage global.
+   * Stands in for a browser Web Worker scope: no web storage and no `window`,
+   * exactly as on a server, and told apart from one by two globals rather than
+   * the one it used to take. `WorkerNavigator` is `[Exposed=Worker]`, so a real
+   * worker always has it — see {@link pretendWorkerd} for why that second
+   * signal is load-bearing.
    */
   function pretendWorker() {
-    Object.defineProperty(globalThis, 'WorkerGlobalScope', {
-      value: class WorkerGlobalScope {},
-      configurable: true,
-    })
+    return defineGlobals('WorkerGlobalScope', 'WorkerNavigator')
+  }
 
-    return () => Reflect.deleteProperty(globalThis, 'WorkerGlobalScope')
+  /**
+   * Stands in for Cloudflare's workerd, which declares `WorkerGlobalScope` as a
+   * global class and has no `WorkerNavigator`. It is a server: one isolate
+   * serves every request in a deployment, so an in-memory store there is shared
+   * across users, not scoped to one.
+   */
+  function pretendWorkerd() {
+    return defineGlobals('WorkerGlobalScope')
   }
 
   it('localStorageAdapter does not throw on construction', () => {
@@ -229,6 +249,49 @@ describe('without web storage', () => {
       expect(await session.get('k')).toBe('session')
     } finally {
       restoreWorker()
+      restoreSession()
+      restoreLocal()
+    }
+  })
+
+  it('refuses on workerd, which has WorkerGlobalScope and is still a server', async () => {
+    // The probe used to be `'WorkerGlobalScope' in globalThis`, which workerd
+    // satisfies: it declares the class globally and hangs it off the Worker
+    // global object. That handed back `memoryStorage()` on a runtime where one
+    // isolate serves every request in a deployment, pooling one user's tokens
+    // — access token, refresh token and PKCE verifier alike — into a Map the
+    // next user's request reads from. Workers is a documented target, so this
+    // has to refuse rather than degrade.
+    const restoreLocal = hide('localStorage')
+    const restoreSession = hide('sessionStorage')
+    const restoreWorkerd = pretendWorkerd()
+
+    try {
+      await expect(localStorageAdapter().get('k')).rejects.toMatchObject({
+        code: 'unsupported_runtime',
+      })
+      await expect(sessionStorageAdapter().set('k', 'v')).rejects.toMatchObject({
+        code: 'unsupported_runtime',
+      })
+    } finally {
+      restoreWorkerd()
+      restoreSession()
+      restoreLocal()
+    }
+  })
+
+  it('constructs inertly on workerd, so a server render is not taken down', () => {
+    // Refusing is a use-time decision, not a construction-time one: these
+    // adapters are called from render bodies that SSR also runs.
+    const restoreLocal = hide('localStorage')
+    const restoreSession = hide('sessionStorage')
+    const restoreWorkerd = pretendWorkerd()
+
+    try {
+      expect(() => localStorageAdapter()).not.toThrow()
+      expect(() => sessionStorageAdapter()).not.toThrow()
+    } finally {
+      restoreWorkerd()
       restoreSession()
       restoreLocal()
     }
