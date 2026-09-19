@@ -5,6 +5,18 @@ const PENDING_PREFIX = 'pending:'
 const LATEST_PREFIX = 'pending-latest:'
 const DEFAULT_TTL_MS = 10 * 60 * 1000
 
+/**
+ * `consume` calls still running, by storage and then by state.
+ *
+ * Keyed on the store rather than held per registry because one registry per
+ * caller is the normal shape, not the exception: every `AuthClient` mints its
+ * own, so a lock on the instance would have serialised nothing between two
+ * clients built separately. The key is the adapter object, which is why
+ * `@ai-oauth-sdk/browser` hands back one adapter per `sessionStorage` rather
+ * than a fresh wrapper per call. See {@link AuthorizationRegistry.consume}.
+ */
+const consuming = new WeakMap<AuthStorage, Map<string, Promise<PendingAuthorization>>>()
+
 export interface AuthorizationRegistryOptions {
   storage: AuthStorage
   /** How long a started authorization stays valid. Default 10 minutes. */
@@ -43,8 +55,6 @@ export class AuthorizationRegistry {
   readonly #settled = new Map<string, { tokens?: TokenSet; error?: unknown; at: number }>()
   readonly #settledTtlMs: number
   readonly #maxSettled: number
-  /** `consume` calls still running, by state. See {@link consume}. */
-  readonly #consuming = new Map<string, Promise<PendingAuthorization>>()
 
   constructor(options: AuthorizationRegistryOptions) {
     this.#storage = options.storage
@@ -52,6 +62,17 @@ export class AuthorizationRegistry {
     this.#settledTtlMs = options.settledTtlMs ?? this.#ttlMs
     this.#maxSettled = options.maxSettled ?? 1000
     this.#now = options.now ?? (() => Date.now())
+  }
+
+  /**
+   * How long a pending record stays valid.
+   *
+   * Exposed because it is also the longest a login can usefully wait: past it
+   * the record the exchange needs is gone, so `AuthClient.login()` reads it to
+   * bound a flow that has no other way to end.
+   */
+  get ttlMs(): number {
+    return this.#ttlMs
   }
 
   /**
@@ -227,14 +248,30 @@ export class AuthorizationRegistry {
    * every token it already issued for a reused code, taking out the session the
    * first call had just established.
    *
-   * In-process only, and deliberately so. `AuthStorage` has no
-   * compare-and-swap, so two CLI windows sharing one `auth.json` can still both
-   * read the record before either deletes it. Closing that needs an atomic
-   * primitive on the storage interface, which is a much larger change than this
-   * defect justifies.
+   * Calls queue per storage object, which is what makes this hold for callers
+   * that never meet: a page builds a fresh `AuthClient` — and so a fresh
+   * registry — for each `loginWithPopup()`, and every one of them is handed the
+   * same adapter, because `sessionStorageAdapter()` returns one adapter per
+   * `sessionStorage` rather than a new wrapper each call.
+   *
+   * It stops at that object, and the object is the whole guarantee. Two clients
+   * each given their own wrapper around one backing store — `fromSyncStorage`
+   * called twice by hand, a `prefixedStorage` per client, a server minting a
+   * store per request — key two different locks and can both read the record;
+   * so can two CLI windows over one `auth.json`, which do not share memory at
+   * all. `AuthStorage` has no compare-and-swap, so closing those needs an
+   * atomic primitive on the storage interface, which is a much larger change
+   * than this defect justifies.
    */
   async consume(state: string): Promise<PendingAuthorization> {
-    const inFlight = this.#consuming.get(state)
+    let inFlightByState = consuming.get(this.#storage)
+
+    if (!inFlightByState) {
+      inFlightByState = new Map()
+      consuming.set(this.#storage, inFlightByState)
+    }
+
+    const inFlight = inFlightByState.get(state)
 
     if (inFlight) {
       // However the first call ends — consumed, expired, or thrown — the record
@@ -245,12 +282,12 @@ export class AuthorizationRegistry {
     }
 
     const running = this.#consumeOnce(state)
-    this.#consuming.set(state, running)
+    inFlightByState.set(state, running)
 
     try {
       return await running
     } finally {
-      this.#consuming.delete(state)
+      inFlightByState.delete(state)
     }
   }
 

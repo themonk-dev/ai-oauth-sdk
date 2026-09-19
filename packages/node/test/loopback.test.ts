@@ -431,6 +431,54 @@ describe('loopbackReceiver', () => {
     }
   })
 
+  it('refuses a browser request that omits the destination', async () => {
+    // A request that labels itself a browser's — `Sec-Fetch-Site` present and
+    // not `none` — and then leaves out `Sec-Fetch-Dest` used to pass the gate,
+    // because the destination was only faulted when it was there. No engine
+    // sends the one header without the other, so the shape is a forgery and
+    // the check is the one SECURITY.md documents: navigate *to a document*.
+    //
+    // Unpresented, as in the subresource case above, so the fetch-metadata gate
+    // is the only thing that can refuse this — a `state` comparison would 403
+    // it whatever the headers said.
+    const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+    const waiting = started.wait()
+
+    try {
+      const partial = await rawGet(`${started.redirectUri}?error=access_denied`, {
+        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Mode': 'navigate',
+      })
+      expect(partial.status).toBe(403)
+      expect(await isSettled(waiting)).toBe(false)
+
+      const real = await rawGet(`${started.redirectUri}?code=abc&state=xyz`, navigationHeaders)
+      expect(real.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('accepts a URL the user typed in themselves', async () => {
+    // `Sec-Fetch-Site: none` is a typed-in or bookmarked URL, and it is what
+    // exempts the request before the mode and destination are looked at — a
+    // browser sends no `Sec-Fetch-Mode: navigate` pair worth speaking of for
+    // one. Tightening the destination must not reach this case.
+    const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+    const waiting = started.wait()
+
+    try {
+      const typed = await rawGet(`${started.redirectUri}?code=abc&state=xyz`, {
+        'Sec-Fetch-Site': 'none',
+      })
+      expect(typed.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+    } finally {
+      await started.close()
+    }
+  })
+
   it('accepts a caller that sends no fetch metadata at all', async () => {
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
     const waiting = started.wait()
@@ -593,6 +641,56 @@ describe('loopbackReceiver', () => {
         expect(started.redirectUri).toContain('127.0.0.1')
         const result = await rawGet(`${started.redirectUri}?code=literal&state=xyz`, navigationHeaders)
         expect(result.status).toBe(200)
+      } finally {
+        await started.close()
+      }
+    })
+  })
+
+  // `::1` is a host this module already contemplates — `ipLiteralHosts` and
+  // `siblingAddresses` both name it — so a caller may reasonably pass it. An
+  // IPv6 literal is the one host form that cannot be dropped into a URI
+  // unbracketed, and both places that built one from it got it wrong.
+  describe('accepts an IPv6 loopback host', () => {
+    it.skipIf(!hasIpv6)('serves the callback rather than taking the process down', async () => {
+      // The request URL used to be parsed against `http://${bindHost}`, which
+      // for this host is `http://::1` — not a URL. `node:http` has nothing
+      // above the listener to catch that, so the throw reached the default
+      // `uncaughtException` handler and a single GET killed the process.
+      const started = await loopbackReceiver({ port: 0, host: '::1', openBrowser: false }).start({
+        provider: testProvider(server.url),
+      })
+      const port = new URL(started.redirectUri).port
+
+      try {
+        const response = await rawGet(
+          `http://[::1]:${port}/callback?code=six&state=xyz`,
+          navigationHeaders,
+        )
+        expect(response.status).toBe(200)
+        await expect(started.wait()).resolves.toMatchObject({ code: 'six' })
+      } finally {
+        await started.close()
+      }
+    })
+
+    it('brackets the literal in the redirect URI it advertises', async () => {
+      // `http://::1:34835/callback` is not a URI: the address's own colons run
+      // into the port separator. The authorization server is handed this
+      // string verbatim, and `new URL()` on it throws. Advertising the literal
+      // does not require binding it, so this case does not need a dual-stack
+      // kernel — the bind stays on the default `127.0.0.1`.
+      const started = await loopbackReceiver({
+        port: 0,
+        redirectHost: '::1',
+        openBrowser: false,
+      }).start({ provider: testProvider(server.url) })
+
+      try {
+        const url = new URL(started.redirectUri)
+        expect(url.hostname).toBe('[::1]')
+        expect(Number(url.port)).toBeGreaterThan(0)
+        expect(url.pathname).toBe('/callback')
       } finally {
         await started.close()
       }

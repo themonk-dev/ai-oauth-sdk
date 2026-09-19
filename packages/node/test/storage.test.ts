@@ -1,9 +1,9 @@
 import { mkdtemp, readdir, rm, stat, readFile, symlink, writeFile, mkdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fileStorage } from '../src/storage.js'
+import { defaultAuthDir, fileStorage } from '../src/storage.js'
 
 let dir: string
 
@@ -135,5 +135,40 @@ describe('fileStorage', () => {
   it('deleting an absent key is a no-op', async () => {
     const storage = fileStorage({ dir })
     await expect(storage.delete('nothing')).resolves.toBeUndefined()
+  })
+})
+
+describe('defaultAuthDir', () => {
+  const home = process.env['AI_OAUTH_SDK_HOME']
+
+  afterEach(() => {
+    if (home === undefined) {
+      delete process.env['AI_OAUTH_SDK_HOME']
+    } else {
+      process.env['AI_OAUTH_SDK_HOME'] = home
+    }
+  })
+
+  it('honours AI_OAUTH_SDK_HOME', () => {
+    process.env['AI_OAUTH_SDK_HOME'] = dir
+    expect(defaultAuthDir()).toBe(dir)
+  })
+
+  it('falls back to the home directory when the variable is set but blank', () => {
+    // A Dockerfile's `ENV AI_OAUTH_SDK_HOME=`, or `export
+    // AI_OAUTH_SDK_HOME="$SOMETHING_UNSET"` in CI, leaves it present and
+    // empty. `??` carried that through as a relative path, so refresh tokens
+    // landed in `./auth.json` in whatever the cwd happened to be.
+    for (const blank of ['', '   ']) {
+      process.env['AI_OAUTH_SDK_HOME'] = blank
+      expect(defaultAuthDir()).toBe(join(homedir(), '.ai-oauth-sdk'))
+    }
+  })
+
+  it('writes nothing to the working directory when the variable is blank', () => {
+    process.env['AI_OAUTH_SDK_HOME'] = ''
+    // The path is what decides where the credential file goes, and a relative
+    // one puts it in a git working tree or a Docker build context.
+    expect(isAbsolute(defaultAuthDir())).toBe(true)
   })
 })

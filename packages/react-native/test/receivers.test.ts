@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { defineProvider, type ProviderConfig } from '@ai-oauth-sdk/core'
+import { createAuthClient, defineProvider, memoryStorage, type ProviderConfig } from '@ai-oauth-sdk/core'
 
 import { authSessionReceiver, deepLinkReceiver } from '../src/receivers.js'
 import { asyncStorageAdapter, secureStoreAdapter } from '../src/storage.js'
@@ -198,6 +198,74 @@ describe('deepLinkReceiver', () => {
     await expect(waiting).resolves.toMatchObject({ code: 'unechoed' })
 
     await started.close()
+  })
+
+  it('ignores a denial when the attempt presented no state to compare', async () => {
+    // OpenRouter builds an authorization URL with no `state` at all, so there
+    // is nothing to hold a deep link against — and on a custom scheme that
+    // would leave any app on the device, or any web page the user taps a link
+    // on, able to cancel a live sign-in with one `?error=access_denied`.
+    const fake = fakeLinking()
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider,
+    })
+
+    await started.present('https://provider.test/authorize')
+    const waiting = started.wait()
+
+    fake.emit(`${REDIRECT}?error=access_denied`)
+    expect(await outcomeOf(waiting)).toBe('ignored')
+
+    // The callback such a provider does send still lands.
+    fake.emit(`${REDIRECT}?code=unstated`)
+    await expect(waiting).resolves.toMatchObject({ code: 'unstated' })
+
+    await started.close()
+  })
+
+  it('ignores a denial with no state against a provider that echoes none', async () => {
+    const fake = fakeLinking()
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider: defineProvider({ ...provider, echoesState: false }),
+    })
+
+    await started.present('https://provider.test/authorize?state=presented')
+    const waiting = started.wait()
+
+    fake.emit(`${REDIRECT}?error=access_denied`)
+    expect(await outcomeOf(waiting)).toBe('ignored')
+
+    fake.emit(`${REDIRECT}?code=unechoed`)
+    await expect(waiting).resolves.toMatchObject({ code: 'unechoed' })
+
+    await started.close()
+  })
+
+  it('does not leave a login hanging when the denial it dropped was the only answer', async () => {
+    // There is no close-poll here — the popup receiver's is what makes a
+    // dropped denial survivable in a browser — so a deep-link login against a
+    // provider with no `state` to attribute one against would wait forever,
+    // holding `pending:<state>` and the live PKCE verifier in it. `login()`
+    // gives such a flow the pending record's TTL as a deadline instead
+    // (shortened here from the ten-minute default).
+    const fake = fakeLinking()
+    const storage = memoryStorage()
+    const stateless = defineProvider({
+      ...provider,
+      id: 'stateless',
+      echoesState: false,
+      buildAuthParams: (params) => ({ callback_url: params['redirect_uri'] ?? '' }),
+    })
+    const client = createAuthClient({ provider: stateless, storage, stateTtlMs: 50 })
+
+    const loggingIn = client.login({
+      receiver: deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }),
+    })
+    await vi.waitFor(() => expect(fake.opened).toHaveLength(1))
+    fake.emit(`${REDIRECT}?error=access_denied`)
+
+    await expect(loggingIn).rejects.toMatchObject({ code: 'timeout' })
+    expect(await storage.keys!(), 'no verifier may be left at rest').toEqual([])
   })
 
   it('ignores a callback whose state disagrees', async () => {

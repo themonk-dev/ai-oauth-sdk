@@ -17,12 +17,19 @@ application from logging or transmitting them.
 
 What it does do:
 
-**PKCE is on by default**, with S256, for every redirect-based provider. The verifier is persisted
-only for the flow's lifetime, ten minutes by default, and consumed once, so a replayed callback
-cannot replay the exchange. Callbacks arriving together for one `state` are serialised, so a browser
-double-submit or a prefetched redirect gets one exchange rather than two. That serialisation is per
-process: `AuthStorage` has no compare-and-swap, so two processes sharing one credential file can
-still both consume the same record.
+**PKCE is on by default**, with S256, for every redirect-based provider, including a descriptor
+handed to `createAuthClient` as a plain object rather than through `defineProvider`. The verifier is
+persisted only for the flow's lifetime, ten minutes by default, and consumed once, so a replayed
+callback cannot replay the exchange. A flow that times out, is aborted, or is refused on a `state`
+mismatch drops its record then, rather than leaving the verifier at rest until some later login
+sweeps it. Callbacks arriving together for one `state` are serialised, so a browser double-submit or
+a prefetched redirect gets one exchange rather than two. That serialisation is per `AuthStorage`
+*object*: every client handed the same adapter serialises against the others, which is what covers
+the browser default, since `sessionStorageAdapter()` returns one adapter per `sessionStorage` and
+`createBrowserAuthClient` gives it to every client the page builds. It is not more than that — the
+store has no compare-and-swap, so callers that do not share one adapter object are not covered:
+two processes over one credential file, a server that mints a fresh store per request, and a caller
+that wraps the same backing store in an adapter of its own can each still consume the same record.
 
 **Randomness never degrades.** With no `crypto.getRandomValues` available, the library throws rather
 than falling back to `Math.random()`. A guessable `state` or PKCE verifier defeats the point of
@@ -41,6 +48,15 @@ an opener, so omitting the parameter must not become a way to skip the check. A 
 Providers that never return `state`, which today means OpenRouter, set `echoesState: false` and
 resolve against the most recently started flow instead. That is fine for a CLI or a single-flow app.
 **It is not safe in a multi-user server**, where one user's callback could complete another's login.
+
+A login against such a provider also gets a deadline whether or not you pass one: a receiver may not
+end an attempt on a failure it cannot attribute (see `announceCallback` below), and with no `state`
+to attribute against, a genuine denial is dropped rather than raised. Without a bound the call would
+never return and the PKCE verifier would sit in storage for the record's whole life, so `login()`
+gives it the pending record's TTL — ten minutes by default, and past it the record the exchange needs
+has expired anyway — and deletes the pending record when it fires. Pass `timeoutMs` to shorten it.
+Providers that echo `state` are unbounded as before, because a denial from one can be attributed and
+fails immediately.
 
 **The loopback server** binds the loopback interface, never `0.0.0.0`, answers `GET` and `HEAD`
 only, and closes itself the moment a callback settles, so it really does serve exactly one. It sends `no-store`,

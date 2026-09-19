@@ -89,7 +89,14 @@ export function resolveProvider(
   let base: ProviderConfig
 
   if (isProviderConfig(provider)) {
-    base = provider
+    // Through `defineProvider`, not verbatim. TypeScript makes an inline
+    // descriptor state `usePkce`/`pkceMethod`/`tokenRequest`, but a JavaScript
+    // caller — or one building the descriptor out of a JSON config file — does
+    // not, and taking it as-is left `usePkce` undefined: PKCE silently off, for
+    // a provider that never asked to opt out. It is idempotent on a descriptor
+    // that already came from `defineProvider`, and `...input` spreads after the
+    // defaults, so an explicit `usePkce: false` still wins.
+    base = defineProvider(provider)
   } else {
     const found = (providers as Record<string, ProviderConfig | undefined>)[provider]
 

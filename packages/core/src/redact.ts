@@ -13,7 +13,13 @@
  * on it to make an arbitrary secret safe to print.
  */
 
-/** OAuth parameters whose values are credentials, in JSON or form encoding. */
+/**
+ * OAuth parameters whose values are credentials, in JSON or form encoding.
+ *
+ * Not only the standard names: a provider that spells one of these differently
+ * needs its own entry here, because `\b` cannot fire inside a word — `code`
+ * never matches `user_code`.
+ */
 const SECRET_PARAMS = [
   'access_token',
   'refresh_token',
@@ -24,6 +30,9 @@ const SECRET_PARAMS = [
   'token',
   'code',
   'assertion',
+  /* OpenAI's device flow: the pair that polls its token endpoint. */
+  'device_auth_id',
+  'user_code',
 ]
 
 /**

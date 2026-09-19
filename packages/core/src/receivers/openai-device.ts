@@ -26,7 +26,27 @@ const VERIFICATION_URI = `${ISSUER}/codex/device`
 const DEVICE_REDIRECT_URI = `${ISSUER}/deviceauth/callback`
 
 const DEFAULT_INTERVAL_SECONDS = 5
+const MIN_INTERVAL_SECONDS = 1
+const MAX_INTERVAL_SECONDS = 60
 const DEFAULT_EXPIRY_SECONDS = 15 * 60
+const MAX_EXPIRY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Reads a numeric field from an untrusted response, bounded and with a default.
+ *
+ * The bounds the RFC 8628 path applies (see `device.ts`), for the reason they
+ * exist there: nothing downstream re-reads these two fields, so an `interval`
+ * of `0.001` turns the poll loop into a flood of requests and an `expires_at`
+ * in 2099 turns it into one that never gives up. `interval` arrives as a string
+ * on this flow, so the coercion happens at the call site rather than here.
+ */
+function clamp(value: number, fallback: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback
+  }
+
+  return Math.min(Math.max(value, min), max)
+}
 
 interface UserCodeResponse {
   device_auth_id?: unknown
@@ -113,7 +133,12 @@ async function start(input: DeviceFlowStartInput) {
     )
   }
 
-  const interval = Number(raw['interval'])
+  const interval = clamp(
+    Number(raw['interval']),
+    DEFAULT_INTERVAL_SECONDS,
+    MIN_INTERVAL_SECONDS,
+    MAX_INTERVAL_SECONDS,
+  )
   const expiresAt = Date.parse(String(raw['expires_at'] ?? ''))
 
   return {
@@ -122,9 +147,9 @@ async function start(input: DeviceFlowStartInput) {
     verificationUri: VERIFICATION_URI,
     verificationUriComplete: `${VERIFICATION_URI}?user_code=${encodeURIComponent(userCode)}`,
     expiresAt: Number.isFinite(expiresAt)
-      ? expiresAt
+      ? Math.min(expiresAt, Date.now() + MAX_EXPIRY_MS)
       : Date.now() + DEFAULT_EXPIRY_SECONDS * 1000,
-    intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : DEFAULT_INTERVAL_SECONDS) * 1000,
+    intervalMs: interval * 1000,
   }
 }
 

@@ -75,7 +75,10 @@ function stateOfAuthorizationUrl(url: string): string | undefined {
  * `login()` are for. Nothing to compare is not a mismatch, though: a provider
  * that sends no `state` in the first place (OpenRouter builds an authorization
  * URL without one) leaves this receiver with no attempt to tell callbacks apart
- * by, and one is taken as it comes.
+ * by, and one is taken as it comes — a successful one, that is. A deep link
+ * that reads as a failure settles nothing unless its `state` matches, so a
+ * denial from such a provider leaves the login to its timeout rather than
+ * letting any app on the device end it.
  *
  * `wait()` also reads `getInitialURL()`, which is where the OS leaves a
  * redirect it delivered as a launch rather than as a `url` event. The same
@@ -141,16 +144,19 @@ export function deepLinkReceiver(options: DeepLinkReceiverOptions): CallbackRece
        * `error=` callback, and that rejection is exactly what an unrelated app
        * would like to hand us.
        */
-      const read = (url: string): { state: string | undefined; settle: () => void } => {
+      const read = (
+        url: string,
+      ): { state: string | undefined; failed: boolean; settle: () => void } => {
         try {
           const result = readCallback(context.provider, url)
 
-          return { state: result.state, settle: () => resolveCallback(result) }
+          return { state: result.state, failed: false, settle: () => resolveCallback(result) }
         } catch (error) {
           // `readCallback` carries the `state` its parse found onto the error
           // it throws, so even a refusal still says whose it is.
           return {
             state: isOAuthError(error) ? error.state : undefined,
+            failed: true,
             settle: () => rejectCallback(error),
           }
         }
@@ -180,6 +186,18 @@ export function deepLinkReceiver(options: DeepLinkReceiverOptions): CallbackRece
           context.provider.echoesState !== false &&
           callback.state !== presentedState
         ) {
+          return
+        }
+
+        // Both of those exceptions say "nothing to compare", and nothing to
+        // compare is not enough to *fail* a login. A deep link that reads as a
+        // failure has to be shown to be ours first, or any app on the device
+        // could cancel a sign-in against a provider that echoes no `state` by
+        // sending one unsolicited `?error=access_denied`. The `?code=` callback
+        // such a provider does send still lands; a genuine denial from one no
+        // longer fails fast, and the login runs to its `timeoutMs` or `signal`
+        // instead.
+        if (callback.failed && (presentedState === undefined || callback.state !== presentedState)) {
           return
         }
 

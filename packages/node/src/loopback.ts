@@ -264,7 +264,8 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
  * match — but a bare `?error=access_denied` would settle the callback promise
  * and kill a login that was in progress. So a request the browser itself labels
  * as a subresource is refused without touching the promise: `Sec-Fetch-Site`
- * present, not `none`, and `Sec-Fetch-Mode` something other than `navigate`.
+ * present, not `none`, and anything other than `Sec-Fetch-Mode: navigate` with
+ * `Sec-Fetch-Dest: document`.
  * The headers are only trusted when the browser sends them; curl, undici and
  * anything else non-browser send no `Sec-Fetch-Site` at all and are unaffected.
  *
@@ -431,15 +432,17 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         // origin — mixed content does not block one embedded in an https page.
         // That is the same drive-by with nothing for the user to notice. Only
         // `document` is a real redirect back from the provider; `iframe`,
-        // `frame`, `object` and `embed` are not.
+        // `frame`, `object` and `embed` are not, and neither is a request that
+        // labels itself a browser's and then omits the destination: every
+        // engine that sends `Sec-Fetch-Site` sends `Sec-Fetch-Dest` with it, so
+        // once the exemption above no longer applies all three are required.
         const fetchSite = request.headers['sec-fetch-site']
         const fetchDest = request.headers['sec-fetch-dest']
 
         if (
           typeof fetchSite === 'string' &&
           fetchSite !== 'none' &&
-          (request.headers['sec-fetch-mode'] !== 'navigate' ||
-            (typeof fetchDest === 'string' && fetchDest !== 'document'))
+          (request.headers['sec-fetch-mode'] !== 'navigate' || fetchDest !== 'document')
         ) {
           response.writeHead(403, { ...securityHeaders, 'Content-Type': 'text/plain' })
           response.end('Forbidden')
@@ -447,7 +450,13 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        const url = new URL(request.url ?? '/', `http://${bindHost}`)
+        // The base is a constant because nothing here reads the authority off
+        // the result — only `pathname` and `search`. Interpolating `bindHost`
+        // instead made `loopbackReceiver({ host: '::1' })` parse against
+        // `http://::1`, and the `ERR_INVALID_URL` that throws from has nothing
+        // above it to catch: `node:http` lets it reach the default
+        // `uncaughtException` handler, so one GET took the process down.
+        const url = new URL(request.url ?? '/', 'http://localhost')
 
         if (url.pathname !== path) {
           response.writeHead(404, { ...securityHeaders, 'Content-Type': 'text/plain' })

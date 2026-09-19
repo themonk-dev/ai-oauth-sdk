@@ -266,14 +266,20 @@ describe('popupReceiver against a provider that severs the opener', () => {
     await started.close()
   })
 
-  it('surfaces a provider denial arriving over the channel', async () => {
+  /**
+   * A denial only fails the attempt over this channel when it echoes the
+   * `state` that was presented — anything the receiver cannot attribute is
+   * left alone, since a broadcast reaches every context on the origin and a
+   * page on another origin can get this one's redirect page loaded.
+   */
+  it('surfaces a provider denial that echoes the presented state', async () => {
     const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
       provider: severingProvider,
     })
     const waiting = started.wait()
-    await started.present('https://severe.test/authorize')
+    await started.present('https://severe.test/authorize?state=xyz')
 
-    announceCallback('?error=access_denied&error_description=nope')
+    announceCallback('?error=access_denied&error_description=nope&state=xyz')
 
     await expect(waiting).rejects.toMatchObject({
       code: 'authorization_denied',
@@ -504,6 +510,52 @@ describe('a callback broadcast while another attempt is open', () => {
 
     broadcastCallback('?code=unechoed')
 
+    await expect(started.wait()).resolves.toEqual({ code: 'unechoed' })
+  })
+
+  /**
+   * The same "nothing to compare" seen from the attacker's side, and the
+   * reason a failure is held to a stricter rule than a success. An
+   * authorization URL that carries no `state` — OpenRouter strips it in
+   * `buildAuthParams` — leaves the receiver taking whatever arrives, and the
+   * redirect page announces whatever query string it was loaded with. A page
+   * on another origin that opens this origin's redirect page with
+   * `?error=access_denied` (a `<a target="_blank" rel="noopener">` is enough;
+   * no iframe and no opener involved) therefore puts a denial on this channel,
+   * and settling on it would cancel a live sign-in from off-origin. The
+   * `?code=` callback such a provider actually sends still lands.
+   */
+  it('does not let a state-less denial cancel an attempt that presented no state', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: severingProvider,
+    })
+    await started.present('https://provider.test/authorize')
+
+    const watched = watch(started)
+
+    broadcastCallback('?error=access_denied&error_description=nope')
+    await delivered()
+
+    expect(watched.settled).toBe(false)
+
+    broadcastCallback('?code=mine')
+    await expect(started.wait()).resolves.toEqual({ code: 'mine' })
+  })
+
+  it('does not let a state-less denial cancel an attempt on a provider that echoes no state', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: defineProvider({ ...severingProvider, echoesState: false }),
+    })
+    await started.present('https://provider.test/authorize?state=presented')
+
+    const watched = watch(started)
+
+    broadcastCallback('?error=access_denied')
+    await delivered()
+
+    expect(watched.settled).toBe(false)
+
+    broadcastCallback('?code=unechoed')
     await expect(started.wait()).resolves.toEqual({ code: 'unechoed' })
   })
 

@@ -12,9 +12,19 @@ export interface FileStorageOptions {
   file?: string
 }
 
-/** Default location, overridable with `AI_OAUTH_SDK_HOME`. */
+/**
+ * Default location, overridable with `AI_OAUTH_SDK_HOME`.
+ *
+ * Blank is "unset", not "the current directory". A Dockerfile's `ENV
+ * AI_OAUTH_SDK_HOME=` or an `export AI_OAUTH_SDK_HOME="$SOMETHING_UNSET"` in CI
+ * leaves the variable present and empty, which `??` would carry through as a
+ * relative path and write refresh tokens to `./auth.json` in whatever the cwd
+ * happens to be — a git working tree, a Docker build context. The CLI's
+ * `--auth-dir` flag is guarded on truthiness for the same reason, and the two
+ * are documented as equivalent.
+ */
 export function defaultAuthDir(): string {
-  return process.env['AI_OAUTH_SDK_HOME'] ?? join(homedir(), '.ai-oauth-sdk')
+  return process.env['AI_OAUTH_SDK_HOME']?.trim() || join(homedir(), '.ai-oauth-sdk')
 }
 
 /**

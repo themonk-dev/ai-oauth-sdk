@@ -9,6 +9,7 @@ import {
   claude,
   defineProvider,
   gemini,
+  githubCopilot,
   openai,
   openrouter,
   parseStandardCallback,
@@ -325,6 +326,46 @@ describe('resolveProvider', () => {
     expect(custom.pkceMethod).toBe('S256')
     expect(custom.tokenRequest.style).toBe('form')
     expect(custom.redirect.loopbackPath).toBe('/callback')
+  })
+
+  /*
+   * The test above hands in a `defineProvider()` result, so it never exercises
+   * the descriptor a JavaScript caller — or a JSON config file — actually
+   * produces. Taken verbatim that one arrives with `usePkce` undefined, and the
+   * flow ran with no PKCE at all.
+   */
+  it('applies the defaults to a raw descriptor that never went through defineProvider', async () => {
+    const raw = {
+      id: 'raw',
+      label: 'Raw',
+      authorizationUrl: 'https://raw.test/authorize',
+      tokenUrl: 'https://raw.test/token',
+      scopes: ['read'],
+      redirect: { mode: 'loopback', loopbackPort: 9999 },
+    } as never
+
+    const resolved = resolveProvider(raw)
+    expect(resolved.usePkce).toBe(true)
+    expect(resolved.pkceMethod).toBe('S256')
+    expect(resolved.tokenRequest.style).toBe('form')
+
+    const client = createAuthClient({
+      provider: raw,
+      clientId: 'raw-client',
+      redirectUri: 'http://localhost:9999/callback',
+      storage: memoryStorage(),
+    })
+    const authorization = await client.createAuthorization()
+    const params = new URL(authorization.url).searchParams
+
+    expect(params.get('code_challenge')).toBeTruthy()
+    expect(params.get('code_challenge_method')).toBe('S256')
+    expect(authorization.codeVerifier).toBeTruthy()
+  })
+
+  it('leaves a descriptor that opts out of PKCE opted out', () => {
+    expect(resolveProvider(githubCopilot).usePkce).toBe(false)
+    expect(resolveProvider('github-copilot').usePkce).toBe(false)
   })
 })
 

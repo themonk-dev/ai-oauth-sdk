@@ -119,6 +119,8 @@ export class AuthClient {
   #refreshInFlight: Promise<TokenSet> | undefined
   #cachedTokens: TokenSet | undefined
   #tokensLoaded = false
+  /** Bumped by every `logout()`. See {@link AuthClient.#assertNotLoggedOut}. */
+  #logoutEpoch = 0
 
   constructor(options: AuthClientOptions) {
     const overrides: Partial<ProviderConfig> = {}
@@ -375,6 +377,11 @@ export class AuthClient {
    * recently started flow instead, with the caveats on `echoesState`. The
    * comparison itself is constant-time, because `callback.state` is attacker
    * controlled.
+   *
+   * `timeoutMs` and `signal` are both optional, and a login for a provider that
+   * presents a `state` waits as long as the caller wants it to. One that
+   * presents none cannot: see {@link AuthClient.#defaultTimeoutMs} for why it
+   * is given the pending record's TTL as a deadline instead.
    */
   async login(options: LoginOptions): Promise<TokenSet> {
     const context = {
@@ -392,34 +399,50 @@ export class AuthClient {
         ...(options.metadata ? { metadata: options.metadata } : {}),
       })
 
-      await started.present(authorization.url)
-
-      const deadline = this.#rejectOnSignal(options.signal, options.timeoutMs)
       let callback: CallbackResult
 
       try {
-        callback = await Promise.race([started.wait(), deadline.promise])
-      } finally {
-        deadline.cancel()
-      }
+        await started.present(authorization.url)
 
-      if (this.provider.echoesState !== false) {
-        if (!callback.state) {
-          throw new OAuthError(
-            'state_mismatch',
-            'The callback carried no `state`, so it cannot be matched to the ' +
-              'login we started. Treating it as forged.',
-            { state: authorization.state },
-          )
+        const deadline = this.#rejectOnSignal(
+          options.signal,
+          options.timeoutMs ?? this.#defaultTimeoutMs(authorization.url),
+        )
+
+        try {
+          callback = await Promise.race([started.wait(), deadline.promise])
+        } finally {
+          deadline.cancel()
         }
 
-        if (!timingSafeEqual(callback.state, authorization.state)) {
-          throw new OAuthError(
-            'state_mismatch',
-            'Callback state did not match the value we issued (possible CSRF).',
-            { state: authorization.state },
-          )
+        if (this.provider.echoesState !== false) {
+          if (!callback.state) {
+            throw new OAuthError(
+              'state_mismatch',
+              'The callback carried no `state`, so it cannot be matched to the ' +
+                'login we started. Treating it as forged.',
+              { state: authorization.state },
+            )
+          }
+
+          if (!timingSafeEqual(callback.state, authorization.state)) {
+            throw new OAuthError(
+              'state_mismatch',
+              'Callback state did not match the value we issued (possible CSRF).',
+              { state: authorization.state },
+            )
+          }
         }
+      } catch (error) {
+        /* Everything before the exchange — a timeout, an abort, a callback that
+           fails the `state` check — leaves `pending:<state>` sitting in storage
+           with a live PKCE verifier in it. Nothing else collects it: `prune()`
+           runs from `create()`, so an abandoned login rests at wherever the
+           credential file or `localStorage` lives until the user happens to
+           start another one. `completeAuthorization` is outside this guard
+           because it consumes the record on every path it can fail on. */
+        await this.cancelAuthorization(authorization.state)
+        throw error
       }
 
       return await this.completeAuthorization({
@@ -470,6 +493,48 @@ export class AuthClient {
     await this.setTokens(tokens)
 
     return tokens
+  }
+
+  /**
+   * A deadline for a login the caller gave none, or `undefined` to wait as long
+   * as the caller does.
+   *
+   * Only flows whose callbacks cannot be attributed get one. A receiver may not
+   * settle an attempt on a *failure* payload it cannot tie to the `state` it
+   * presented — any page or any app on the device can produce one of those, and
+   * taking it would cancel a live sign-in on demand. Where there is no `state`
+   * to tie it to, that leaves a genuine denial with nowhere to go: it is
+   * dropped, `wait()` never settles, and a caller who passed neither
+   * `timeoutMs` nor `signal` waits forever with `pending:<state>` — the live
+   * PKCE verifier in it — sitting in storage for the record's whole life. The
+   * popup receiver's close-poll covers it there; the React Native deep-link
+   * receiver has no such poll, so on OpenRouter it simply hung.
+   *
+   * The bound is the pending record's own TTL, ten minutes by default, because
+   * nothing is lost by stopping there: the record the exchange needs has
+   * expired by then, so a callback arriving later cannot be completed anyway.
+   * It is also long enough for a real person to sign in — the same window the
+   * flow already gives them — and when it fires, `login()`'s cleanup deletes
+   * the pending record rather than leaving the verifier at rest.
+   *
+   * Two shapes qualify, matching exactly what the receivers can compare on: a
+   * provider declaring `echoesState: false`, and an authorization URL that
+   * carries no `state` at all (OpenRouter's `buildAuthParams` strips it). A
+   * provider that echoes `state` is untouched — a denial from one still fails
+   * fast, because the receiver can prove it is ours.
+   */
+  #defaultTimeoutMs(authorizationUrl: string): number | undefined {
+    if (this.provider.echoesState !== false) {
+      try {
+        if (new URL(authorizationUrl).searchParams.has('state')) {
+          return undefined
+        }
+      } catch {
+        /* not a URL we can read; treat it as unattributable and bound it */
+      }
+    }
+
+    return this.#registry.ttlMs
   }
 
   /**
@@ -640,6 +705,7 @@ export class AuthClient {
       return this.#refreshInFlight
     }
 
+    const epoch = this.#logoutEpoch
     const run = (async () => {
       const tokens = await this.getTokens()
 
@@ -654,19 +720,47 @@ export class AuthClient {
         stored.accessToken !== tokens.accessToken &&
         !isExpired(stored, this.#expirySkewMs)
       ) {
+        this.#assertNotLoggedOut(epoch)
         this.#cachedTokens = stored
         this.#tokensLoaded = true
 
         return stored
       }
 
-      const refreshed = await refreshTokens({
-        provider: this.provider,
-        clientId: this.#clientId,
-        tokens,
-        fetchImpl: this.#fetch,
-        ...(options.signal ? { signal: options.signal } : {}),
-      })
+      let refreshed: TokenSet
+
+      try {
+        refreshed = await refreshTokens({
+          provider: this.provider,
+          clientId: this.#clientId,
+          tokens,
+          fetchImpl: this.#fetch,
+          ...(options.signal ? { signal: options.signal } : {}),
+        })
+      } catch (error) {
+        /* The read above is a snapshot taken before the request; another
+           process can rotate the credential while this one is on the wire, and
+           with a provider that rotates, that is exactly what kills the token we
+           posted. So look once more before failing, rather than reporting a
+           dead session while the store holds a working token. */
+        const latest = await this.#readStoredTokens()
+
+        if (
+          latest &&
+          latest.accessToken !== tokens.accessToken &&
+          !isExpired(latest, this.#expirySkewMs)
+        ) {
+          this.#assertNotLoggedOut(epoch)
+          this.#cachedTokens = latest
+          this.#tokensLoaded = true
+
+          return latest
+        }
+
+        throw error
+      }
+
+      this.#assertNotLoggedOut(epoch)
       await this.setTokens(refreshed)
 
       return refreshed
@@ -677,7 +771,37 @@ export class AuthClient {
     try {
       return await run
     } finally {
-      this.#refreshInFlight = undefined
+      /* A `logout()` drops this, and a refresh started after it installs its
+         own; only the owner of the slot may clear it. */
+      if (this.#refreshInFlight === run) {
+        this.#refreshInFlight = undefined
+      }
+    }
+  }
+
+  /**
+   * Refuses a write from a refresh that started before a `logout()`.
+   *
+   * `logout()` returns while a refresh it knew nothing about is still on the
+   * wire, and a provider that rotates hands that refresh a *new* refresh token.
+   * Persisting it put a live, never-revoked credential back into `auth.json`
+   * under a user who had just signed out — and `isAuthenticated()` back to
+   * true. The epoch fences the write rather than the read, so a refresh or a
+   * login started *after* the logout carries the current epoch and is
+   * untouched.
+   *
+   * It throws rather than handing back the tokens it declined to keep: a caller
+   * given a token this client has refused to store would go on using a
+   * credential that no `logout()` can now reach. `aborted` is the code the rest
+   * of the library uses for "what you asked for was cancelled underneath you".
+   */
+  #assertNotLoggedOut(epoch: number): void {
+    if (epoch !== this.#logoutEpoch) {
+      throw new OAuthError(
+        'aborted',
+        `Signed out of "${this.provider.id}" while a refresh was in flight. ` +
+          'The refreshed tokens were discarded rather than restoring the session.',
+      )
     }
   }
 
@@ -730,8 +854,16 @@ export class AuthClient {
    * Pass `{ revoke: true }` to also tell the provider, where it supports it.
    * Local state is cleared either way — a failed revocation must not leave the
    * user apparently still signed in.
+   *
+   * The epoch is bumped first, so a refresh already on the wire cannot write
+   * its rotated credential back once this returns; the in-flight promise is
+   * dropped with it, so a later caller starts a fresh refresh instead of
+   * joining one whose write is now fenced.
    */
   async logout(options: { revoke?: boolean; signal?: AbortSignal } = {}): Promise<void> {
+    this.#logoutEpoch++
+    this.#refreshInFlight = undefined
+
     if (options.revoke && this.provider.revocationUrl) {
       try {
         await this.revoke(options.signal ? { signal: options.signal } : {})
@@ -743,6 +875,24 @@ export class AuthClient {
     this.#cachedTokens = undefined
     this.#tokensLoaded = true
     await this.#storage.delete(this.#tokenKey)
+
+    /* A credential left under an id this provider used to have is not
+       forgotten, it is dormant: `#readRenamedTokens()` migrates it onto the
+       current key on the very next read, so deleting only that key signs the
+       user back in. */
+    for (const previousId of this.provider.previousIds ?? []) {
+      try {
+        await this.#storage.delete(this.#keyFor(previousId))
+      } catch {
+        /* Guarded for the same reason `#readRenamedTokens()` guards the same
+           call: a backend that refuses to delete a key must not fail the
+           sign-out that has already cleared the live credential. Rejecting
+           here skips `setState({ tokens: undefined })` in `AuthStore.logout()`,
+           so the UI would show the user still signed in after a logout that
+           did remove their token — worse than a dormant legacy key, which the
+           next `logout()` or a successful delete will still collect. */
+      }
+    }
   }
 }
 
