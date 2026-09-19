@@ -7,12 +7,22 @@ import { OAuthError, fromSyncStorage, memoryStorage, type AuthStorage } from '@a
  * server-side rendering does, and the two want opposite answers. A worker is
  * still one user's browser: an in-memory store there is scoped to that one
  * context, exactly as the Safari-private-mode fallback is, and refusing would
- * break a sign-in driven from a worker for no gain. `WorkerGlobalScope` is
- * exposed inside worker scopes and nowhere else, which is what separates the
- * two cases.
+ * break a sign-in driven from a worker for no gain.
+ *
+ * `WorkerGlobalScope` is not the marker that separates them, however tempting
+ * it reads. Cloudflare's workerd defines it as a global constructor while
+ * being exactly the server case this guards — one process answering every
+ * request — so testing for it hands server-side rendering on that runtime a
+ * module-scoped `Map` and pools every user's tokens into it, which is the one
+ * outcome {@link unavailableStorage} exists to refuse. `WorkerNavigator` is
+ * `[Exposed=Worker]`, so every real worker scope has it and a document never
+ * does; workerd exposes neither it nor `WorkerLocation`. Tested by name rather
+ * than by `instanceof`, since a reference to a missing global would throw a
+ * `ReferenceError` into the adapters' `catch` and degrade to memory there —
+ * the very thing being avoided.
  */
 function inWebWorker(): boolean {
-  return 'WorkerGlobalScope' in globalThis
+  return 'WorkerNavigator' in globalThis
 }
 
 /**

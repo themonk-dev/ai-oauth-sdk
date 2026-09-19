@@ -128,18 +128,67 @@ describe('without web storage', () => {
     }
   }
 
+  /** Installs a global for the duration of a test, then puts it back. */
+  function define(name: string, value: unknown) {
+    const original = Object.getOwnPropertyDescriptor(globalThis, name)
+    Object.defineProperty(globalThis, name, { value, configurable: true })
+
+    return () => {
+      if (original) {
+        Object.defineProperty(globalThis, name, original)
+      } else {
+        Reflect.deleteProperty(globalThis, name)
+      }
+    }
+  }
+
   /**
-   * Stands in for a Web Worker scope: no web storage and no `window`, exactly
-   * as on a server, and told apart from one only by `WorkerGlobalScope` — which
-   * is why the adapters look for that rather than for the storage global.
+   * Stands in for a real Web Worker scope: no web storage and no `window`,
+   * exactly as on a server, and told apart from one by the interfaces a worker
+   * exposes and a server does not.
+   *
+   * The prototype chain is spliced rather than a bare class declared, because a
+   * bare `WorkerGlobalScope` constructor with nothing behind it is precisely
+   * what workerd looks like (see below) — a fake shaped that way would pass a
+   * check that cannot tell the two apart, which is the whole thing under test.
    */
   function pretendWorker() {
-    Object.defineProperty(globalThis, 'WorkerGlobalScope', {
-      value: class WorkerGlobalScope {},
-      configurable: true,
-    })
+    const globalProto = Object.getPrototypeOf(globalThis)
+    class WorkerGlobalScope {}
+    Object.setPrototypeOf(WorkerGlobalScope.prototype, globalProto)
+    Object.setPrototypeOf(globalThis, WorkerGlobalScope.prototype)
 
-    return () => Reflect.deleteProperty(globalThis, 'WorkerGlobalScope')
+    const restores = [
+      define('WorkerGlobalScope', WorkerGlobalScope),
+      define('WorkerNavigator', class WorkerNavigator {}),
+      define('WorkerLocation', class WorkerLocation {}),
+      define('self', globalThis),
+    ]
+
+    return () => {
+      Object.setPrototypeOf(globalThis, globalProto)
+      restores.forEach((restore) => restore())
+    }
+  }
+
+  /**
+   * Stands in for Cloudflare's workerd, measured against the real binary
+   * (compatibility date 2025-01-01): `WorkerGlobalScope` and
+   * `ServiceWorkerGlobalScope` are exposed as constructors and `self` is the
+   * global, but `globalThis` is an instance of neither of the two it exposes,
+   * and the worker-only `WorkerNavigator`/`WorkerLocation` are absent.
+   *
+   * This is a server — one process answering every request — so it must land
+   * on the refusal, not on a module-scoped `Map` shared by every user.
+   */
+  function pretendWorkerd() {
+    const restores = [
+      define('WorkerGlobalScope', class WorkerGlobalScope {}),
+      define('ServiceWorkerGlobalScope', class ServiceWorkerGlobalScope {}),
+      define('self', globalThis),
+    ]
+
+    return () => restores.forEach((restore) => restore())
   }
 
   it('localStorageAdapter does not throw on construction', () => {
@@ -229,6 +278,25 @@ describe('without web storage', () => {
       expect(await session.get('k')).toBe('session')
     } finally {
       restoreWorker()
+      restoreSession()
+      restoreLocal()
+    }
+  })
+
+  it('still refuses on workerd, which exposes WorkerGlobalScope and is a server', async () => {
+    // The failsafe inverted here: keying off `WorkerGlobalScope` alone reads
+    // Cloudflare's runtime as one user's browser and hands server-side
+    // rendering an in-memory store, pooling every request's tokens into one
+    // module-scoped Map — the exact outcome the refusal names.
+    const restoreLocal = hide('localStorage')
+    const restoreSession = hide('sessionStorage')
+    const restoreWorkerd = pretendWorkerd()
+
+    try {
+      await expect(localStorageAdapter().set('k', 'USER-A-TOKEN')).rejects.toThrow(/shared/i)
+      await expect(sessionStorageAdapter().get('k')).rejects.toThrow(/shared/i)
+    } finally {
+      restoreWorkerd()
       restoreSession()
       restoreLocal()
     }

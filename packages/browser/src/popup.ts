@@ -94,7 +94,9 @@ function stateOfAuthorizationUrl(url: string): string | undefined {
  * `state`, because that channel reaches every context on the origin. A
  * provider that does not echo `state` (OpenRouter) leaves nothing to match on,
  * so two sign-ins against one of those, running at once in two tabs, can still
- * take each other's callbacks.
+ * take each other's callbacks. A broadcast that reads as a *failure* is held to
+ * a stricter rule — it settles nothing unless its `state` matches — so a denial
+ * on such a provider ends the login on its timeout rather than on the error.
  *
  * The `window` guard runs before anything touches `window`, or it would never
  * run at all: deriving the default `redirectUri` first would throw a bare
@@ -155,17 +157,20 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
        * throws on an `error=` callback, and that rejection has to reach the
        * attempt it belongs to and no other.
        */
-      const read = (payload: string): { state: string | undefined; settle: () => void } => {
+      const read = (
+        payload: string,
+      ): { state: string | undefined; failed: boolean; settle: () => void } => {
         try {
           const result = readCallback(context.provider, payload)
 
-          return { state: result.state, settle: () => resolveCallback(result) }
+          return { state: result.state, failed: false, settle: () => resolveCallback(result) }
         } catch (error) {
           // An `error=` payload is the one shape `parseCallback` refuses, and
           // `readCallback` carries the `state` its parse found onto the error
           // it throws — so even a refusal still says whose it is.
           return {
             state: isOAuthError(error) ? error.state : undefined,
+            failed: true,
             settle: () => rejectCallback(error),
           }
         }
@@ -248,6 +253,29 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
           const callback = read(event.data.payload)
 
           if (!belongsToThisAttempt(callback.state)) {
+            return
+          }
+
+          // A payload that reads as a *failure* has to be shown to be ours
+          // before it may end the attempt, and "nothing to compare" is not
+          // that proof. `belongsToThisAttempt` lets an unattributable payload
+          // through wherever this attempt has no `state` to hold one against —
+          // an authorization URL that carries none (OpenRouter strips it in
+          // `buildAuthParams`), or a provider declaring `echoesState: false` —
+          // and the redirect page announces whatever query string it was
+          // loaded with. A cross-origin `<a target="_blank" rel="noopener">` to
+          // this origin's redirect page with `?error=access_denied` therefore
+          // reaches this channel with no opener to post to, and taking it would
+          // cancel a live sign-in from another origin on demand. The `?code=`
+          // callback such a provider does send still lands.
+          //
+          // The cost: a genuine denial on a provider with nothing to match on
+          // no longer fails fast, and the login runs to its `timeoutMs` or
+          // `signal` instead — the same trade the node loopback receiver made.
+          // It is softer here, because those providers leave the opener intact,
+          // so the close-poll still reports `aborted` once the user closes the
+          // popup the denial is sitting in.
+          if (callback.failed && (presentedState === undefined || callback.state !== presentedState)) {
             return
           }
 

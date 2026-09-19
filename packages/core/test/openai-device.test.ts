@@ -113,6 +113,54 @@ describe("OpenAI's device flow, which is not RFC 8628", () => {
     expect(exchange.get('redirect_uri')).toBe('https://auth.openai.com/deviceauth/callback')
   })
 
+  // Both fields come from a response nothing downstream re-reads, so whatever
+  // they say is what the poll loop does for as long as it says to.
+  it('floors an interval that would flood the endpoint', async () => {
+    const { fetchImpl } = stubFetch([{ status: 200, body: { ...started, interval: '0.001' } }])
+    const device = await openaiDeviceFlow.start({ provider: openai, clientId: 'app_x', fetchImpl })
+
+    expect(device.intervalMs).toBe(1000)
+  })
+
+  it('caps an interval a broken endpoint sets to an hour', async () => {
+    const { fetchImpl } = stubFetch([{ status: 200, body: { ...started, interval: '3600' } }])
+    const device = await openaiDeviceFlow.start({ provider: openai, clientId: 'app_x', fetchImpl })
+
+    expect(device.intervalMs).toBe(60_000)
+  })
+
+  it('falls back to the default interval when the field is not a number', async () => {
+    const { fetchImpl } = stubFetch([{ status: 200, body: { ...started, interval: 'soon' } }])
+    const device = await openaiDeviceFlow.start({ provider: openai, clientId: 'app_x', fetchImpl })
+
+    expect(device.intervalMs).toBe(5000)
+  })
+
+  it('caps an expiry in 2099 at a day, rather than polling forever', async () => {
+    const { fetchImpl } = stubFetch([
+      { status: 200, body: { ...started, expires_at: '2099-01-01T00:00:00Z' } },
+    ])
+    const device = await openaiDeviceFlow.start({ provider: openai, clientId: 'app_x', fetchImpl })
+
+    expect(device.expiresAt).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000)
+  })
+
+  it('keeps an expiry the endpoint actually means', async () => {
+    const at = new Date(Date.now() + 15 * 60 * 1000).toISOString()
+    const { fetchImpl } = stubFetch([{ status: 200, body: { ...started, expires_at: at } }])
+    const device = await openaiDeviceFlow.start({ provider: openai, clientId: 'app_x', fetchImpl })
+
+    expect(device.expiresAt).toBe(Date.parse(at))
+  })
+
+  it('falls back to the default expiry when the field is unparseable', async () => {
+    const { fetchImpl } = stubFetch([{ status: 200, body: { ...started, expires_at: 'never' } }])
+    const device = await openaiDeviceFlow.start({ provider: openai, clientId: 'app_x', fetchImpl })
+
+    expect(device.expiresAt).toBeGreaterThan(Date.now() + 14 * 60 * 1000)
+    expect(device.expiresAt).toBeLessThanOrEqual(Date.now() + 15 * 60 * 1000)
+  })
+
   it('quotes the provider when the request is refused', async () => {
     const { fetchImpl } = stubFetch([{ status: 400, body: { detail: 'unknown client' } }])
     await expect(

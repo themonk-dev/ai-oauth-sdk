@@ -200,6 +200,47 @@ describe('deepLinkReceiver', () => {
     await started.close()
   })
 
+  it('ignores a denial when the attempt presented no state to compare', async () => {
+    // OpenRouter builds an authorization URL with no `state` at all, so there
+    // is nothing to hold a deep link against — and on a custom scheme that
+    // would leave any app on the device, or any web page the user taps a link
+    // on, able to cancel a live sign-in with one `?error=access_denied`.
+    const fake = fakeLinking()
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider,
+    })
+
+    await started.present('https://provider.test/authorize')
+    const waiting = started.wait()
+
+    fake.emit(`${REDIRECT}?error=access_denied`)
+    expect(await outcomeOf(waiting)).toBe('ignored')
+
+    // The callback such a provider does send still lands.
+    fake.emit(`${REDIRECT}?code=unstated`)
+    await expect(waiting).resolves.toMatchObject({ code: 'unstated' })
+
+    await started.close()
+  })
+
+  it('ignores a denial with no state against a provider that echoes none', async () => {
+    const fake = fakeLinking()
+    const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
+      provider: defineProvider({ ...provider, echoesState: false }),
+    })
+
+    await started.present('https://provider.test/authorize?state=presented')
+    const waiting = started.wait()
+
+    fake.emit(`${REDIRECT}?error=access_denied`)
+    expect(await outcomeOf(waiting)).toBe('ignored')
+
+    fake.emit(`${REDIRECT}?code=unechoed`)
+    await expect(waiting).resolves.toMatchObject({ code: 'unechoed' })
+
+    await started.close()
+  })
+
   it('ignores a callback whose state disagrees', async () => {
     const fake = fakeLinking()
     const started = await deepLinkReceiver({ linking: fake.linking, redirectUri: REDIRECT }).start({
