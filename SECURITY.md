@@ -17,12 +17,17 @@ application from logging or transmitting them.
 
 What it does do:
 
-**PKCE is on by default**, with S256, for every redirect-based provider. The verifier is persisted
-only for the flow's lifetime, ten minutes by default, and consumed once, so a replayed callback
-cannot replay the exchange. Callbacks arriving together for one `state` are serialised, so a browser
-double-submit or a prefetched redirect gets one exchange rather than two. That serialisation is per
-process: `AuthStorage` has no compare-and-swap, so two processes sharing one credential file can
-still both consume the same record.
+**PKCE is on by default**, with S256, for every redirect-based provider, including a descriptor
+handed to `createAuthClient` as a plain object rather than through `defineProvider`. The verifier is
+persisted only for the flow's lifetime, ten minutes by default, and consumed once, so a replayed
+callback cannot replay the exchange. A flow that times out, is aborted, or is refused on a `state`
+mismatch drops its record then, rather than leaving the verifier at rest until some later login
+sweeps it. Callbacks arriving together for one `state` are serialised, so a browser double-submit or
+a prefetched redirect gets one exchange rather than two. That serialisation is per `AuthStorage`:
+every client sharing one store serialises against the others, which is the shape that matters, since
+a page hands the same `sessionStorage` adapter to every client it builds. It is not more than that —
+the store has no compare-and-swap, so two processes over one credential file, or a server that mints
+a fresh store per request, can still both consume the same record.
 
 **Randomness never degrades.** With no `crypto.getRandomValues` available, the library throws rather
 than falling back to `Math.random()`. A guessable `state` or PKCE verifier defeats the point of
