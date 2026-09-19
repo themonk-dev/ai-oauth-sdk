@@ -169,6 +169,10 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
     },
 
     async logout(logoutOptions = {}) {
+      /* A login still in flight would otherwise land after the sign-out and set
+         the UI straight back to authenticated, with the tokens it just stored.
+         `cancel()` and `destroy()` already abort for the same reason. */
+      abortController?.abort()
       await client.logout(logoutOptions)
       setState({ tokens: undefined, error: undefined })
     },

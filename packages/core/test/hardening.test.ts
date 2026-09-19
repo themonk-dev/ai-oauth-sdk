@@ -58,8 +58,29 @@ describe('redactSecrets', () => {
     expect(redactSecrets(`token was ${jwt}`)).not.toContain(jwt)
   })
 
+  /*
+   * `\b` cannot fire inside a word, so `device_code` and `code` never reached
+   * OpenAI's spellings. The pair below is the whole body its device flow polls
+   * the token endpoint with — a gateway echoing it back put both in the error.
+   */
+  it('scrubs the OpenAI device-flow poll body, whose fields are spelled differently', () => {
+    const body = JSON.stringify({
+      device_auth_id: 'da_01JQZX9WKT3P2M8N4R6V',
+      user_code: 'ABCD-1234',
+    })
+    const redacted = redactSecrets(body)
+
+    expect(redacted).not.toContain('da_01JQZX9WKT3P2M8N4R6V')
+    expect(redacted).not.toContain('ABCD-1234')
+  })
+
   it('leaves ordinary text alone', () => {
     const text = 'The upstream service returned HTTP 502 from cloudfront.'
+    expect(redactSecrets(text)).toBe(text)
+  })
+
+  it('leaves the bare words in a diagnostic alone', () => {
+    const text = JSON.stringify({ error: 'invalid_grant', error_description: 'user_code expired' })
     expect(redactSecrets(text)).toBe(text)
   })
 })

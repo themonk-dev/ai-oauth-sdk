@@ -53,8 +53,14 @@ export function buildAuthorizationUrl(input: BuildAuthorizationUrlInput): string
 export function buildLoopbackRedirectUri(provider: ProviderConfig, port: number): string {
   const host = provider.redirect.loopbackHost ?? 'localhost'
   const path = provider.redirect.loopbackPath ?? '/callback'
+  // An IPv6 literal has to be bracketed in a URI authority (RFC 3986 §3.2.2),
+  // or its own colons run into the port separator: `http://::1:1455/callback`
+  // is not a URI at all, and every consumer of this — the redirect URI sent to
+  // the authorization server, and `new URL()` on the way there — sees garbage
+  // rather than the loopback address the caller asked for.
+  const authority = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
 
-  return `http://${host}:${port}${path.startsWith('/') ? path : `/${path}`}`
+  return `http://${authority}:${port}${path.startsWith('/') ? path : `/${path}`}`
 }
 
 /**

@@ -132,10 +132,25 @@ export async function exchangeForCopilotToken(
 }
 
 /**
+ * Hosts RFC 8252 treats as loopback, as in `providers/index.ts`. A local
+ * Copilot proxy on `http://127.0.0.1:<port>` is a normal thing to test against
+ * and never puts the token on a wire.
+ */
+const loopbackHosts = new Set(['127.0.0.1', '[::1]', 'localhost'])
+
+/**
  * Reads the API host out of the exchange response.
  *
  * GitHub returns it under `endpoints.api`. Undefined when it is absent, which
  * leaves the descriptor's `apiBaseUrl` in place rather than guessing.
+ *
+ * The value is remote input — it decides where every later request sends the
+ * Copilot token as a bearer credential for that token's ~30 minute life — so it
+ * gets the same rule discovery endpoints get: https, except on loopback. It
+ * arrives over TLS from a hard-coded `api.github.com`, so this is defence in
+ * depth rather than a live hole; it throws rather than falling back to
+ * `apiBaseUrl`, because quietly sending an enterprise account's token to the
+ * individual host would surface only as a puzzling 401.
  */
 function readApiEndpoint(raw: Record<string, unknown>): string | undefined {
   const endpoints = raw['endpoints']
@@ -146,5 +161,33 @@ function readApiEndpoint(raw: Record<string, unknown>): string | undefined {
 
   const api = (endpoints as Record<string, unknown>)['api']
 
-  return typeof api === 'string' && api ? api : undefined
+  if (typeof api !== 'string' || !api) {
+    return undefined
+  }
+
+  let parsed: URL
+
+  try {
+    parsed = new URL(api)
+  } catch {
+    throw new OAuthError(
+      'invalid_token_response',
+      `Copilot token exchange named an endpoints.api that is not a valid URL: "${api}".`,
+    )
+  }
+
+  const acceptable =
+    parsed.protocol === 'https:' ||
+    (parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname))
+
+  if (!acceptable) {
+    throw new OAuthError(
+      'invalid_token_response',
+      `Copilot token exchange named an insecure endpoints.api: "${api}". ` +
+        'The Copilot token is sent there as a bearer credential, so the host must use ' +
+        'https, except on loopback.',
+    )
+  }
+
+  return api
 }
