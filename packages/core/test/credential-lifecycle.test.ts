@@ -219,6 +219,30 @@ describe('logout() clears credentials under a previous provider id', () => {
 
     expect(await storage.keys?.()).toEqual(['tokens:legacy-demo:home'])
   })
+
+  it('still signs the user out when the store refuses to delete that key', async () => {
+    // A rejection here would land *after* the live credential was already
+    // cleared, and `AuthStore.logout()` skips `setState({ tokens: undefined })`
+    // on one: the UI would show the user signed in after a sign-out that did
+    // take their token away.
+    const backing = memoryStorage()
+    const storage: AuthStorage = {
+      ...backing,
+      async delete(key) {
+        if (key === 'tokens:legacy-demo') {
+          throw new Error('this backend cannot delete a key it does not hold')
+        }
+
+        await backing.delete(key)
+      },
+    }
+    const client = createAuthClient({ provider: renamed, storage })
+    await client.setTokens(stored())
+
+    await expect(client.logout()).resolves.toBeUndefined()
+    expect(await storage.keys!()).toEqual([])
+    expect(await client.getTokens()).toBeUndefined()
+  })
 })
 
 describe('two clients sharing one store consume a pending record once', () => {
@@ -340,5 +364,75 @@ describe('an abandoned login leaves no PKCE verifier at rest', () => {
 
     await expect(loggingIn).rejects.toMatchObject({ code: 'aborted' })
     expect(await pendingKeys(storage)).toEqual([])
+  })
+})
+
+describe('a login with no state to attribute a callback to is bounded', () => {
+  /** OpenRouter's shape: no `state` sent, none echoed back. */
+  const stateless = defineProvider({
+    ...provider,
+    id: 'stateless',
+    echoesState: false,
+    buildAuthParams: (params) => ({ callback_url: params['redirect_uri'] ?? '' }),
+  })
+  /** The other half of the same shape: nothing in the URL to compare against. */
+  const noStateSent = defineProvider({
+    ...provider,
+    id: 'no-state-sent',
+    buildAuthParams: (params) => ({ callback_url: params['redirect_uri'] ?? '' }),
+  })
+
+  /**
+   * A receiver whose `wait()` is never answered — what the popup and deep-link
+   * receivers now leave behind when they drop a failure payload they cannot
+   * attribute, which for these providers is every failure payload.
+   */
+  const never = () => gatedReceiver(new Promise<void>(() => {}))
+
+  for (const candidate of [stateless, noStateSent]) {
+    it(`terminates without a timeoutMs for "${candidate.id}"`, async () => {
+      const storage = memoryStorage()
+      // The deadline is the pending record's TTL — ten minutes in production,
+      // shortened here so the test does not have to wait out a real one.
+      const client = createAuthClient({ provider: candidate, storage, stateTtlMs: 50 })
+
+      await expect(client.login({ receiver: never() })).rejects.toMatchObject({ code: 'timeout' })
+      expect(
+        await storage.keys!(),
+        'the PKCE verifier must not be left at rest by a login that gave up',
+      ).toEqual([])
+    })
+  }
+
+  it('leaves a provider that echoes state waiting as long as the caller does', async () => {
+    // The bound is for flows with nothing to attribute a denial against; one
+    // that echoes `state` fails fast on a real denial and must keep waiting
+    // for a user who is simply slow.
+    const storage = memoryStorage()
+    const client = createAuthClient({ provider, storage, stateTtlMs: 50 })
+    const loggingIn = client.login({ receiver: never() })
+    loggingIn.catch(() => {})
+
+    const outcome = await Promise.race([
+      loggingIn.then(
+        () => 'settled',
+        () => 'settled',
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('waiting'), 250)),
+    ])
+    expect(outcome).toBe('waiting')
+  })
+
+  it('still completes the callback such a provider does send', async () => {
+    const storage = memoryStorage()
+    const fetchImpl = vi.fn(async () =>
+      tokenResponse({ access_token: 'AT1', token_type: 'Bearer' }),
+    )
+    const client = createAuthClient({ provider: stateless, storage, fetch: fetchImpl, stateTtlMs: 50 })
+    const release = deferred<void>()
+    const loggingIn = client.login({ receiver: gatedReceiver(release.promise) })
+    release.resolve()
+
+    await expect(loggingIn).resolves.toMatchObject({ accessToken: 'AT1' })
   })
 })

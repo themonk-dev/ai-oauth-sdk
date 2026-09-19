@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { AuthorizationRegistry } from '@ai-oauth-sdk/core'
+import { AuthorizationRegistry, defineProvider } from '@ai-oauth-sdk/core'
 
+import { createBrowserAuthClient } from '../src/index.js'
 import { localStorageAdapter, sessionStorageAdapter } from '../src/storage.js'
 
 /**
@@ -94,6 +95,54 @@ describe.skipIf(!hasWebStorage)('with web storage available', () => {
     expect(await storage.keys?.()).toEqual([])
   })
 
+  it('hands back one adapter per backing store', async () => {
+    // Not a convenience. `AuthorizationRegistry` serialises `consume()` on the
+    // storage *object*, and every `AuthClient` mints its own registry — so if
+    // each call returned a fresh wrapper, two clients over the one page's
+    // sessionStorage would key two different locks and serialise nothing.
+    expect(sessionStorageAdapter()).toBe(sessionStorageAdapter())
+    expect(localStorageAdapter()).toBe(localStorageAdapter())
+    expect(sessionStorageAdapter()).not.toBe(localStorageAdapter())
+  })
+
+  it('exchanges one code once across two clients built the way the browser builds them', async () => {
+    // `createBrowserAuthClient` defaults each client to `sessionStorageAdapter()`
+    // and `loginWithPopup` builds one per call, so this is the ordinary page,
+    // not a contrived arrangement. RFC 6749 §4.1.2 lets the authorization
+    // server revoke every token it issued for a code it sees twice.
+    const provider = defineProvider({
+      id: 'demo',
+      label: 'Demo',
+      clientId: 'demo-client',
+      authorizationUrl: 'https://provider.invalid/authorize',
+      tokenUrl: 'https://provider.invalid/token',
+      scopes: [],
+      redirect: { mode: 'custom' },
+    })
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ access_token: 'AT1', token_type: 'Bearer', expires_in: 3600 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    )
+    const options = { provider, fetch: fetchImpl, redirectUri: 'https://app.test/cb' }
+    const first = createBrowserAuthClient(options)
+    const second = createBrowserAuthClient(options)
+
+    const { state } = await first.createAuthorization()
+    const results = await Promise.allSettled([
+      first.completeAuthorization({ code: 'CODE', state }),
+      second.completeAuthorization({ code: 'CODE', state }),
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.find((result) => result.status === 'rejected')?.reason).toMatchObject({
+      code: 'unknown_state',
+    })
+    expect(fetchImpl, 'a reused code costs the user every token minted from it').toHaveBeenCalledTimes(1)
+  })
+
   it('falls back to memory when storage throws', async () => {
     // Safari private mode and cross-origin iframes throw on access rather than
     // returning null; sign-in should degrade, not crash.
@@ -104,6 +153,22 @@ describe.skipIf(!hasWebStorage)('with web storage available', () => {
     const storage = localStorageAdapter()
     await expect(storage.set('k', 'v')).resolves.toBeUndefined()
     expect(await storage.get('k')).toBe('v')
+  })
+
+  it('does not pool the memory fallback between callers', async () => {
+    // The per-store memo covers web storage only. Sharing one `Map` for the
+    // degraded case would put one caller's tokens where another could read
+    // them, which is what `unavailableStorage` exists to refuse.
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('QuotaExceededError')
+    })
+
+    const first = localStorageAdapter()
+    const second = localStorageAdapter()
+    expect(first).not.toBe(second)
+
+    await first.set('tokens:demo', 'USER-A-TOKEN')
+    expect(await second.get('tokens:demo')).toBeNull()
   })
 })
 

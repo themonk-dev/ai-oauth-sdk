@@ -10,9 +10,10 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000
  *
  * Keyed on the store rather than held per registry because one registry per
  * caller is the normal shape, not the exception: every `AuthClient` mints its
- * own, and a browser page hands all of them the same `sessionStorage` adapter.
- * A lock on the instance would then have serialised nothing. See
- * {@link AuthorizationRegistry.consume}.
+ * own, so a lock on the instance would have serialised nothing between two
+ * clients built separately. The key is the adapter object, which is why
+ * `@ai-oauth-sdk/browser` hands back one adapter per `sessionStorage` rather
+ * than a fresh wrapper per call. See {@link AuthorizationRegistry.consume}.
  */
 const consuming = new WeakMap<AuthStorage, Map<string, Promise<PendingAuthorization>>>()
 
@@ -61,6 +62,17 @@ export class AuthorizationRegistry {
     this.#settledTtlMs = options.settledTtlMs ?? this.#ttlMs
     this.#maxSettled = options.maxSettled ?? 1000
     this.#now = options.now ?? (() => Date.now())
+  }
+
+  /**
+   * How long a pending record stays valid.
+   *
+   * Exposed because it is also the longest a login can usefully wait: past it
+   * the record the exchange needs is gone, so `AuthClient.login()` reads it to
+   * bound a flow that has no other way to end.
+   */
+  get ttlMs(): number {
+    return this.#ttlMs
   }
 
   /**
@@ -238,14 +250,18 @@ export class AuthorizationRegistry {
    *
    * Calls queue per storage object, which is what makes this hold for callers
    * that never meet: a page builds a fresh `AuthClient` — and so a fresh
-   * registry — for each `loginWithPopup()`, and an SSR handler one per request,
-   * while all of them read the one store underneath.
+   * registry — for each `loginWithPopup()`, and every one of them is handed the
+   * same adapter, because `sessionStorageAdapter()` returns one adapter per
+   * `sessionStorage` rather than a new wrapper each call.
    *
-   * It stops at that object. `AuthStorage` has no compare-and-swap, so two CLI
-   * windows over one `auth.json`, or two clients each given their own wrapper
-   * around the same backing store, can still both read the record before either
-   * deletes it. Closing that needs an atomic primitive on the storage
-   * interface, which is a much larger change than this defect justifies.
+   * It stops at that object, and the object is the whole guarantee. Two clients
+   * each given their own wrapper around one backing store — `fromSyncStorage`
+   * called twice by hand, a `prefixedStorage` per client, a server minting a
+   * store per request — key two different locks and can both read the record;
+   * so can two CLI windows over one `auth.json`, which do not share memory at
+   * all. `AuthStorage` has no compare-and-swap, so closing those needs an
+   * atomic primitive on the storage interface, which is a much larger change
+   * than this defect justifies.
    */
   async consume(state: string): Promise<PendingAuthorization> {
     let inFlightByState = consuming.get(this.#storage)

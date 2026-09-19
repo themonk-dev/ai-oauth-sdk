@@ -26,6 +26,43 @@ function inWebWorker(): boolean {
 }
 
 /**
+ * One {@link AuthStorage} per backing web storage object.
+ *
+ * `fromSyncStorage` mints a fresh object literal on every call, and the
+ * registry's serialisation of `consume()` hangs off the store *object* — so
+ * without this, the shape the browser actually has defeats it. `loginWithPopup`
+ * builds a client per call and `createBrowserAuthClient` defaults each one to
+ * `sessionStorageAdapter()`, so two concurrent logins over the one page's
+ * `sessionStorage` used to key two different in-flight maps and serialise
+ * nothing: both read the same pending record, both posted the same code with
+ * the same verifier, and RFC 6749 §4.1.2 lets the authorization server revoke
+ * everything it issued for a code it sees twice. Handing back the same adapter
+ * for the same `sessionStorage` is what makes the lock bite.
+ *
+ * Only the web-storage path is pooled, and deliberately. The
+ * {@link memoryStorage} fallback is *not* memoised: it stands in for storage
+ * that is unavailable right now, where sharing one `Map` between callers would
+ * pool tokens across contexts that the browser is keeping apart. Nor does this
+ * cache anything about availability — `typeof`, the worker branch and the
+ * write probe all still run on every call, so a store that starts throwing
+ * mid-session still degrades to memory exactly as before.
+ */
+const adapters = new WeakMap<Storage, AuthStorage>()
+
+function adapterFor(storage: Storage): AuthStorage {
+  const existing = adapters.get(storage)
+
+  if (existing) {
+    return existing
+  }
+
+  const created = fromSyncStorage(storage)
+  adapters.set(storage, created)
+
+  return created
+}
+
+/**
  * Stands in when there is no browser storage global at all — not "unavailable
  * right now" (Safari private mode, a sandboxed iframe: both *throw* on access,
  * and are handled below by degrading to memory) but "absent because this
@@ -73,6 +110,10 @@ function unavailableStorage(adapterName: string): AuthStorage {
  * `localStorage` doesn't exist at all, that's a different case (see
  * {@link unavailableStorage}) and is not treated as "degrade quietly," unless
  * this is a Web Worker (see {@link inWebWorker}).
+ *
+ * Repeated calls in one context hand back the same adapter object (see
+ * {@link adapterFor}), which is what lets clients built separately serialise
+ * against each other.
  */
 export function localStorageAdapter(): AuthStorage {
   try {
@@ -84,7 +125,7 @@ export function localStorageAdapter(): AuthStorage {
     localStorage.setItem(probe, '1')
     localStorage.removeItem(probe)
 
-    return fromSyncStorage(localStorage)
+    return adapterFor(localStorage)
   } catch {
     /* fall through to memory */
   }
@@ -98,7 +139,8 @@ export function localStorageAdapter(): AuthStorage {
  * The better default for the redirect flow: the PKCE verifier must survive the
  * page navigation, but should not outlive the tab. See
  * {@link localStorageAdapter} for why "storage throws" and "storage doesn't
- * exist" are handled differently rather than both quietly falling back.
+ * exist" are handled differently rather than both quietly falling back, and
+ * {@link adapterFor} for why every call in one context returns the same object.
  */
 export function sessionStorageAdapter(): AuthStorage {
   try {
@@ -110,7 +152,7 @@ export function sessionStorageAdapter(): AuthStorage {
     sessionStorage.setItem(probe, '1')
     sessionStorage.removeItem(probe)
 
-    return fromSyncStorage(sessionStorage)
+    return adapterFor(sessionStorage)
   } catch {
     /* fall through to memory */
   }

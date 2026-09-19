@@ -377,6 +377,11 @@ export class AuthClient {
    * recently started flow instead, with the caveats on `echoesState`. The
    * comparison itself is constant-time, because `callback.state` is attacker
    * controlled.
+   *
+   * `timeoutMs` and `signal` are both optional, and a login for a provider that
+   * presents a `state` waits as long as the caller wants it to. One that
+   * presents none cannot: see {@link AuthClient.#defaultTimeoutMs} for why it
+   * is given the pending record's TTL as a deadline instead.
    */
   async login(options: LoginOptions): Promise<TokenSet> {
     const context = {
@@ -399,7 +404,10 @@ export class AuthClient {
       try {
         await started.present(authorization.url)
 
-        const deadline = this.#rejectOnSignal(options.signal, options.timeoutMs)
+        const deadline = this.#rejectOnSignal(
+          options.signal,
+          options.timeoutMs ?? this.#defaultTimeoutMs(authorization.url),
+        )
 
         try {
           callback = await Promise.race([started.wait(), deadline.promise])
@@ -485,6 +493,48 @@ export class AuthClient {
     await this.setTokens(tokens)
 
     return tokens
+  }
+
+  /**
+   * A deadline for a login the caller gave none, or `undefined` to wait as long
+   * as the caller does.
+   *
+   * Only flows whose callbacks cannot be attributed get one. A receiver may not
+   * settle an attempt on a *failure* payload it cannot tie to the `state` it
+   * presented — any page or any app on the device can produce one of those, and
+   * taking it would cancel a live sign-in on demand. Where there is no `state`
+   * to tie it to, that leaves a genuine denial with nowhere to go: it is
+   * dropped, `wait()` never settles, and a caller who passed neither
+   * `timeoutMs` nor `signal` waits forever with `pending:<state>` — the live
+   * PKCE verifier in it — sitting in storage for the record's whole life. The
+   * popup receiver's close-poll covers it there; the React Native deep-link
+   * receiver has no such poll, so on OpenRouter it simply hung.
+   *
+   * The bound is the pending record's own TTL, ten minutes by default, because
+   * nothing is lost by stopping there: the record the exchange needs has
+   * expired by then, so a callback arriving later cannot be completed anyway.
+   * It is also long enough for a real person to sign in — the same window the
+   * flow already gives them — and when it fires, `login()`'s cleanup deletes
+   * the pending record rather than leaving the verifier at rest.
+   *
+   * Two shapes qualify, matching exactly what the receivers can compare on: a
+   * provider declaring `echoesState: false`, and an authorization URL that
+   * carries no `state` at all (OpenRouter's `buildAuthParams` strips it). A
+   * provider that echoes `state` is untouched — a denial from one still fails
+   * fast, because the receiver can prove it is ours.
+   */
+  #defaultTimeoutMs(authorizationUrl: string): number | undefined {
+    if (this.provider.echoesState !== false) {
+      try {
+        if (new URL(authorizationUrl).searchParams.has('state')) {
+          return undefined
+        }
+      } catch {
+        /* not a URL we can read; treat it as unattributable and bound it */
+      }
+    }
+
+    return this.#registry.ttlMs
   }
 
   /**
@@ -831,7 +881,17 @@ export class AuthClient {
        current key on the very next read, so deleting only that key signs the
        user back in. */
     for (const previousId of this.provider.previousIds ?? []) {
-      await this.#storage.delete(this.#keyFor(previousId))
+      try {
+        await this.#storage.delete(this.#keyFor(previousId))
+      } catch {
+        /* Guarded for the same reason `#readRenamedTokens()` guards the same
+           call: a backend that refuses to delete a key must not fail the
+           sign-out that has already cleared the live credential. Rejecting
+           here skips `setState({ tokens: undefined })` in `AuthStore.logout()`,
+           so the UI would show the user still signed in after a logout that
+           did remove their token — worse than a dormant legacy key, which the
+           next `logout()` or a successful delete will still collect. */
+      }
     }
   }
 }
