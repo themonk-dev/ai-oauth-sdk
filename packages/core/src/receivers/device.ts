@@ -2,7 +2,7 @@ import { createDefaultCrypto, type CryptoAdapter } from '../crypto/adapter.js'
 import { OAuthError } from '../errors.js'
 import { createPkce } from '../pkce.js'
 import { encodeQuery } from '../query.js'
-import { fetchWithSignal } from '../http.js'
+import { postWithoutRedirects } from '../http.js'
 import { safeSnippet } from '../redact.js'
 import type { DeviceCodeResponse, FetchLike, ProviderConfig, TokenSet } from '../types.js'
 
@@ -67,8 +67,11 @@ export async function startDeviceAuthorization(
     ...(pkce ? { code_challenge: pkce.challenge, code_challenge_method: pkce.method } : {}),
   })
 
+  // Carries the PKCE challenge, and its answer is what puts a `verification_uri`
+  // in front of the user — so a redirect is refused rather than followed here
+  // too. See {@link postWithoutRedirects}.
   const fetchImpl = input.fetchImpl ?? globalThis.fetch
-  const response = await fetchWithSignal(
+  const response = await postWithoutRedirects(
     fetchImpl,
     provider.deviceAuthorizationUrl,
     {
@@ -78,6 +81,10 @@ export async function startDeviceAuthorization(
     },
     input.signal,
     'Device authorization request was aborted.',
+    {
+      code: 'device_flow_failed',
+      describe: `Device authorization request for "${provider.id}" to ${provider.deviceAuthorizationUrl}`,
+    },
   )
 
   if (!response.ok) {
@@ -188,7 +195,7 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
       ...(device.codeVerifier ? { code_verifier: device.codeVerifier } : {}),
     })
 
-    const response = await fetchWithSignal(
+    const response = await postWithoutRedirects(
       fetchImpl,
       provider.tokenUrl,
       {
@@ -198,6 +205,10 @@ export async function pollDeviceToken(input: PollDeviceTokenInput): Promise<Toke
       },
       input.signal,
       'Device authorization polling was aborted.',
+      {
+        code: 'device_flow_failed',
+        describe: `Device authorization poll for "${provider.id}" to ${provider.tokenUrl}`,
+      },
     )
     const text = await response.text().catch(() => '')
     let raw: Record<string, unknown> = {}

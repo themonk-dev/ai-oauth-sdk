@@ -1,6 +1,6 @@
 import { OAuthError } from './errors.js'
 import { encodeQuery } from './query.js'
-import { fetchWithSignal } from './http.js'
+import { postWithoutRedirects } from './http.js'
 import type { FetchLike, ProviderConfig, TokenSet } from './types.js'
 
 export type RevocableTokenType = 'access_token' | 'refresh_token'
@@ -55,8 +55,11 @@ export async function revokeToken(input: RevokeTokenInput): Promise<void> {
     body['client_secret'] = provider.clientSecret
   }
 
+  // The body is the live refresh token and, where the provider has one, the
+  // client secret — so a redirect is refused rather than followed, exactly as
+  // on the token endpoint. See {@link postWithoutRedirects}.
   const fetchImpl = input.fetchImpl ?? globalThis.fetch
-  const response = await fetchWithSignal(
+  const response = await postWithoutRedirects(
     fetchImpl,
     provider.revocationUrl,
     {
@@ -66,6 +69,10 @@ export async function revokeToken(input: RevokeTokenInput): Promise<void> {
     },
     input.signal,
     'Revocation request was aborted.',
+    {
+      code: 'token_request_failed',
+      describe: `Revocation request for "${provider.id}" to ${provider.revocationUrl}`,
+    },
   )
 
   if (!response.ok && response.status !== 400) {

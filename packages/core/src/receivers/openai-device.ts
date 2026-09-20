@@ -1,5 +1,5 @@
 import { OAuthError } from '../errors.js'
-import { fetchWithSignal } from '../http.js'
+import { postWithoutRedirects } from '../http.js'
 import { safeSnippet } from '../redact.js'
 import { exchangeCode } from '../token.js'
 import type { DeviceFlow, DeviceFlowPollInput, DeviceFlowStartInput, FetchLike } from '../types.js'
@@ -35,6 +35,12 @@ interface UserCodeResponse {
   expires_at?: unknown
 }
 
+/**
+ * Both hops of this flow post the identifiers that stand in for the grant — the
+ * `device_auth_id` and `user_code`, and in return an authorization code with
+ * the verifier OpenAI generated — so neither follows a redirect. See
+ * {@link postWithoutRedirects}.
+ */
 async function postJson(
   fetchImpl: FetchLike,
   url: string,
@@ -42,7 +48,7 @@ async function postJson(
   signal: AbortSignal | undefined,
   abortMessage: string,
 ): Promise<Response> {
-  return fetchWithSignal(
+  return postWithoutRedirects(
     fetchImpl,
     url,
     {
@@ -52,6 +58,7 @@ async function postJson(
     },
     signal,
     abortMessage,
+    { code: 'device_flow_failed', describe: `OpenAI device authorization request to ${url}` },
   )
 }
 

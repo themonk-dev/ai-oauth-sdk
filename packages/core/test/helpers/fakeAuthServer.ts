@@ -41,6 +41,14 @@ export interface FakeAuthServerOptions {
   omitRefreshOnRenew?: boolean
   /** Delay every token response by this many ms. */
   delayMs?: number
+  /**
+   * Answer the credential-bearing POSTs — `/token`, `/revoke` and
+   * `/device/code` — with a redirect instead of a real response, as a token
+   * endpoint behind a misconfigured proxy (or a hostile one) would. 307 and 308
+   * are the interesting statuses: they preserve the method *and* the body, so a
+   * client that follows one replays its credentials at `location`.
+   */
+  redirectPostsTo?: { location: string; status?: number }
 }
 
 export interface FakeAuthServer {
@@ -103,6 +111,20 @@ export async function startFakeAuthServer(
 
   const server: Server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost')
+
+    // Before anything reads a body: a redirecting endpoint answers without
+    // looking at the request at all.
+    if (
+      options.redirectPostsTo &&
+      (url.pathname === '/token' || url.pathname === '/revoke' || url.pathname === '/device/code')
+    ) {
+      response.writeHead(options.redirectPostsTo.status ?? 307, {
+        Location: options.redirectPostsTo.location,
+      })
+      response.end()
+
+      return
+    }
 
     // authorization endpoint
     if (url.pathname === '/authorize') {

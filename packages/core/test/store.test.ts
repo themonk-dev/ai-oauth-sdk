@@ -55,6 +55,41 @@ const hangingReceiver = (): CallbackReceiver => ({
   },
 })
 
+/**
+ * A receiver the test drives directly: `fail()` rejects the pending `wait()`,
+ * and `close()` blocks until `release()` is called. Between the two, a login
+ * can be parked mid-failure while another one runs to completion — which is
+ * the ordering a superseded login's rejection actually arrives in.
+ */
+function controllableReceiver() {
+  let failWait: (error: unknown) => void = () => {}
+  let releaseClose: () => void = () => {}
+  const closed = new Promise<void>((resolve) => {
+    releaseClose = resolve
+  })
+
+  const receiver: CallbackReceiver = {
+    id: 'controllable',
+    async start() {
+      return {
+        redirectUri: 'http://localhost:9999/callback',
+        async present() {},
+        wait: () =>
+          new Promise<never>((_resolve, reject) => {
+            failWait = reject
+          }),
+        close: () => closed,
+      }
+    },
+  }
+
+  return {
+    receiver,
+    fail: (error: unknown) => failWait(error),
+    release: () => releaseClose(),
+  }
+}
+
 function makeStore(storage: AuthStorage = memoryStorage(), receiver = scriptedReceiver()) {
   const client = createAuthClient({ provider: testProvider(server.url), storage })
 
@@ -172,6 +207,57 @@ describe('createAuthStore', () => {
 
     await expect(first).resolves.toBeUndefined()
     await expect(second).resolves.toMatchObject({ accessToken: 'access-1' })
+  })
+
+  /*
+   * A superseded login is a dead login, and a dead login must not be able to
+   * write to the state the live one is publishing to. Both of these reproduce
+   * through the ordering that actually happens: login #2 aborts #1 and sets
+   * `isLoading: true` synchronously, so #1's rejection always lands after it.
+   */
+  it('does not let a superseded login report idle while the live one runs', async () => {
+    const client = createAuthClient({ provider: testProvider(server.url), storage: memoryStorage() })
+    const store = createAuthStore({ client, receiver: hangingReceiver() })
+
+    const first = store.login()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const second = store.login()
+
+    // #1 rejects with `aborted` the moment #2 supersedes it.
+    await expect(first).resolves.toBeUndefined()
+    // #2 is still waiting on its receiver. A UI drawing "Sign in" on
+    // `!isLoading && !isAuthenticated` would have put the button back here.
+    expect(store.getState().isLoading).toBe(true)
+
+    store.cancel()
+    await second
+  })
+
+  it('does not leave a superseded login\'s failure beside the tokens that replaced it', async () => {
+    const client = createAuthClient({ provider: testProvider(server.url), storage: memoryStorage() })
+    const onError = vi.fn()
+    const denied = controllableReceiver()
+    const store = createAuthStore({ client, receiver: denied.receiver, onError })
+
+    const first = store.login()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // The user clicks Deny in the popup that is about to be superseded: a real
+    // failure, not an abort, so it takes the error branch rather than the quiet
+    // one. `close()` parks the attempt there.
+    denied.fail(new OAuthError('authorization_denied', 'user denied the request'))
+
+    const second = store.login({ receiver: scriptedReceiver() })
+    await expect(second).resolves.toMatchObject({ accessToken: 'access-1' })
+
+    // Only now does the discarded login finish unwinding.
+    denied.release()
+    await expect(first).resolves.toBeUndefined()
+
+    expect(store.getState().isAuthenticated).toBe(true)
+    // `setState` merges and the success path already ran, so an error written
+    // here would simply stay — signed in, with a dead login's failure showing.
+    expect(store.getState().error).toBeUndefined()
+    expect(onError, 'nobody is waiting on the superseded login').not.toHaveBeenCalled()
   })
 
   it('reports a missing receiver instead of throwing', async () => {
