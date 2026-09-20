@@ -82,6 +82,22 @@ describe('help and version', () => {
     expect(err()).toContain('Unknown option')
   })
 
+  /*
+   * `HANDLERS` is indexed with whatever the user typed. On a plain object
+   * literal `ai-oauth-sdk toString` found `Object.prototype.toString`, skipped
+   * the "Unknown command" branch, printed nothing at all and exited 0 — so a
+   * wrapper written as `ai-oauth-sdk "$cmd" || fallback` took the success path
+   * for a command that did nothing. The neighbouring inherited names exited 1,
+   * but with whatever the wrong layer happened to say.
+   */
+  it.each([['toString'], ['constructor'], ['valueOf'], ['hasOwnProperty'], ['__proto__']])(
+    'reports the inherited name %s as an unknown command',
+    async (command) => {
+      expect(await run([command])).toBe(1)
+      expect(err()).toContain(`Unknown command "${command}"`)
+    },
+  )
+
   it('reports an unknown command ahead of an unknown option', async () => {
     expect(await run(['frobnicate', '--nope'])).toBe(1)
     expect(err()).toContain('Unknown command')
@@ -305,6 +321,28 @@ describe('logout', () => {
 
   it('is safe to run when not signed in', async () => {
     expect(await run(['logout', 'openai', '--auth-dir', dir])).toBe(0)
+  })
+
+  it('refuses a mistyped --revoke instead of signing out without revoking', async () => {
+    // The worst shape a silently accepted flag can take: `--r` for `--revoke`
+    // printed a byte-identical "Signed out" line, exited 0 and sent no
+    // revocation request, so the user believed a token had been withdrawn that
+    // was still live at the provider. Nothing is cleared either, because the
+    // command is refused before it runs.
+    await seedSession('tokens:openai', {
+      accessToken: 'a',
+      tokenType: 'Bearer',
+      provider: 'openai',
+      raw: {},
+    })
+
+    expect(await run(['logout', 'openai', '--auth-dir', dir, '--r'])).toBe(1)
+    expect(err()).toContain('Unknown option "--r"')
+    expect(err()).not.toContain('Signed out')
+
+    stdout = []
+    expect(await run(['list', '--auth-dir', dir, '--json'])).toBe(0)
+    expect(JSON.parse(out())).toHaveLength(1)
   })
 })
 

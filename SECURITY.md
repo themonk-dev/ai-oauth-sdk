@@ -65,6 +65,21 @@ declaring `echoesState: false` has said no `state` will come back and is exempt,
 driven directly, without `present()`, has no attempt to compare against and takes callbacks as they
 come.
 
+**A malformed request target is answered, not fatal.** Staying up is part of the boundary too: a
+login the server does not survive is a login nobody completes. The request target is
+attacker-controlled bytes, and it is read *after* the method and `Sec-Fetch-*` checks, so passing
+those is no protection. `new URL(target, base)` is the wrong primitive for one, because a target
+beginning `//` — or `/\`, since `http` is a special scheme and its parser reads a backslash as a
+slash — is a protocol-relative reference and sends the parser hunting for an authority in what can
+only be a path. `//evil.com/callback` parses to the host `evil.com` with the path the server expects,
+and a bare `//` names no authority at all and throws. Nothing in `node:http` catches what a request
+listener throws, so an unguarded parse hands `ERR_INVALID_URL` to the default `uncaughtException`
+handler and ends the process: `location = 'http://127.0.0.1:1455//'` on any page the user happens to
+have open would be enough to kill a CLI mid-login, and two of the bundled providers bind fixed,
+published ports. So the target is held to origin-form before it is parsed, the parse is guarded
+besides, and anything else is answered `400` without settling the pending callback or closing the
+port — the real redirect may still be on its way.
+
 **It binds every address the redirect URI's host resolves to**, which is not the same thing as
 binding one. Most providers register the `localhost` form of the redirect URI rather than the IP
 literal, and on a dual-stack machine `localhost` is both `127.0.0.1` and `::1` — with browsers
