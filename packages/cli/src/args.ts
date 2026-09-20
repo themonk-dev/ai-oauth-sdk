@@ -7,9 +7,9 @@
  * `--flag value` binds the next token unless that token is itself a flag. Short
  * flags are boolean, and a cluster like `-vh` expands only when every character
  * in it is a real short flag. Anything else — `-device` — keeps its leading
- * dash as the flag name so `findUnknownFlag` can reject it. Expanding that one
- * would hide the typo behind five one-character keys the guard deliberately
- * skips, and silently run a browser login on a box that asked for `--device`.
+ * dash as the flag name so `findUnknownFlag` can reject it, and can be reported
+ * back to the user as the single word they actually typed rather than as a
+ * handful of letters they never meant to write.
  */
 
 /** The only single-character options the CLI reads. */
@@ -24,7 +24,16 @@ export interface ParsedArgs {
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  const flags: Record<string, string | boolean> = {}
+  /* Every key here is whatever the user typed, so this is the one object in
+     the CLI that takes arbitrary names. On a plain literal, `--__proto__` does
+     not become an own property at all: `Object.keys` never reports it, so the
+     unknown-flag guard below cannot see it and the flag is accepted and
+     discarded — the exact silent-typo failure that guard exists to prevent. */
+  const flags: Record<string, string | boolean> = Object.create(null) as Record<
+    string,
+    string | boolean
+  >
+
   const positionals: string[] = []
   const passthrough: string[] = []
 
@@ -112,15 +121,22 @@ export const KNOWN_FLAGS = [
  * `--loopback` is the one people reach for, because it is the mode everything
  * else is named against — but it is the default, so accepting it silently made
  * it look like an override that did nothing.
+ *
+ * Prototype-free, because the key looked up here is whatever the user typed:
+ * on a plain object literal `--toString` finds `Object.prototype.toString` and
+ * prints a function where the type promises a hint string.
  */
-const SUGGESTIONS: Record<string, string> = {
-  loopback: 'loopback is the default — drop the flag, or use --paste / --device',
-  browser: 'the browser flow is the default — drop the flag',
-  'device-code': 'use --device',
-  'client_id': 'use --client-id',
-  'auth-directory': 'use --auth-dir',
-  scope: 'use --scopes',
-}
+const SUGGESTIONS: Record<string, string> = Object.assign(
+  Object.create(null) as Record<string, string>,
+  {
+    loopback: 'loopback is the default — drop the flag, or use --paste / --device',
+    browser: 'the browser flow is the default — drop the flag',
+    'device-code': 'use --device',
+    'client_id': 'use --client-id',
+    'auth-directory': 'use --auth-dir',
+    scope: 'use --scopes',
+  },
+)
 
 /**
  * Returns a message for the first unrecognised flag, or undefined.
@@ -129,16 +145,22 @@ const SUGGESTIONS: Record<string, string> = {
  * keeps the one dash the user typed, everything else gets the two it was
  * missing.
  *
- * Short flags are skipped: they are single characters, handled by the commands
- * directly rather than listed in {@link KNOWN_FLAGS}.
+ * The real short flags are named here rather than waved through by their
+ * length. A one-character key is not proof that the user wrote `-h`: `parseArgs`
+ * produces one from the long form too, so `--r` lands as the key `r` and even
+ * swallows the following token as its value. Skipping every short key therefore
+ * accepted `--<any single letter>` silently, which is the exact failure this
+ * guard exists to prevent — and worse here than a typo usually is, because
+ * `ai-oauth-sdk logout acme --r` for `--revoke` prints the same "Signed out"
+ * line while the refresh token stays live at the provider.
  */
 export function findUnknownFlag(
   flags: Record<string, string | boolean>,
 ): { name: string; hint: string } | undefined {
-  const known = new Set<string>(KNOWN_FLAGS)
+  const known = new Set<string>([...KNOWN_FLAGS, ...SHORT_FLAGS])
 
   for (const name of Object.keys(flags)) {
-    if (name.length === 1 || known.has(name)) {
+    if (known.has(name)) {
       continue
     }
 

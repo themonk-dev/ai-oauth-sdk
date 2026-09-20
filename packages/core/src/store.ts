@@ -146,11 +146,35 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
           signal: controller.signal,
           ...(overrides.scopes ? { scopes: overrides.scopes } : {}),
         })
-        setState({ tokens, isLoading: false })
+        // `error: undefined` explicitly: `setState` merges, so a failure left
+        // in state by anything else would otherwise still be showing beside a
+        // set of tokens that just arrived.
+        setState({ tokens, isLoading: false, error: undefined })
         options.onSuccess?.(tokens)
 
         return tokens
       } catch (caught) {
+        // A superseded login publishes nothing at all.
+        //
+        // Login #2 has already set `isLoading: true` by the time #1's rejection
+        // lands here, so an unguarded `isLoading: false` reports idle in the
+        // middle of a live login — and a UI rendering its button on
+        // `!isLoading && !isAuthenticated` puts "Sign in" back in front of the
+        // user. Worse when the discarded attempt fails for a real reason rather
+        // than by abort, which is what clicking Deny in the superseded popup
+        // does: the branches below would write that error into the state and
+        // call `onError` on behalf of a login nobody is waiting on, and since
+        // the success path above merges rather than replaces, the store could
+        // settle as authenticated with a dead login's error still in
+        // `state.error`.
+        //
+        // Same identity test the `finally` below already uses. A rejection
+        // arriving after #2 has finished finds `abortController` cleared to
+        // `undefined`, so it short-circuits here too.
+        if (abortController !== controller) {
+          return undefined
+        }
+
         if (isOAuthError(caught) && caught.code === 'aborted') {
           setState({ isLoading: false })
 

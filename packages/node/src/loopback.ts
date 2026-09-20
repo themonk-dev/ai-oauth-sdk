@@ -122,6 +122,20 @@ function stateOfAuthorizationUrl(url: string): string | undefined {
 }
 
 /**
+ * Whether a request target is the origin-form RFC 9112 §3.2.1 calls for.
+ *
+ * A browser navigating to a loopback URL sends `/callback?code=...` — a path,
+ * then an optional query. That is the only shape this server has any use for,
+ * and requiring it up front is what keeps an authority out of a parse that is
+ * only ever asked for a pathname. The second character matters as much as the
+ * first: `//` opens an authority, and in a special scheme like `http` a
+ * backslash is read as a slash, so `/\` opens one too.
+ */
+function isOriginFormTarget(target: string): boolean {
+  return target[0] === '/' && target[1] !== '/' && target[1] !== '\\'
+}
+
+/**
  * Host forms that name one address outright. Nothing else can answer for them,
  * so a receiver advertising one of these already binds everything it promises.
  */
@@ -256,6 +270,11 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
  * Only `GET` and `HEAD` are answered. The callback arrives as a browser
  * navigation, so nothing else is legitimate, and any local process can reach a
  * loopback port — a narrower surface is one less thing to reason about.
+ *
+ * Staying up is part of that surface. A request target is attacker-controlled
+ * bytes, and a handler that throws on one takes the host process with it, so
+ * the target is validated and parsed defensively rather than trusted; see the
+ * note on the parse below.
  *
  * The same reasoning extends to fetch metadata. Any page the user happens to
  * have open can issue a no-preflight `GET` at a loopback port, and two of the
@@ -447,7 +466,69 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        const url = new URL(request.url ?? '/', `http://${bindHost}`)
+        // `request.url` is the raw request target off the wire — attacker input
+        // long before it is a URL — and `new URL(target, base)` is the wrong
+        // primitive to hand one to. A target beginning `//` (or `/\`, which a
+        // special scheme treats identically) is a *protocol-relative*
+        // reference, so the parser looks for an authority in what can only ever
+        // be a path: `//evil.com/callback` parses as the host `evil.com` with
+        // the path this server expects, and a bare `//` names no authority at
+        // all and throws `ERR_INVALID_URL`. Nothing in `node:http` catches what
+        // a request listener throws, so that exception reaches the default
+        // `uncaughtException` handler and takes the whole host process down —
+        // and it is reached *after* the method and `Sec-Fetch-*` gates above,
+        // so passing them is no protection. Two of the bundled providers bind a
+        // fixed, published port, which makes
+        // `location = 'http://127.0.0.1:1455//'` on any page the user happens
+        // to have open enough to kill the CLI mid-login.
+        //
+        // So the target is held to origin-form first — one leading slash, and
+        // nothing that could donate an authority to a parse that wants only a
+        // pathname and a query — and the parse is guarded besides, because the
+        // list of inputs `URL` rejects is the parser's business and not
+        // something worth mirroring here.
+        const target = request.url ?? '/'
+
+        if (!isOriginFormTarget(target)) {
+          response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/plain' })
+          response.end('Bad request')
+
+          return
+        }
+
+        const base = `http://${bindHost}`
+
+        let url: URL
+
+        try {
+          url = new URL(target, base)
+        } catch {
+          // Refused like the 405/403/404 above: answered, and then forgotten.
+          // The pending callback is left alone and the server keeps listening,
+          // because the genuine redirect may still be on its way and settling
+          // — or closing — is what would lose it.
+          response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/plain' })
+          response.end('Bad request')
+
+          return
+        }
+
+        // Belt to the guard's braces, and the part that does not depend on who
+        // parsed the request line. The URL parser strips tab, CR and LF before
+        // it looks at anything, so `/\t/evil.com/callback` reads as
+        // protocol-relative to it while passing a check on the first two
+        // characters. Node's own parser rejects those bytes in a request target
+        // before this handler ever runs, so there is nothing reachable to fix
+        // today — but that is llhttp's promise, not this function's, and it
+        // would stop covering us behind a proxy that normalised targets
+        // differently. A host that is not the one we bound cannot have come
+        // from an origin-form target at all.
+        if (url.host !== new URL(base).host) {
+          response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/plain' })
+          response.end('Bad request')
+
+          return
+        }
 
         if (url.pathname !== path) {
           response.writeHead(404, { ...securityHeaders, 'Content-Type': 'text/plain' })

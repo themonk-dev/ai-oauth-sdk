@@ -1,5 +1,5 @@
 import { createServer, request as httpRequest } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { connect, type AddressInfo } from 'node:net'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -54,6 +54,79 @@ const rawGet = (url: string, headers: Record<string, string> = {}) =>
     call.on('error', reject)
     call.end()
   })
+
+/**
+ * Sends one request with the request target written onto the socket verbatim.
+ *
+ * Neither `fetch()` nor `http.request()` can stand in, because both run what
+ * you hand them through a URL parser before anything reaches the wire — and a
+ * target the URL parser will not accept is exactly what is under test here. A
+ * browser has no such scruples: `location = 'http://127.0.0.1:1455//'` puts
+ * `GET // HTTP/1.1` on the wire, so the request line is written by hand.
+ *
+ * Resolves with whatever came back, or with a status of 0 where the server
+ * answered nothing at all — which is what a handler that threw looks like from
+ * out here.
+ */
+const rawTargetGet = (
+  origin: string,
+  target: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: string }> =>
+  new Promise((resolve, reject) => {
+    const { hostname, port } = new URL(origin)
+    let raw = ''
+    const socket = connect({ host: hostname, port: Number(port) }, () => {
+      socket.write(
+        [
+          `GET ${target} HTTP/1.1`,
+          `Host: ${hostname}:${port}`,
+          'Connection: close',
+          ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
+          '',
+          '',
+        ].join('\r\n'),
+      )
+    })
+    socket.setEncoding('utf8')
+    socket.on('data', (chunk: string) => {
+      raw += chunk
+    })
+    // A handler that threw leaves the socket open with nothing written to it,
+    // so there is no response and no close to wait for. Give up rather than
+    // hang, and report the silence as the status 0 it is.
+    socket.setTimeout(2_000, () => socket.destroy())
+    socket.on('error', reject)
+    socket.on('close', () => {
+      const status = Number(/^HTTP\/1\.\d (\d{3})/.exec(raw)?.[1] ?? 0)
+
+      resolve({ status, body: raw.slice(raw.indexOf('\r\n\r\n') + 4) })
+    })
+  })
+
+/**
+ * Runs `body` with a listener that catches what would otherwise be fatal.
+ *
+ * `node:http` re-raises whatever a request listener throws, and with no
+ * `uncaughtException` listener at all that ends the process — there is nothing
+ * left for a test to assert on, and in a real CLI nothing left of the login
+ * either. Installing one turns that outcome into a value, so the assertion can
+ * be "nothing reached here" rather than "the suite is still running".
+ */
+const withCrashProbe = async (body: () => Promise<void>): Promise<unknown[]> => {
+  const crashes: unknown[] = []
+  const probe = (error: unknown) => crashes.push(error)
+
+  process.on('uncaughtException', probe)
+
+  try {
+    await body()
+  } finally {
+    process.off('uncaughtException', probe)
+  }
+
+  return crashes
+}
 
 /** The `state` the presented receivers below all sign their attempt with. */
 const PRESENTED_STATE = 'xyz'
@@ -200,6 +273,110 @@ describe('loopbackReceiver', () => {
     } finally {
       await started.close()
     }
+  })
+
+  // The request target is attacker-controlled bytes, and it is read *after* the
+  // method and `Sec-Fetch-*` gates — so passing those gates is not what makes
+  // these requests interesting. `new URL(target, base)` treats a target
+  // beginning `//` as protocol-relative and goes looking for an authority in
+  // what is only ever a path, which either throws (and, unguarded, ends the
+  // process) or succeeds on a host the request never named.
+  describe('malformed request targets', () => {
+    /**
+     * Targets `new URL()` refuses outright. `//` is the whole minimal case —
+     * no exotic bytes needed, so any page can send one — and the rest are here
+     * because a guard that only special-cases the obvious one is not a guard.
+     */
+    const throwingTargets = ['//', '///', '//?x=1', '//[', '//[]', '//[::1', '//:', '//%', '//\\']
+
+    it.each(throwingTargets)('answers 400 to %j instead of dying on it', async (target) => {
+      const started = await startPresented()
+      const waiting = started.wait()
+
+      try {
+        const origin = new URL(started.redirectUri).origin
+        let response: { status: number; body: string } | undefined
+
+        const crashes = await withCrashProbe(async () => {
+          // Byte-identical to the provider's own redirect as far as the
+          // browser gates can see, so nothing earlier turns it away.
+          response = await rawTargetGet(origin, target, navigationHeaders)
+        })
+
+        // The point of the whole test: nothing reached the default
+        // `uncaughtException` handler, which in a real CLI is the process
+        // exiting 1 mid-login with a stack in `Server.handleRequest`.
+        expect(crashes).toEqual([])
+        expect(response?.status).toBe(400)
+
+        // Refused like the 403s and 404s beside it: the pending callback is
+        // untouched and the port is still open, because the genuine redirect
+        // may still be inbound and settling is what would lose it.
+        expect(await isSettled(waiting)).toBe(false)
+
+        const real = await rawGet(
+          `${started.redirectUri}?code=abc&state=${PRESENTED_STATE}`,
+          navigationHeaders,
+        )
+        expect(real.status).toBe(200)
+        await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+      } finally {
+        await started.close()
+      }
+    })
+
+    it('refuses a target that donates an authority the request never named', async () => {
+      // This one does not throw, which is why the fix cannot be a bare
+      // try/catch: `//evil.com/auth/callback` parses to host `evil.com` with
+      // pathname `/auth/callback`, so the path check passes on an authority
+      // nobody sent. No privilege is gained — it reaches the same code as
+      // `/auth/callback` — but the parse is reading a host out of a path, and
+      // that is the bug rather than a symptom of it. `/\` is the same thing:
+      // `http` is a special scheme, so its parser reads a backslash as a slash.
+      const provider = testProvider(server.url, {
+        redirect: { mode: 'loopback', loopbackPort: 0, loopbackPath: '/auth/callback' },
+      })
+
+      for (const target of ['//evil.com/auth/callback', '/\\evil.com/auth/callback']) {
+        const started = await startPresented(provider)
+        const waiting = started.wait()
+
+        try {
+          const origin = new URL(started.redirectUri).origin
+          const response = await rawTargetGet(
+            origin,
+            `${target}?code=abc&state=${PRESENTED_STATE}`,
+            navigationHeaders,
+          )
+
+          expect(response.status, target).toBe(400)
+          expect(await isSettled(waiting), target).toBe(false)
+        } finally {
+          await started.close()
+        }
+      }
+    })
+
+    it('still takes the origin-form target a browser actually sends', async () => {
+      // The guard must not cost the ordinary case, including the dot segments
+      // a URL parser is expected to fold away.
+      const started = await startPresented()
+      const waiting = started.wait()
+
+      try {
+        const origin = new URL(started.redirectUri).origin
+        const response = await rawTargetGet(
+          origin,
+          `/./callback?code=abc&state=${PRESENTED_STATE}`,
+          navigationHeaders,
+        )
+
+        expect(response.status).toBe(200)
+        await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+      } finally {
+        await started.close()
+      }
+    })
   })
 
   it('rejects when the provider reports a denial', async () => {

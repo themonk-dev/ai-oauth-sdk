@@ -2,9 +2,11 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { createAuthClient } from '../src/client.js'
 import { providerFromDiscovery } from '../src/providers/index.js'
 import { manualReceiver } from '../src/receivers/manual.js'
 import { defineProvider } from '../src/providers/define.js'
+import { memoryStorage } from '../src/storage.js'
 import type { FetchLike, ProviderConfig } from '../src/types.js'
 
 let server: Server | undefined
@@ -93,6 +95,63 @@ describe('providerFromDiscovery', () => {
     expect(provider.tokenUrl).toBe('https://override.test/token')
   })
 
+  // `authorizationUrl` and `tokenUrl` have always let explicit config win. The
+  // device endpoint did the opposite, and it is the one whose response puts a
+  // `verification_uri` in front of the user to open and type a code into.
+  it('leaves an explicitly pinned deviceAuthorizationUrl alone', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'https://acme.test/device',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      deviceAuthorizationUrl: 'https://pinned.acme.test/device',
+      redirect: { mode: 'loopback' },
+    })
+    expect(provider.deviceAuthorizationUrl).toBe('https://pinned.acme.test/device')
+  })
+
+  it('does not validate a document device endpoint the integrator pinned past', async () => {
+    // The document's value is never used here, so refusing it would fail a
+    // login over a value that is none of the integrator's business — the same
+    // reasoning that leaves an explicit http `tokenUrl` alone above.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'http://attacker.test/device',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      deviceAuthorizationUrl: 'https://pinned.acme.test/device',
+      redirect: { mode: 'loopback' },
+    })
+    expect(provider.deviceAuthorizationUrl).toBe('https://pinned.acme.test/device')
+  })
+
+  it('still checks the document device endpoint when it is passed as null', async () => {
+    // Same `== null` reasoning as the tokenUrl case at the bottom of this file:
+    // `null` falls through to the document, so it must be checked.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'http://attacker.test/device',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, {
+        id: 'acme',
+        label: 'Acme',
+        deviceAuthorizationUrl: null as unknown as undefined,
+        redirect: { mode: 'loopback' },
+      }),
+    ).rejects.toMatchObject({ code: 'configuration_error' })
+  })
+
   it('defaults scopes to openid when the document lists none', async () => {
     const issuer = await startDiscoveryServer({
       authorization_endpoint: 'https://acme.test/authorize',
@@ -105,6 +164,69 @@ describe('providerFromDiscovery', () => {
       redirect: { mode: 'loopback' },
     })
     expect(provider.scopes).toEqual(['openid'])
+  })
+
+  /*
+   * `scopes_supported` was the only document field reaching the descriptor with
+   * no validation at all. Each way of being malformed failed differently and
+   * none of them failed well, so they all land on the same fallback the spec
+   * already has for a document that lists no scopes.
+   */
+  describe('a malformed scopes_supported falls back to the default', () => {
+    const withScopes = async (scopes_supported: unknown) => {
+      const issuer = await startDiscoveryServer({
+        authorization_endpoint: 'https://acme.test/authorize',
+        token_endpoint: 'https://acme.test/token',
+        scopes_supported,
+      })
+
+      return providerFromDiscovery(issuer, {
+        id: 'acme',
+        label: 'Acme',
+        clientId: 'acme-client',
+        redirect: { mode: 'loopback' },
+      })
+    }
+
+    it.each([
+      // Some deployments emit the space-delimited string. That one reached
+      // `scopes.join is not a function` inside authorize() — a bare TypeError
+      // escaping client.login() on remote input.
+      ['a space-delimited string', 'openid profile'],
+      ['an object', {}],
+      ['a number', 42],
+      ['an empty array', []],
+      // Silent, and so arguably the worst: the descriptor held junk and the
+      // `scope` parameter was dropped from the authorization request entirely.
+      ['an array of numbers', [1, 2]],
+      ['an array with an empty member', ['openid', '']],
+      ['an array with a non-string member', ['openid', { scope: 'profile' }]],
+    ])('ignores %s', async (_label, value) => {
+      expect((await withScopes(value)).scopes).toEqual(['openid'])
+    })
+
+    it('still asks for a scope on the authorization request', async () => {
+      // The failure mode worth naming: a descriptor carrying junk produced an
+      // authorization URL with no `scope` at all, so the request quietly took
+      // whatever the server's default scopes happen to be.
+      const provider = await withScopes('openid profile')
+      const client = createAuthClient({ provider, storage: memoryStorage() })
+      const { url } = await client.createAuthorization({
+        redirectUri: 'http://127.0.0.1:9999/callback',
+      })
+
+      expect(new URL(url).searchParams.get('scope')).toBe('openid')
+    })
+
+    it('leaves a well-formed list untouched', async () => {
+      // Not a defect to fix here: taking the server's advertised list is the
+      // documented behaviour, and only the malformed shapes above change.
+      expect((await withScopes(['openid', 'email', 'offline_access'])).scopes).toEqual([
+        'openid',
+        'email',
+        'offline_access',
+      ])
+    })
   })
 
   it('reports an HTTP failure', async () => {

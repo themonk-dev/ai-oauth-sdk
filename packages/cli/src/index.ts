@@ -11,17 +11,35 @@ export type { ParsedArgs } from './args.js'
 export { CliError } from './commands.js'
 export { helpText } from './help.js'
 
-const HANDLERS: Record<string, (context: { args: ReturnType<typeof parseArgs>; json: boolean }) => Promise<number | void>> = {
-  login: commands.login,
-  token: commands.token,
-  whoami: commands.whoami,
-  list: commands.list,
-  ls: commands.list,
-  logout: commands.logout,
-  refresh: commands.refresh,
-  providers: commands.listProviders,
-  exec: commands.exec,
-}
+type Handler = (
+  context: { args: ReturnType<typeof parseArgs>; json: boolean },
+) => Promise<number | void>
+
+/**
+ * The commands, on a prototype-free object.
+ *
+ * The key looked up here is whatever the user typed, so an ordinary object
+ * literal answers for names it was never given: `ai-oauth-sdk toString` found
+ * `Object.prototype.toString`, skipped the "Unknown command" branch, produced
+ * no output at all and exited 0 — so a wrapper written as `ai-oauth-sdk "$cmd"
+ * || fallback` took the success path for a command that did nothing. The
+ * neighbouring inherited names were no better, failing with whatever the wrong
+ * layer happened to say rather than with the message meant for them.
+ */
+const HANDLERS: Record<string, Handler> = Object.assign(
+  Object.create(null) as Record<string, Handler>,
+  {
+    login: commands.login,
+    token: commands.token,
+    whoami: commands.whoami,
+    list: commands.list,
+    ls: commands.list,
+    logout: commands.logout,
+    refresh: commands.refresh,
+    providers: commands.listProviders,
+    exec: commands.exec,
+  },
+)
 
 /**
  * Runs the CLI and returns a process exit code.

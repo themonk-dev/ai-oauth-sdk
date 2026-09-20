@@ -236,12 +236,70 @@ export interface AuthSessionReceiverOptions {
  * Custom Tabs, so the user keeps their provider cookies and the OS closes the
  * sheet automatically on redirect. `openAuthSessionAsync` both presents the URL
  * and returns the result, so `present()` starts it and `wait()` awaits it.
+ *
+ * The URL the session hands back is matched to the attempt this receiver
+ * presented, by `state`, exactly as {@link deepLinkReceiver} matches a deep
+ * link — because on Android it is one. `expo-web-browser` only has a native
+ * auth session on iOS and macOS; on Android it polyfills the sheet over
+ * `Linking`, resolving the moment any URL arrives whose text begins with the
+ * redirect URI. Any app on the device that can fire the custom scheme therefore
+ * decides what this "session result" is, and a `?error=access_denied` in it
+ * would otherwise reject `wait()` and cancel a live sign-in, since the client's
+ * own `state` comparison only guards the success path. That prefix test is also
+ * looser than the deep link path's: `myapp://auth/callbackXYZ?...` matches it
+ * where `pathOfUrl` would turn it away.
+ *
+ * A URL that cannot be shown to be ours leaves `wait()` pending rather than
+ * failing it, so give `login()` a `timeoutMs` or a `signal`. A sheet that
+ * closed without a redirect still settles as an abort whatever was presented:
+ * that is the user dismissing it, and it is theirs to do at any time.
  */
 export function authSessionReceiver(options: AuthSessionReceiverOptions): CallbackReceiver {
   return {
     id: 'auth-session',
     async start(context: ReceiverContext) {
-      let pending: Promise<CallbackResult> | undefined
+      let resolveCallback: (result: CallbackResult) => void
+      let rejectCallback: (error: unknown) => void
+      const callbackPromise = new Promise<CallbackResult>((resolve, reject) => {
+        resolveCallback = resolve
+        rejectCallback = reject
+      })
+      callbackPromise.catch(() => {})
+
+      /**
+       * The `state` of the authorization this receiver actually presented,
+       * learned from the URL it was handed rather than tracked separately, so
+       * the two cannot disagree.
+       */
+      let presentedState: string | undefined
+
+      /** Whether `present()` has run, and so whether there is a session at all. */
+      let presented = false
+
+      /**
+       * The provider's own read of the session's URL, with the failure it may
+       * represent held rather than thrown.
+       *
+       * The same reasoning as in {@link deepLinkReceiver}: the `state` has to
+       * come from the parser the client will use, and settling is held back so
+       * ownership can be decided first — `readCallback` throws on an `error=`
+       * callback, and that rejection is exactly what an unrelated app would
+       * like the polyfilled sheet to hand us.
+       */
+      const read = (url: string): { state: string | undefined; settle: () => void } => {
+        try {
+          const result = readCallback(context.provider, url)
+
+          return { state: result.state, settle: () => resolveCallback(result) }
+        } catch (error) {
+          // `readCallback` carries the `state` its parse found onto the error
+          // it throws, so even a refusal still says whose it is.
+          return {
+            state: isOAuthError(error) ? error.state : undefined,
+            settle: () => rejectCallback(error),
+          }
+        }
+      }
 
       const onAbort = () => options.webBrowser.dismissAuthSession?.()
       context.signal?.addEventListener('abort', onAbort, { once: true })
@@ -249,25 +307,50 @@ export function authSessionReceiver(options: AuthSessionReceiverOptions): Callba
       return {
         redirectUri: options.redirectUri,
         async present(url) {
-          pending = options.webBrowser
+          // Read from the URL the client built rather than tracked alongside
+          // it, so what this receiver believes its attempt is can never drift
+          // from what it actually sent the user to.
+          presentedState = stateOfAuthorizationUrl(url)
+          presented = true
+
+          void options.webBrowser
             .openAuthSessionAsync(url, options.redirectUri, options.browserOptions)
             .then((result) => {
               if (result.type !== 'success' || !result.url) {
-                throw new OAuthError(
-                  'aborted',
-                  `Sign-in did not complete (${result.type}).`,
-                )
+                // Settled whatever the attempt looks like. Only the user can
+                // dismiss the sheet, and a dismissal held back for failing a
+                // `state` comparison it never carried would hang the login
+                // the one time the person is watching it.
+                rejectCallback(new OAuthError('aborted', `Sign-in did not complete (${result.type}).`))
+
+                return
               }
 
-              return readCallback(context.provider, result.url)
-            })
+              const callback = read(result.url)
+
+              // Only a `state` that was presented can be answered for. Where
+              // none was, there is nothing to compare and the URL is taken as
+              // it comes; where one was, silence is a disagreement like any
+              // other. A provider declaring `echoesState: false` is the first
+              // case even where the URL carried a `state`, for the reason
+              // spelled out in `deepLinkReceiver`.
+              if (
+                presentedState !== undefined &&
+                context.provider.echoesState !== false &&
+                callback.state !== presentedState
+              ) {
+                return
+              }
+
+              callback.settle()
+            }, rejectCallback)
         },
         async wait() {
-          if (!pending) {
+          if (!presented) {
             throw new OAuthError('configuration_error', 'present() must be called before wait().')
           }
 
-          return pending
+          return callbackPromise
         },
         async close() {
           context.signal?.removeEventListener('abort', onAbort)

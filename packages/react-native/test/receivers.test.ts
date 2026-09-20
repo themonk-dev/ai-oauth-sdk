@@ -290,6 +290,106 @@ describe('authSessionReceiver', () => {
     await started.close()
   })
 
+  /**
+   * `expo-web-browser` only has a native auth session on iOS and macOS. On
+   * Android it polyfills the sheet over `Linking` and resolves it on any URL
+   * whose text begins with the redirect URI, so the "session result" is
+   * whatever app fired the custom scheme first. A denial in it must not reject
+   * `wait()`: the client's own `state` check only guards the success path, so a
+   * rejection here is a failed login whatever it came from.
+   */
+  it('ignores a denial whose state does not match the attempt', async () => {
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}?error=access_denied&state=someone-elses`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('ignores a denial that carries no state', async () => {
+    // RFC 6749 §4.1.2.1 has the provider echo `state` on an error response
+    // too, so nothing legitimate is turned away — but an unsolicited
+    // `myapp://auth/callback?error=access_denied` carries none, and that is
+    // the one any other app on the device can send.
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?error=access_denied` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('ignores a success whose state disagrees', async () => {
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}?code=forged&state=someone-elses`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('surfaces a denial that echoes the presented state', async () => {
+    // The provider's own refusal still has to reach the user as one.
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}?error=access_denied&state=xyz`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'authorization_denied' })
+
+    await started.close()
+  })
+
+  it('resolves a callback that echoes the presented state', async () => {
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=abc&state=xyz` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).resolves.toEqual({ code: 'abc', state: 'xyz' })
+
+    await started.close()
+  })
+
+  it('still takes a callback from a provider that declares it echoes no state', async () => {
+    // Holding the callback to a comparison the provider has said it cannot
+    // satisfy would reject the only callback it can send.
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=unechoed` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({
+      provider: defineProvider({ ...provider, echoesState: false }),
+    })
+
+    await started.present('https://provider.test/authorize?state=presented')
+    await expect(started.wait()).resolves.toMatchObject({ code: 'unechoed' })
+
+    await started.close()
+  })
+
+  it('treats a dismissal of an attempt carrying a state as an abort', async () => {
+    // The one thing the `state` gate must not hold back. A dismissal carries
+    // no URL and so no `state` to match, and it is the user closing the sheet
+    // in front of them — hanging there until `timeoutMs` would be the worst
+    // possible moment to make someone wait.
+    const webBrowser = fakeWebBrowser({ type: 'dismiss' })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'aborted' })
+
+    await started.close()
+  })
+
   it('requires present() before wait()', async () => {
     const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=a` })
     const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })

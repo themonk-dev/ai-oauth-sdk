@@ -1,6 +1,6 @@
 import { OAuthError } from './errors.js'
 import { encodeQuery } from './query.js'
-import { fetchWithSignal } from './http.js'
+import { postWithoutRedirects } from './http.js'
 import { safeSnippet } from './redact.js'
 import type { FetchLike, ProviderConfig, TokenSet } from './types.js'
 
@@ -74,6 +74,11 @@ function encodeBody(params: Record<string, string>, style: 'form' | 'json'): {
  *
  * A provider's `parseTokenResponse` runs before the error check, because one
  * with a non-standard success shape may also report errors differently.
+ *
+ * This is the request that carries `code_verifier`, `refresh_token` and
+ * `client_secret`, so it goes through {@link postWithoutRedirects} rather than
+ * plain `fetch`: a 307 from the token endpoint would otherwise replay all three
+ * at whatever host it names.
  */
 async function postToTokenEndpoint(
   provider: ProviderConfig,
@@ -83,7 +88,7 @@ async function postToTokenEndpoint(
 ): Promise<TokenEndpointResponse> {
   const { body, contentType } = encodeBody(params, provider.tokenRequest.style)
 
-  const response = await fetchWithSignal(
+  const response = await postWithoutRedirects(
     fetchImpl,
     provider.tokenUrl,
     {
@@ -97,6 +102,10 @@ async function postToTokenEndpoint(
     },
     signal,
     'Token request was aborted.',
+    {
+      code: 'token_request_failed',
+      describe: `Token request for "${provider.id}" to ${provider.tokenUrl}`,
+    },
   )
 
   const text = await response.text()

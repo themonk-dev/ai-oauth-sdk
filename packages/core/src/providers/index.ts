@@ -123,7 +123,14 @@ interface DiscoveryDocument {
   authorization_endpoint?: string
   token_endpoint?: string
   device_authorization_endpoint?: string
-  scopes_supported?: string[]
+  /**
+   * Typed as `unknown` rather than `string[]`, because that is what it is: the
+   * declared shape is the spec's claim about a remote party's JSON, not
+   * something this side has checked. {@link readDiscoveredScopes} is what turns
+   * it into a `string[]` — the endpoints beside it get their own checks, and
+   * this field went without one for longer than it should have.
+   */
+  scopes_supported?: unknown
 }
 
 /**
@@ -212,6 +219,39 @@ function assertSecureDiscoveredEndpoint(field: string, value: string, source: st
         'Endpoints taken from a discovery document must use https, except on loopback.',
     )
   }
+}
+
+/**
+ * Reads `scopes_supported`, or reports that it is unusable.
+ *
+ * Every other value lifted out of a discovery document is scheme-checked before
+ * it reaches the descriptor; this one reached it untouched, and each way of
+ * being wrong failed badly in its own way. A deployment emitting the
+ * space-delimited string `"openid profile"` — which some do — got as far as
+ * `scopes.join is not a function` thrown out of `authorize()`, a bare
+ * `TypeError` escaping `client.login()` on remote input. `{}` or a number was
+ * worse for being quiet: the descriptor carried the junk, `authorize()` found
+ * no length on it and omitted the `scope` parameter altogether, so the request
+ * silently asked for whatever the server's default scopes happen to be. And
+ * `[1, 2]` produced `scope=1+2`.
+ *
+ * So: a non-empty array of non-empty strings, or nothing, in which case the
+ * caller falls back to the same `['openid']` a document listing no scopes at
+ * all already gets. One bad element rejects the list rather than being filtered
+ * out — a document this wrong is not one to take a partial reading from.
+ *
+ * A well-formed list is still used as-is. Asking for everything the server
+ * advertises is a design question and not this function's to reopen; it is what
+ * the docs describe and what integrators already rely on.
+ */
+function readDiscoveredScopes(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined
+  }
+
+  return value.every((scope) => typeof scope === 'string' && scope.length > 0)
+    ? (value as string[])
+    : undefined
 }
 
 /**
@@ -384,9 +424,19 @@ export async function providerFromDiscovery(
     assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url)
   }
 
-  // The document's device endpoint always wins over `input.deviceAuthorizationUrl`
-  // below, so it is always document-sourced when present.
-  if (document.device_authorization_endpoint) {
+  // Same precedence and the same guard as the two endpoints above. It used to
+  // read the other way round here: the document's `device_authorization_endpoint`
+  // overrode an explicitly passed `deviceAuthorizationUrl` unconditionally,
+  // which contradicts what SECURITY.md promises ("endpoints you pass explicitly
+  // are your own config and are left alone") and silently undid the pinning on
+  // the one endpoint whose response puts a `verification_uri` in front of a
+  // user to open and type a code into.
+  //
+  // The validation is guarded rather than run on the document's value
+  // regardless, because an integrator who pinned their own endpoint has said
+  // the document's is none of their business: throwing over a value that is
+  // then never used would fail their login on someone else's document.
+  if (input.deviceAuthorizationUrl == null && document.device_authorization_endpoint) {
     assertSecureDiscoveredEndpoint(
       'device_authorization_endpoint',
       document.device_authorization_endpoint,
@@ -398,8 +448,8 @@ export async function providerFromDiscovery(
     ...input,
     authorizationUrl,
     tokenUrl,
-    scopes: input.scopes ?? document.scopes_supported ?? ['openid'],
-    ...(document.device_authorization_endpoint
+    scopes: input.scopes ?? readDiscoveredScopes(document.scopes_supported) ?? ['openid'],
+    ...(input.deviceAuthorizationUrl == null && document.device_authorization_endpoint
       ? { deviceAuthorizationUrl: document.device_authorization_endpoint }
       : {}),
   })

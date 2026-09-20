@@ -357,6 +357,60 @@ describe('announceCallback', () => {
     await started.close()
   })
 
+  /**
+   * The acknowledgement travels the same broadcast the callback did, so it
+   * reaches every redirect page announcing at that moment and not only the one
+   * it answers. Two sign-ins on one origin — a second tab, a user who started
+   * again — put two of them there inside the same 1500ms window.
+   *
+   * An unattributed acknowledgement settles both: the page whose callback was
+   * dropped is told it was delivered and closes itself, and the tab waiting on
+   * that sign-in hangs until its `timeoutMs` with a code that no longer exists
+   * anywhere. `window.close()` is the irreversible half, hence the call count.
+   */
+  it('ignores an acknowledgement addressed to another announcement', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: severingProvider,
+    })
+    await started.present('https://provider.test/authorize?state=mine')
+
+    const mine = announceCallback('?code=mine&state=mine', 200)
+    const other = announceCallback('?code=not-mine&state=another-tab', 200)
+
+    expect(await Promise.all([mine, other])).toEqual([true, false])
+    await expect(started.wait()).resolves.toEqual({ code: 'mine', state: 'mine' })
+    // Only the announcement that was actually taken closed its window.
+    expect(closeSpy).toHaveBeenCalledTimes(1)
+
+    await started.close()
+  })
+
+  it('takes an unaddressed acknowledgement at the deadline, not before', async () => {
+    /*
+     * A receiver from a release before acknowledgements were addressed answers
+     * without naming anyone. The redirect page is routinely loaded from an
+     * unpinned CDN while the app bundle is pinned, so a new page meeting an old
+     * receiver is the ordinary skew, and resolving `false` there would leave a
+     * window on screen telling the user their sign-in went nowhere when it went
+     * through. It cannot settle the announcement outright — that is the
+     * unattributable answer the id exists to refuse — so it is held to the
+     * deadline, by which point any addressed acknowledgement has arrived.
+     */
+    const channel = new BroadcastChannel('aioauth:callback-channel')
+    channel.onmessage = (event: MessageEvent<{ kind: string }>) => {
+      if (event.data?.kind === 'callback') {
+        channel.postMessage({ kind: 'received' })
+      }
+    }
+
+    const started = Date.now()
+    await expect(announceCallback('?code=abc&state=xyz', 120)).resolves.toBe(true)
+    expect(Date.now() - started, 'it should wait out the deadline').toBeGreaterThanOrEqual(100)
+    expect(closeSpy).toHaveBeenCalledTimes(1)
+
+    channel.close()
+  })
+
   it('leaves the window open when nothing acknowledges', async () => {
     // Whoever opened the redirect URL by hand is reading this page, not a
     // popup to be swept away.
