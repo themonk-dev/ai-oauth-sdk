@@ -1,5 +1,5 @@
 ---
-'@ai-oauth-sdk/core': patch
+'@ai-oauth-sdk/core': minor
 ---
 
 Refuse to follow a redirect away from the token, revocation and device endpoints.

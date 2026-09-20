@@ -14,6 +14,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createAuthClient } from '../src/client.js'
+import { createAuthenticatedFetch } from '../src/fetch.js'
 import { defineProvider } from '../src/providers/define.js'
 import { openaiDeviceFlow } from '../src/receivers/openai-device.js'
 import { pollDeviceToken, startDeviceAuthorization } from '../src/receivers/device.js'
@@ -310,6 +311,34 @@ describe('the device flow is not allowed to be redirected', () => {
 
     expect(error).toMatchObject({ name: 'OAuthError', code: 'device_flow_failed' })
     expect(attacker.received).toEqual([])
+  })
+
+  it('still follows a redirect on the caller’s own API requests', async () => {
+    // The guard is deliberately not in `fetchWithSignal`, which
+    // `createAuthenticatedFetch` shares: a redirect on an API call is ordinary
+    // traffic and following it is correct. Nothing else pins that, so folding
+    // the guard down a layer would otherwise break API redirects in silence.
+    const destination = await startAttacker()
+    const gateway = createServer((request, response) => {
+      response.writeHead(302, { Location: `${destination.url}${request.url ?? '/'}` })
+      response.end()
+    })
+    await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
+    plainServers.push(gateway)
+
+    const target = await authServer()
+    const client = createAuthClient({
+      provider: testProvider(target.url),
+      storage: memoryStorage(),
+    })
+    await client.setTokens(storedTokens())
+
+    const response = await createAuthenticatedFetch(client)(
+      `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1/models`,
+    )
+
+    expect(response.status, 'the redirect should have been followed').toBe(200)
+    expect(destination.received).toMatchObject([{ method: 'GET', path: '/v1/models' }])
   })
 
   it("refuses a redirect on OpenAI's device flow, which posts to fixed URLs", async () => {

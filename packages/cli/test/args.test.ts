@@ -67,7 +67,7 @@ describe('parseArgs', () => {
    * answered `--toString` out of `Object.prototype` and printed a function
    * where the type promises a sentence.
    */
-  it.each([['--toString'], ['--constructor'], ['--valueOf']])(
+  it.each([['--toString'], ['--constructor'], ['--valueOf'], ['--__proto__']])(
     'does not take the hint for %s from Object.prototype',
     (flag) => {
       const unknown = findUnknownFlag(parseArgs(['login', flag]).flags)
@@ -77,6 +77,19 @@ describe('parseArgs', () => {
       expect(unknown?.hint).toContain('ai-oauth-sdk --help')
     },
   )
+
+  /*
+   * The other side of the same lookup. On a plain object literal `--__proto__`
+   * never becomes an own property, so `Object.keys` reported nothing, the
+   * unknown-flag guard had nothing to catch, and the flag was accepted and
+   * discarded along with the argument after it.
+   */
+  it('sees --__proto__ as a flag rather than swallowing it', () => {
+    const parsed = parseArgs(['logout', 'acme', '--__proto__', 'value'])
+
+    expect(Object.keys(parsed.flags)).toEqual(['__proto__'])
+    expect(parsed.positionals).toEqual(['acme'])
+  })
 
   it('passes everything after -- through untouched', () => {
     const parsed = parseArgs(['exec', 'openai', '--', 'curl', '-H', 'X: 1', '--json'])

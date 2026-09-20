@@ -496,15 +496,34 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
+        const base = `http://${bindHost}`
+
         let url: URL
 
         try {
-          url = new URL(target, `http://${bindHost}`)
+          url = new URL(target, base)
         } catch {
           // Refused like the 405/403/404 above: answered, and then forgotten.
           // The pending callback is left alone and the server keeps listening,
           // because the genuine redirect may still be on its way and settling
           // — or closing — is what would lose it.
+          response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/plain' })
+          response.end('Bad request')
+
+          return
+        }
+
+        // Belt to the guard's braces, and the part that does not depend on who
+        // parsed the request line. The URL parser strips tab, CR and LF before
+        // it looks at anything, so `/\t/evil.com/callback` reads as
+        // protocol-relative to it while passing a check on the first two
+        // characters. Node's own parser rejects those bytes in a request target
+        // before this handler ever runs, so there is nothing reachable to fix
+        // today — but that is llhttp's promise, not this function's, and it
+        // would stop covering us behind a proxy that normalised targets
+        // differently. A host that is not the one we bound cannot have come
+        // from an origin-form target at all.
+        if (url.host !== new URL(base).host) {
           response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/plain' })
           response.end('Bad request')
 

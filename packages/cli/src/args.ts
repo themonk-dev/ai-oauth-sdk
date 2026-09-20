@@ -24,7 +24,16 @@ export interface ParsedArgs {
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  const flags: Record<string, string | boolean> = {}
+  /* Every key here is whatever the user typed, so this is the one object in
+     the CLI that takes arbitrary names. On a plain literal, `--__proto__` does
+     not become an own property at all: `Object.keys` never reports it, so the
+     unknown-flag guard below cannot see it and the flag is accepted and
+     discarded — the exact silent-typo failure that guard exists to prevent. */
+  const flags: Record<string, string | boolean> = Object.create(null) as Record<
+    string,
+    string | boolean
+  >
+
   const positionals: string[] = []
   const passthrough: string[] = []
 

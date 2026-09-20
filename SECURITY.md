@@ -73,12 +73,12 @@ beginning `//` — or `/\`, since `http` is a special scheme and its parser read
 slash — is a protocol-relative reference and sends the parser hunting for an authority in what can
 only be a path. `//evil.com/callback` parses to the host `evil.com` with the path the server expects,
 and a bare `//` names no authority at all and throws. Nothing in `node:http` catches what a request
-listener throws, so an unguarded parse hands `ERR_INVALID_URL` to the default `uncaughtException`
-handler and ends the process: `location = 'http://127.0.0.1:1455//'` on any page the user happens to
-have open would be enough to kill a CLI mid-login, and two of the bundled providers bind fixed,
-published ports. So the target is held to origin-form before it is parsed, the parse is guarded
-besides, and anything else is answered `400` without settling the pending callback or closing the
-port — the real redirect may still be on its way.
+listener throws, so an unguarded parse would hand `ERR_INVALID_URL` to the default
+`uncaughtException` handler and end the process — and two of the bundled providers bind fixed,
+published ports, so any page the user happens to have open knows where to aim. So the target is held
+to origin-form before it is parsed, the parse is guarded besides, the parsed host is checked against
+the one we bound, and anything else is answered `400` without settling the pending callback or
+closing the port — the real redirect may still be on its way.
 
 **It binds every address the redirect URI's host resolves to**, which is not the same thing as
 binding one. Most providers register the `localhost` form of the redirect URI rather than the IP
@@ -117,6 +117,13 @@ not carry one; that is the same narrow exemption, with the same caveat, describe
 redirect pages that need it — an authorization page that severs `window.opener` leaves no
 alternative — and prefer `postCallbackToOpener` wherever the opener survived.
 
+The acknowledgement travelling back is addressed too, for the same reason in the other direction:
+`announceCallback` closes its own window once it believes the callback was delivered, and a bare
+acknowledgement on a shared channel would be taken by whichever announcement heard it first. So a
+receiver names the announcement it answers. That id is a correlation token, not an authenticator —
+every same-origin context can read it off the channel — and `state` remains the only thing deciding
+whose callback is whose.
+
 **Discovery is treated as remote input, over a transport that has to stay https.**
 `providerFromDiscovery()` takes a document from a party you have not vouched for, and that document
 names the endpoints every later code exchange and refresh will post to — so the issuer must use
@@ -129,6 +136,18 @@ server on `http://127.0.0.1:<port>` still works. Endpoints you pass explicitly a
 and are left alone. There is no issuer-equality check, which would break legitimate multi-tenant
 deployments; an `AuthClient` is bound to one provider at construction, so it has nothing to be
 mixed up with.
+
+**A request that carries a credential refuses to be redirected.** The token exchange, the refresh,
+revocation and both device-flow requests all post secrets in the body — the authorization code and
+its PKCE verifier, the refresh token, the client secret — and `fetch` follows redirects by default.
+A 307 or 308 preserves the method *and* the body when it is followed, so an endpoint answering
+`Location:` with somewhere else would have the runtime replay those secrets there, in cleartext if
+the hop lands on `http`, and the reply would come back to be parsed as the token response and
+choose the access token you then use. That is the same hop the discovery guard above refuses, one
+request later and carrying rather more. These requests set `redirect: 'manual'` and treat a 3xx as
+an error. Your own API calls through `createAuthenticatedFetch` are not affected: a redirect there
+is ordinary traffic and is still followed. React Native is the exception — its `fetch` is XHR-backed
+and ignores `redirect` entirely, so it keeps following and nothing here can catch it.
 
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis, but that body is not ours and a misconfigured

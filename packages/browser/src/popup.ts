@@ -402,21 +402,39 @@ export function postCallbackToOpener(payload: string = window.location.search): 
 }
 
 /**
- * A correlation id for one announcement.
+ * A correlation id for one announcement, or `undefined` where this runtime has
+ * no randomness to mint one from.
  *
- * `randomUUID` where the platform has it, which is everywhere a redirect page
- * realistically runs. It is secure-context-only, though, so a page served over
- * plain `http` from something other than localhost falls back to the clock and
- * `Math.random()`. That is enough here: the id has to tell two announcements on
- * one origin apart, not resist anyone — a same-origin context that wanted to
- * forge an acknowledgement can read every id off the channel either way.
+ * `randomUUID` first, because it reads better, but it is secure-context-only,
+ * so a page served over plain `http` from something other than localhost falls
+ * through to `getRandomValues`, which is not. The id only has to tell two
+ * announcements on one origin apart — a same-origin context that wanted to
+ * forge an acknowledgement can read every id off the channel either way — but
+ * it is still not minted from `Math.random()`: this library throws rather than
+ * degrading its randomness, and a weak source here would be the only one in
+ * the tree, inviting the next reader to copy it somewhere it does matter.
+ *
+ * Returning `undefined` rather than degrading costs nothing, because a runtime
+ * with neither is one `createDefaultCrypto` already refuses to start a sign-in
+ * on, and an announcement with no id settles on any acknowledgement, exactly as
+ * it did before ids existed.
  */
-function announcementId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+function announcementId(): string | undefined {
+  if (typeof crypto === 'undefined') {
+    return undefined
+  }
+
+  if (typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
   }
 
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  if (typeof crypto.getRandomValues !== 'function') {
+    return undefined
+  }
+
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 /**
@@ -445,10 +463,15 @@ function announcementId(): string {
  * anywhere — the distinction being the whole reason this is async where
  * `postCallbackToOpener` is not, since a broadcast is otherwise
  * fire-and-forget. It is not proof of it, though: a receiver on a busy main
- * thread can miss the deadline for a callback it goes on to accept, and a
- * receiver from a release before acknowledgements were addressed answers
- * without an id, which does not count as an answer here. Read it as "say
- * something, this window is on its own", not as "the code was lost".
+ * thread can miss the deadline for a callback it goes on to accept. Read it as
+ * "say something, this window is on its own", not as "the code was lost".
+ *
+ * A receiver from a release before acknowledgements were addressed answers
+ * without an id. That cannot settle this announcement outright — it is exactly
+ * the unattributable answer the id exists to refuse — but it is taken at the
+ * deadline rather than thrown away, so an app pinned to an older version than
+ * its redirect page still closes its popup instead of leaving one on screen
+ * over a sign-in that worked.
  *
  * Degrades to an immediate `false` where `BroadcastChannel` does not exist,
  * so a caller can await it unconditionally.
@@ -481,16 +504,35 @@ export function announceCallback(
       }
     }
 
+    let unaddressed = false
+
     channel.onmessage = (event: MessageEvent<ChannelMessage>) => {
-      // An acknowledgement that does not name this announcement answered
+      if (event.data?.kind !== 'received') {
+        return
+      }
+
+      // An acknowledgement that names a different announcement answered
       // somebody else's, and taking it would close this window over a callback
       // nothing has accepted yet.
-      if (event.data?.kind === 'received' && event.data.id === id) {
+      if (event.data.id === id) {
         finish(true)
+
+        return
+      }
+
+      // One from a receiver older than addressed acknowledgements names nobody
+      // at all. It cannot be attributed, so it does not settle this — but it is
+      // held until the deadline, because by then any correctly addressed
+      // acknowledgement has already arrived and resolving `false` over it would
+      // leave a window open telling the user their sign-in went nowhere when it
+      // went through. Version skew between the redirect page and the app is the
+      // ordinary case when the page is loaded from an unpinned CDN.
+      if (event.data.id === undefined) {
+        unaddressed = true
       }
     }
 
-    const timer = setTimeout(() => finish(false), timeoutMs)
+    const timer = setTimeout(() => finish(unaddressed), timeoutMs)
 
     channel.postMessage({ kind: 'callback', payload, id } satisfies ChannelMessage)
   })
