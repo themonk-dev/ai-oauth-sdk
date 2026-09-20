@@ -357,6 +357,34 @@ describe('announceCallback', () => {
     await started.close()
   })
 
+  /**
+   * The acknowledgement travels the same broadcast the callback did, so it
+   * reaches every redirect page announcing at that moment and not only the one
+   * it answers. Two sign-ins on one origin — a second tab, a user who started
+   * again — put two of them there inside the same 1500ms window.
+   *
+   * An unattributed acknowledgement settles both: the page whose callback was
+   * dropped is told it was delivered and closes itself, and the tab waiting on
+   * that sign-in hangs until its `timeoutMs` with a code that no longer exists
+   * anywhere. `window.close()` is the irreversible half, hence the call count.
+   */
+  it('ignores an acknowledgement addressed to another announcement', async () => {
+    const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
+      provider: severingProvider,
+    })
+    await started.present('https://provider.test/authorize?state=mine')
+
+    const mine = announceCallback('?code=mine&state=mine', 200)
+    const other = announceCallback('?code=not-mine&state=another-tab', 200)
+
+    expect(await Promise.all([mine, other])).toEqual([true, false])
+    await expect(started.wait()).resolves.toEqual({ code: 'mine', state: 'mine' })
+    // Only the announcement that was actually taken closed its window.
+    expect(closeSpy).toHaveBeenCalledTimes(1)
+
+    await started.close()
+  })
+
   it('leaves the window open when nothing acknowledges', async () => {
     // Whoever opened the redirect URL by hand is reading this page, not a
     // popup to be swept away.

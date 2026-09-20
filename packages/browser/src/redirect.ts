@@ -105,6 +105,17 @@ export async function handleRedirectCallback(
   client: AuthClient,
   options: HandleRedirectCallbackOptions = {},
 ): Promise<TokenSet | null> {
+  // "Safe to call unconditionally at startup" has to hold on a server too. An
+  // app that renders on the server runs its startup module there as well, and
+  // reading `window.location.href` would throw a bare `ReferenceError` out of
+  // the render — an SDK import killing a page that has no callback to complete.
+  // Only the address-bar read needs a window: an explicit `url` is a string the
+  // caller already has, and it is parsed and completed here as it is anywhere
+  // else, so this turns away that one case rather than the whole function.
+  if (options.url === undefined && typeof window === 'undefined') {
+    return null
+  }
+
   const href = options.url ?? window.location.href
   const parse = client.provider.parseCallback ?? parseStandardCallback
   const parsed = parse(href)
@@ -116,9 +127,12 @@ export async function handleRedirectCallback(
   try {
     return await client.completeAuthorization({ callbackUrl: href })
   } finally {
+    // No `typeof window` test here: the address bar is only touched when the
+    // callback came from it, and the guard above has already returned for the
+    // one runtime where that read has no window behind it.
     const cameFromAddressBar = options.url === undefined
 
-    if (options.cleanUrl !== false && cameFromAddressBar && typeof window !== 'undefined') {
+    if (options.cleanUrl !== false && cameFromAddressBar) {
       const url = new URL(window.location.href)
 
       for (const key of ['code', 'state', 'error', 'error_description', 'scope']) {

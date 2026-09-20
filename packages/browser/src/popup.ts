@@ -37,7 +37,25 @@ const MESSAGE_TYPE = 'aioauth:callback'
  */
 const CALLBACK_CHANNEL = 'aioauth:callback-channel'
 
-type ChannelMessage = { kind: 'callback'; payload: string } | { kind: 'received' }
+/**
+ * What goes over {@link CALLBACK_CHANNEL}.
+ *
+ * The `id` is minted per announcement by {@link announceCallback} and echoed
+ * back on the acknowledgement, because a broadcast reaches every same-origin
+ * context and an unattributed `received` would therefore settle every
+ * announcement in flight, not the one it answered. It is a correlation id and
+ * nothing more: it travels in clear on the same channel everyone can hear, so
+ * it says which announcement an acknowledgement belongs to and never that the
+ * sender was entitled to send it. Ownership of a *callback* is decided by
+ * `state` in {@link popupReceiver}, which is the comparison that matters.
+ *
+ * Both fields are optional on the wire because the two halves are separate
+ * deployments: the redirect page is commonly loaded from a CDN and can be a
+ * different version of this module from the app that opened it.
+ */
+type ChannelMessage =
+  | { kind: 'callback'; payload: string; id?: string }
+  | { kind: 'received'; id?: string }
 
 /**
  * The `state` in an authorization URL, or nothing where it carries none.
@@ -252,11 +270,15 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
           }
 
           callback.settle()
-          // Acknowledged only by the attempt the callback belongs to. A
-          // receiver that acknowledged another tab's callback would tell that
-          // page it had been delivered while dropping it, and the tab that
-          // was actually waiting for it would wait forever.
-          channel.postMessage({ kind: 'received' } satisfies ChannelMessage)
+          // Acknowledged only by the attempt the callback belongs to, and
+          // addressed to the announcement it answers. A receiver that
+          // acknowledged another tab's callback would tell that page it had
+          // been delivered while dropping it, and the tab that was actually
+          // waiting for it would wait forever — echoing the announcement's
+          // own id keeps the acknowledgement from doing that on its way back,
+          // where the broadcast would otherwise hand it to every page
+          // announcing at that moment.
+          channel.postMessage({ kind: 'received', id: event.data.id } satisfies ChannelMessage)
         }
       }
 
@@ -380,23 +402,53 @@ export function postCallbackToOpener(payload: string = window.location.search): 
 }
 
 /**
+ * A correlation id for one announcement.
+ *
+ * `randomUUID` where the platform has it, which is everywhere a redirect page
+ * realistically runs. It is secure-context-only, though, so a page served over
+ * plain `http` from something other than localhost falls back to the clock and
+ * `Math.random()`. That is enough here: the id has to tell two announcements on
+ * one origin apart, not resist anyone — a same-origin context that wanted to
+ * forge an acknowledgement can read every id off the channel either way.
+ */
+function announcementId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+/**
  * Call this on your redirect page when {@link postCallbackToOpener} reports no
  * opener, to hand the callback to a popup waiting on the `BroadcastChannel`
  * instead — same-origin by construction, and untouched by a severed opener
  * because it never goes through `window.opener` at all.
  *
- * Resolves `true` once a waiting receiver acknowledges, and closes this window
- * on the way out, the way `postCallbackToOpener` does: the opener's own handle
- * to a severed popup may no longer be able to close it, so a popup that closes
- * itself is what keeps a finished sign-in from leaving a window on screen.
+ * Resolves `true` once a waiting receiver acknowledges *this* announcement, and
+ * closes this window on the way out, the way `postCallbackToOpener` does: the
+ * opener's own handle to a severed popup may no longer be able to close it, so
+ * a popup that closes itself is what keeps a finished sign-in from leaving a
+ * window on screen.
+ *
+ * "This announcement" is the whole of it, because closing the window is
+ * irreversible and a broadcast has no addressee of its own. Two sign-ins
+ * running on one origin at the same time put two redirect pages on this
+ * channel, and an acknowledgement meant for one of them would otherwise tell
+ * the other its code had been delivered — that page would close itself with
+ * its callback still undelivered, leaving the tab behind it to hang until its
+ * `timeoutMs`. So each announcement carries an id and only settles on an
+ * acknowledgement that names it.
  *
  * Resolves `false` once `timeoutMs` passes with nothing acknowledging. That is
  * usually someone who opened the redirect URL directly, with nothing waiting
  * anywhere — the distinction being the whole reason this is async where
  * `postCallbackToOpener` is not, since a broadcast is otherwise
  * fire-and-forget. It is not proof of it, though: a receiver on a busy main
- * thread can miss the deadline for a callback it goes on to accept. Read it as
- * "say something, this window is on its own", not as "the code was lost".
+ * thread can miss the deadline for a callback it goes on to accept, and a
+ * receiver from a release before acknowledgements were addressed answers
+ * without an id, which does not count as an answer here. Read it as "say
+ * something, this window is on its own", not as "the code was lost".
  *
  * Degrades to an immediate `false` where `BroadcastChannel` does not exist,
  * so a caller can await it unconditionally.
@@ -411,6 +463,7 @@ export function announceCallback(
 
   return new Promise<boolean>((resolve) => {
     const channel = new BroadcastChannel(CALLBACK_CHANNEL)
+    const id = announcementId()
     let settled = false
 
     const finish = (received: boolean) => {
@@ -429,13 +482,16 @@ export function announceCallback(
     }
 
     channel.onmessage = (event: MessageEvent<ChannelMessage>) => {
-      if (event.data?.kind === 'received') {
+      // An acknowledgement that does not name this announcement answered
+      // somebody else's, and taking it would close this window over a callback
+      // nothing has accepted yet.
+      if (event.data?.kind === 'received' && event.data.id === id) {
         finish(true)
       }
     }
 
     const timer = setTimeout(() => finish(false), timeoutMs)
 
-    channel.postMessage({ kind: 'callback', payload } satisfies ChannelMessage)
+    channel.postMessage({ kind: 'callback', payload, id } satisfies ChannelMessage)
   })
 }
