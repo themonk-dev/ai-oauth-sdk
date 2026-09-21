@@ -75,7 +75,9 @@ waits for whichever comes first, `present()` or the first `wait()`, and is evalu
 that establishes. Nothing is refused for being early: a caller that drives `start()` and opens the
 browser itself declares its attempt by calling `wait()`, and is held for that moment rather than
 turned away. Requests for another path or another method are answered immediately, since neither can
-touch the pending callback.
+touch the pending callback. A held request is dropped rather than answered if the receiver is closed
+or aborted while it waits, and it is given a timeout of its own so that a caller which neither
+presents nor waits cannot leave a connection open indefinitely.
 
 **It binds every address the redirect URI's host resolves to**, which is not the same thing as
 binding one. Most providers register the `localhost` form of the redirect URI rather than the IP
@@ -114,6 +116,16 @@ not carry one; that is the same narrow exemption, with the same caveat, describe
 redirect pages that need it — an authorization page that severs `window.opener` leaves no
 alternative — and prefer `postCallbackToOpener` wherever the opener survived.
 
+**`resolveBrowserFlow()` does not require an https origin before using one.** A provider that sets
+`acceptsHttpsRedirect` gets a popup flow with your page's own origin as the redirect URI, and that
+origin is copied with whatever scheme it already has. Serve the app from a non-loopback cleartext
+origin — `http://app.internal`, a LAN development host — and the redirect URI is `http://` too, so
+the authorization code comes back in the clear. The name of the flag promises a check that is not
+performed. It is left that way deliberately for now, because requiring https would break those
+development setups, and the exposure is narrow: only OpenRouter sets the flag today, PKCE covers the
+captured code, and anyone on the path of a cleartext origin can already rewrite the page. Serve over
+https, or loopback, if the origin is not yours alone.
+
 **Discovery is treated as remote input, over a transport that has to stay https.**
 `providerFromDiscovery()` takes a document from a party you have not vouched for, and that document
 names the endpoints every later code exchange and refresh will post to — so the issuer must use
@@ -143,7 +155,16 @@ parse could not be escaped safely: `^` escapes neither `%` — so `%USERPROFILE%
 expanded and sent to whoever served it — nor a carriage return, which ends one command and begins
 the next. The launcher now uses `rundll32 url.dll,FileProtocolHandler`, which takes the URL as an
 argument and re-parses nothing. A URL containing a control character is not launched at all, on any
-platform; the caller prints it instead.
+platform — a receiver that was given an `onAuthorizationUrl` callback has already handed the URL to
+it by then, so a CLI that prints the URL still completes the login; one that relies solely on the
+browser opening will wait out its timeout instead.
+
+Two things follow from `rundll32` that are worth knowing before you rely on it. `FileProtocolHandler`
+documents a URL limit of roughly 2048 characters, where `cmd /c start` allowed 8191 — long enough
+for any authorization URL these providers build, but not unlimited. And `rundll32` is a technique
+endpoint-protection products watch, so a managed Windows fleet may block or alert on it. Both
+failures are silent at the moment they happen, so pass `onAuthorizationUrl` and print the URL if
+your application cannot afford a login that simply does not start.
 
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis, but that body is not ours and a misconfigured

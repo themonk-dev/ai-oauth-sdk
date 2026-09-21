@@ -145,6 +145,18 @@ const loopbackNames = new Set(['localhost'])
 const EPHEMERAL_BIND_ATTEMPTS = 5
 
 /**
+ * How long a callback that arrived before the attempt was known may hold its
+ * connection.
+ *
+ * The deferral is normally released in milliseconds, by `present()` or the
+ * first `wait()`. This is only for the caller who drives `start()` and then
+ * does neither: without it such a request holds a socket, and a file
+ * descriptor, for as long as the peer keeps the connection open. Generous
+ * enough that it never fires on a real login.
+ */
+const PARKED_REQUEST_TIMEOUT_MS = 30_000
+
+/**
  * Errno values that mean the address family is not available on this host at
  * all, as opposed to the address being taken.
  *
@@ -283,12 +295,18 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
  * the promise, and the server keeps listening for the real redirect. The
  * comparison runs in constant time because it now sits on a security boundary.
  *
- * Two gaps are left open deliberately. A receiver driven directly, without
- * `present()`, has no attempt to compare against and takes callbacks as they
- * come: `start()` binds a port, so unlike a deep-link channel there is no
- * pre-existing route for a stray callback to arrive on, and requiring
- * `present()` would break every caller that drives `start()` itself. And a
- * provider declaring `echoesState: false` has said no `state` will come back,
+ * A callback that arrives before the attempt is known is held rather than
+ * judged. `start()` binds the port, but `present()` is what tells this receiver
+ * whose attempt it is, and `client.login()` does real storage I/O in between —
+ * so a callback landing in that window would otherwise be accepted for want of
+ * anything to compare it against. It parks until whichever comes first:
+ * `present()`, the first `wait()`, or `close()`. A caller that drives `start()`
+ * itself and never presents is therefore still served, on its own `wait()`,
+ * and takes callbacks as they come exactly as before; a caller that does
+ * neither holds the request until it closes or the parked request times out.
+ *
+ * One gap is left open deliberately. A provider declaring
+ * `echoesState: false` has said no `state` will come back,
  * so holding it to a comparison it cannot satisfy would reject the only
  * callback it can send. The `Sec-Fetch-*` check above is what covers both, and
  * it is why that check runs first and stays.
@@ -369,6 +387,14 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * intent, the only answer each channel can support.
        */
       let presented = false
+      /**
+       * Set the moment this receiver is being retired, so a request parked on
+       * the deferral is dropped rather than answered on the way out. It cannot
+       * be inferred from the response: `close()` destroys the socket, which
+       * leaves the `ServerResponse` itself reporting neither `destroyed` nor
+       * `writableEnded`.
+       */
+      let torndown = false
       let markPresented: () => void
       const presentation = new Promise<void>((resolve) => {
         markPresented = () => {
@@ -444,11 +470,23 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
+        /* A parked request is held by a socket, not by a timer, so give it the
+           one bound the deferral otherwise lacks. `login()` releases within
+           milliseconds, but a caller that drives `start()` and neither presents
+           nor waits would hold the connection — and the file descriptor — for
+           as long as the peer cared to keep it open. */
+        response.setTimeout(PARKED_REQUEST_TIMEOUT_MS, () => {
+          response.destroy()
+        })
+
         void presentation.then(() => {
-          /* The browser may have given up, or `close()` may have released the
-             wait by destroying the sockets. Writing to a finished response
-             emits an error event nobody is listening on. */
-          if (response.writableEnded || response.destroyed) {
+          /* Teardown is tracked explicitly rather than read off the response.
+             `closeAllConnections()` destroys the *socket*; it leaves
+             `response.destroyed` and `response.writableEnded` false, so
+             inferring it from those would let a request that parked before
+             `close()` be read and settled against a connection that is already
+             gone. */
+          if (torndown || response.writableEnded || response.socket?.destroyed) {
             return
           }
 
@@ -680,7 +718,10 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         settled = true
         rejectCallback(new OAuthError('aborted', 'Login was aborted.'))
         /* Nothing is coming, so release anything parked on the deferral rather
-           than leaving a socket held open past the close. */
+           than leaving a socket held open past the close. `torndown` first, so
+           what the release finds is a retired receiver and not a callback worth
+           reading. */
+        torndown = true
         markPresented()
         void close()
       }
@@ -731,8 +772,11 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         async close() {
           context.signal?.removeEventListener('abort', onAbort)
           /* A parked request would otherwise hold a socket the close is waiting
-             on; released here it finds the response already destroyed and
-             returns. */
+             on. Released here it finds `torndown` set and drops the callback
+             rather than evaluating one against a connection that is going away
+             — which is what makes this a teardown rather than one last
+             delivery. */
+          torndown = true
           markPresented()
           await close()
         },

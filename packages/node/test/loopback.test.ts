@@ -501,6 +501,29 @@ describe('loopbackReceiver', () => {
       }
     })
 
+    it('drops a parked callback when the receiver is closed instead of settling it', async () => {
+      // Teardown cannot be inferred from the response: `closeAllConnections()`
+      // destroys the socket and leaves `response.destroyed` and
+      // `writableEnded` both false. Reading those alone, `close()` released the
+      // deferral and then evaluated the parked callback anyway — settling the
+      // promise on the way out, so a `wait()` after `close()` resolved with a
+      // callback the receiver was never presented for.
+      const started = await loopbackReceiver({ port: 0 }).start({
+        provider: testProvider(server.url),
+      })
+
+      const parked = rawGet(`${started.redirectUri}?code=abc&state=xyz`, navigationHeaders)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      await started.close()
+      await parked.catch(() => undefined)
+
+      // `wait()` here releases the deferral a second time, which is exactly the
+      // path that used to deliver the callback after teardown. It must find the
+      // receiver retired and settle nothing.
+      expect(await isSettled(started.wait())).toBe(false)
+    })
+
     it('answers a wrong path and a wrong method without waiting for anything', async () => {
       // Neither touches the pending callback, so neither has any reason to be
       // held — and holding them would hang a caller that never presents.

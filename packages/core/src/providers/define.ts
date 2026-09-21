@@ -45,15 +45,24 @@ export function parseStandardCallback(input: string): CallbackParseResult {
    * pattern anchors on `^` or `&` so `authorization_code=…` or
    * `error_description=…` cannot pass for the parameter itself.
    *
-   * A pure fragment response — `https://app/cb#code=X&state=Y`, with no query —
-   * has no `code`/`error` before the `#` and so takes the fragment, which is
-   * the same answer it got before.
+   * A pure fragment response has no `code`/`error` before the `#` and so takes
+   * the fragment. That is a gain, not a restoration: the old test was reached
+   * only when the input contained a `?`, so a full redirect URL carrying only a
+   * fragment — `https://app/cb#code=X&state=Y`, which is what an app passing
+   * `window.location.href` produces against a fragment-mode provider — never
+   * entered the branch at all. The whole URL went to `parseQuery`, the code was
+   * lost, and `readCallback` threw `no code returned`. Only the bare `#…` form
+   * worked, via the `startsWith('#')` branch above. Both work now.
+   *
+   * The value is required to be non-empty so that `?code=&state=B#code=C` is
+   * not read as a query response carrying no code; an empty `code=` is not an
+   * answer, and the fragment may still hold one.
    */
   const hashIndex = query.indexOf('#')
 
   if (hashIndex >= 0) {
     const beforeHash = query.slice(0, hashIndex)
-    query = /(^|&)(code|error)=/.test(beforeHash) ? beforeHash : query.slice(hashIndex + 1)
+    query = /(^|&)(code|error)=[^&]/.test(beforeHash) ? beforeHash : query.slice(hashIndex + 1)
   }
 
   const params = parseQuery(query)

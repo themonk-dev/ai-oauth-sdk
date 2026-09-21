@@ -70,8 +70,15 @@ export function openBrowser(url: string): void {
   // No spawn at all rather than a sanitised one. Every URL this library builds
   // itself is already clean, so a control character here means the value came
   // from somewhere that should not have been trusted with it, and quietly
-  // repairing it would hide that. The caller falls back to printing the URL,
-  // which is a working login rather than a broken one.
+  // repairing it would hide that.
+  //
+  // Refusing is silent, which is the honest cost of it: a receiver given an
+  // `onAuthorizationUrl` has already handed the URL over by the time this runs,
+  // so that caller still completes, but one relying on the browser opening
+  // waits out its timeout. Since `providerFromDiscovery()` now refuses such an
+  // endpoint at construction, reaching here means an `authorizationUrl` the
+  // integrator wrote themselves, where failing visibly at the launch is better
+  // than passing a line break to a shell script like `xdg-open`.
   if (CONTROL_CHARACTERS.test(url)) {
     return
   }
