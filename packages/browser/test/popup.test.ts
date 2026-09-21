@@ -197,10 +197,16 @@ describe('popupReceiver', () => {
   /**
    * A `postMessage` reaches the window that opened the popup and nowhere else,
    * so there is no second attempt it could have been meant for and nothing for
-   * the receiver to rule on. An app passing `window.location.href` rather than
-   * the default `window.location.search`, against a provider that appends a
-   * fragment, produces exactly the payload a `state` filter here would drop —
-   * and the client, which has the authoritative `state`, would rather be told.
+   * the receiver to rule on. A payload whose `state` is plainly not this
+   * attempt's is still handed on: the client holds the authoritative `state`
+   * and would rather be told than have the receiver drop it silently.
+   *
+   * The payload is a full URL with a trailing `#_=_` on it, which is what an
+   * app passing `window.location.href` rather than the default
+   * `window.location.search` produces against a provider that appends a
+   * fragment. That used to come back as `state: "elsewhere#_=_"` — the fragment
+   * glued onto the last query value by the callback parser — so this doubles as
+   * a regression guard for the parse.
    */
   it('hands a postMessage callback through whatever its state looks like', async () => {
     const started = await popupReceiver({ redirectUri: 'http://localhost/callback' }).start({
@@ -209,9 +215,9 @@ describe('popupReceiver', () => {
     const waiting = started.wait()
     await started.present('https://provider.test/authorize?state=mine')
 
-    deliverCallback('https://app.test/callback?code=abc&state=mine#_=_')
+    deliverCallback('https://app.test/callback?code=abc&state=elsewhere#_=_')
 
-    await expect(waiting).resolves.toEqual({ code: 'abc', state: 'mine#_=_' })
+    await expect(waiting).resolves.toEqual({ code: 'abc', state: 'elsewhere' })
 
     await started.close()
   })

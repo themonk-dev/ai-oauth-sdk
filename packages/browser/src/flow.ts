@@ -120,6 +120,40 @@ export function resolveBrowserFlow(
 ): BrowserFlowResolution {
   const loopback = isLoopbackOrigin(origin)
 
+  /**
+   * Open question, deliberately left open: `acceptsHttpsRedirect` is consulted
+   * without checking that this origin *is* https.
+   *
+   * `originRoot` copies the origin's own scheme, so a page served from
+   * `http://app.internal` on a provider that sets the flag is granted a popup
+   * flow with an `http://app.internal/` redirect URI — from a check whose name
+   * promises otherwise. The authorization code would then come back over
+   * cleartext.
+   *
+   * Currently low-risk, on three counts that all have to hold:
+   *
+   * - Only OpenRouter sets `acceptsHttpsRedirect`. It registers no redirect
+   *   against a client at all, which is why it can accept an arbitrary one;
+   *   every other bundled provider leaves the flag unset or, like Claude,
+   *   declares `false` outright.
+   * - PKCE with S256 is on, so a code observed on the wire is not redeemable:
+   *   the verifier never leaves this process. That is the same protection the
+   *   loopback squatting note in `SECURITY.md` leans on, with the same
+   *   precondition — it assumes the authorization server actually enforces the
+   *   challenge, and it does not apply to a provider defined with
+   *   `usePkce: false`.
+   * - An attacker positioned to read a cleartext origin's traffic can also
+   *   rewrite the page that origin serves, and a page that can be rewritten has
+   *   already lost the tokens whatever this function returns. Requiring https
+   *   here would not save such a session; it would only decline to start it.
+   *
+   * Requiring `origin.protocol === 'https:'` is a one-line change and is not
+   * made here on purpose. It would refuse the LAN and plain-`http` development
+   * setups that legitimately use this path today — `http://192.168.1.10:5173`,
+   * a container on an internal hostname — and turning those into a hard failure
+   * is a compatibility call that belongs to the maintainer, not to a security
+   * pass. Flagged rather than fixed.
+   */
   if (!loopback && provider.redirect.acceptsHttpsRedirect === true) {
     return { flow: 'popup', redirectUri: originRoot(origin) }
   }

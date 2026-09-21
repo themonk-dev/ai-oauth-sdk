@@ -214,6 +214,110 @@ describe('providerFromDiscovery', () => {
     expect(provider.tokenUrl).toBe('http://internal-gateway.acme.test/token')
   })
 
+  // A value that passes the scheme check only because the URL parser silently
+  // repaired it is not a value that passed the check. The parser strips TAB, CR
+  // and LF wherever they appear, so `new URL(evil).protocol` reads `https:`
+  // while the string the descriptor used to store still carried the line break
+  // — through `appendQuery`, which copies everything before the `?` verbatim,
+  // and into the platform browser launcher.
+  it.each([
+    ['CRLF', 'https://evil.test/a\r\ncalc.exe\r\n'],
+    ['a bare line feed', 'https://evil.test/a\ncalc.exe'],
+    ['a tab', 'https://evil.test/a\tb'],
+    ['a NUL', 'https://evil.test/a\u0000b'],
+    ['DEL', 'https://evil.test/a\u007Fb'],
+  ])('refuses an authorization_endpoint containing %s', async (_label, endpoint) => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: endpoint,
+      token_endpoint: 'https://acme.test/token',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/authorization_endpoint containing a control character/),
+    })
+  })
+
+  // Neither of the next two reaches a browser launcher, but neither is a value
+  // whose author's intent can be guessed at either, and the parser repairs both
+  // the same way it repairs the authorization endpoint.
+  it('refuses a control character in the token_endpoint', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/to\rken',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
+    ).rejects.toThrowError(/token_endpoint containing a control character/)
+  })
+
+  it('refuses a control character in the device_authorization_endpoint', async () => {
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://acme.test/authorize',
+      token_endpoint: 'https://acme.test/token',
+      device_authorization_endpoint: 'https://acme.test/dev\nice',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
+    ).rejects.toThrowError(/device_authorization_endpoint containing a control character/)
+  })
+
+  it('says the endpoint is unsafe rather than unparseable', async () => {
+    // The two verdicts are distinct on purpose: this URL *does* parse, so
+    // calling it "not a valid URL" would send whoever reads the error looking
+    // for the wrong thing.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'https://evil.test/a\r\ncalc.exe',
+      token_endpoint: 'https://acme.test/token',
+    })
+
+    await expect(
+      providerFromDiscovery(issuer, { id: 'acme', label: 'Acme', redirect: { mode: 'loopback' } }),
+    ).rejects.toMatchObject({
+      message: expect.not.stringContaining('is not a valid URL'),
+    })
+  })
+
+  it("stores the parser-normalised endpoint, not the document's spelling", async () => {
+    // The check read the scheme off a parse and then threw the parse away, so
+    // what was validated and what was stored were two different strings. They
+    // are now one.
+    const issuer = await startDiscoveryServer({
+      authorization_endpoint: 'HTTPS://Acme.TEST/authorize?x=1',
+      token_endpoint: 'https://acme.test',
+      device_authorization_endpoint: 'https://acme.test/../device',
+    })
+
+    const provider = await providerFromDiscovery(issuer, {
+      id: 'acme',
+      label: 'Acme',
+      redirect: { mode: 'loopback' },
+    })
+
+    expect(provider.authorizationUrl).toBe('https://acme.test/authorize?x=1')
+    expect(provider.tokenUrl).toBe('https://acme.test/')
+    expect(provider.deviceAuthorizationUrl).toBe('https://acme.test/device')
+  })
+
+  it('refuses a control character in the issuer itself', async () => {
+    // The issuer is string-concatenated into a `.well-known` path and handed to
+    // `fetch`, so it gets the same refusal for the same reason.
+    await expect(
+      providerFromDiscovery('https://acme.test\r\n', {
+        id: 'acme',
+        label: 'Acme',
+        redirect: { mode: 'loopback' },
+      }),
+    ).rejects.toMatchObject({
+      code: 'configuration_error',
+      message: expect.stringMatching(/issuer contains a control character/),
+    })
+  })
+
   // The issuer is the transport the document arrives over, so it needs the same
   // rule as the values inside it — the loopback issuers every test above builds
   // are exactly the exemption that keeps working.

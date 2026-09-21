@@ -145,6 +145,18 @@ const loopbackNames = new Set(['localhost'])
 const EPHEMERAL_BIND_ATTEMPTS = 5
 
 /**
+ * How long a callback that arrived before the attempt was known may hold its
+ * connection.
+ *
+ * The deferral is normally released in milliseconds, by `present()` or the
+ * first `wait()`. This is only for the caller who drives `start()` and then
+ * does neither: without it such a request holds a socket, and a file
+ * descriptor, for as long as the peer keeps the connection open. Generous
+ * enough that it never fires on a real login.
+ */
+const PARKED_REQUEST_TIMEOUT_MS = 30_000
+
+/**
  * Errno values that mean the address family is not available on this host at
  * all, as opposed to the address being taken.
  *
@@ -283,12 +295,18 @@ async function listen(server: Server, port: number, host: string): Promise<numbe
  * the promise, and the server keeps listening for the real redirect. The
  * comparison runs in constant time because it now sits on a security boundary.
  *
- * Two gaps are left open deliberately. A receiver driven directly, without
- * `present()`, has no attempt to compare against and takes callbacks as they
- * come: `start()` binds a port, so unlike a deep-link channel there is no
- * pre-existing route for a stray callback to arrive on, and requiring
- * `present()` would break every caller that drives `start()` itself. And a
- * provider declaring `echoesState: false` has said no `state` will come back,
+ * A callback that arrives before the attempt is known is held rather than
+ * judged. `start()` binds the port, but `present()` is what tells this receiver
+ * whose attempt it is, and `client.login()` does real storage I/O in between —
+ * so a callback landing in that window would otherwise be accepted for want of
+ * anything to compare it against. It parks until whichever comes first:
+ * `present()`, the first `wait()`, or `close()`. A caller that drives `start()`
+ * itself and never presents is therefore still served, on its own `wait()`,
+ * and takes callbacks as they come exactly as before; a caller that does
+ * neither holds the request until it closes or the parked request times out.
+ *
+ * One gap is left open deliberately. A provider declaring
+ * `echoesState: false` has said no `state` will come back,
  * so holding it to a comparison it cannot satisfy would reject the only
  * callback it can send. The `Sec-Fetch-*` check above is what covers both, and
  * it is why that check runs first and stays.
@@ -321,15 +339,69 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
        * The `state` of the authorization this receiver actually presented,
        * learned from the URL it was handed rather than tracked separately, so
        * the two cannot disagree.
-       *
-       * There is no companion "has present() run" flag, unlike the deep-link
-       * and popup receivers. Those listen on a channel that exists before the
-       * flow does, so a callback arriving before `present()` is somebody
-       * else's; a bound port does not exist until `start()` binds it, and a
-       * caller may legitimately drive `start()` and never call `present()` at
-       * all.
        */
       let presentedState: string | undefined
+
+      /**
+       * Whether the attempt this receiver will judge callbacks against is known
+       * yet, and a promise that resolves the moment it is.
+       *
+       * The window this closes is real and the port it opens onto is published.
+       * `start()` binds before `present()` runs, and `client.login()` does
+       * genuine async storage I/O in between — writing the pending record with
+       * the PKCE verifier — so for that whole interval the server is listening
+       * with `presentedState` still `undefined`. `belongsToThisAttempt`
+       * short-circuits to `true` on `undefined`, so anything reaching the port
+       * in that window is accepted as ours. Two of the bundled providers bind
+       * fixed, published ports (OpenAI 1455, xAI 56121), which means a page the
+       * user already has open can top-level-navigate to
+       * `http://127.0.0.1:1455/callback?error=access_denied` — a navigation,
+       * with `Sec-Fetch-Dest: document`, so the fetch-metadata check passes it
+       * — and land inside it. That settles the pending callback and closes the
+       * server: the user's login dies, reliably, with a timing window an
+       * attacker can simply keep retrying.
+       *
+       * The guard is a deferral rather than a refusal, and that distinction is
+       * the whole design. Refusing an unpresented callback would break a caller
+       * that drives `start()` and opens the browser itself, which is supported
+       * and tested. So the request handler waits for whichever comes first:
+       *
+       * - `present()`, which is what `login()` always calls before `wait()`.
+       *   The callback is then judged against a known `state`, which is exactly
+       *   what the drive-by cannot produce.
+       * - the first `wait()`, which is where a direct driver declares it has
+       *   finished setting up. Such a caller is held for a moment and never
+       *   refused, so it keeps the "takes callbacks as they come" behaviour it
+       *   has today.
+       *
+       * Either way the window where the answer depends on the timing of a
+       * storage write is gone: what decides a callback is what the caller did,
+       * not how fast a disk was.
+       *
+       * The deep-link and popup receivers hold the same flag and use it the
+       * other way round — they *drop* an unpresented payload outright. The
+       * difference is what the channel is. Theirs exists before the flow does,
+       * so anything arriving early is somebody else's by construction. A bound
+       * port does not exist until `start()` binds it, so an early callback here
+       * may well be ours and dropping it would break a legitimate caller. Same
+       * intent, the only answer each channel can support.
+       */
+      let presented = false
+      /**
+       * Set the moment this receiver is being retired, so a request parked on
+       * the deferral is dropped rather than answered on the way out. It cannot
+       * be inferred from the response: `close()` destroys the socket, which
+       * leaves the `ServerResponse` itself reporting neither `destroyed` nor
+       * `writableEnded`.
+       */
+      let torndown = false
+      let markPresented: () => void
+      const presentation = new Promise<void>((resolve) => {
+        markPresented = () => {
+          presented = true
+          resolve()
+        }
+      })
 
       /**
        * The provider's own read of the callback query, with the failure it may
@@ -384,6 +456,43 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
         presentedState === undefined ||
         provider.echoesState === false ||
         timingSafeEqual(state ?? '', presentedState)
+
+      /**
+       * Ownership is only decidable once the attempt is known, so a request
+       * that arrives before it is parks here rather than being judged against
+       * nothing. See {@link presented}: the fast path is the ordinary one, and
+       * the wait is bounded by the caller's own next step, not by a timer.
+       */
+      const whenPresented = (response: ServerResponse, run: () => void): void => {
+        if (presented) {
+          run()
+
+          return
+        }
+
+        /* A parked request is held by a socket, not by a timer, so give it the
+           one bound the deferral otherwise lacks. `login()` releases within
+           milliseconds, but a caller that drives `start()` and neither presents
+           nor waits would hold the connection — and the file descriptor — for
+           as long as the peer cared to keep it open. */
+        response.setTimeout(PARKED_REQUEST_TIMEOUT_MS, () => {
+          response.destroy()
+        })
+
+        void presentation.then(() => {
+          /* Teardown is tracked explicitly rather than read off the response.
+             `closeAllConnections()` destroys the *socket*; it leaves
+             `response.destroyed` and `response.writableEnded` false, so
+             inferring it from those would let a request that parked before
+             `close()` be read and settled against a connection that is already
+             gone. */
+          if (torndown || response.writableEnded || response.socket?.destroyed) {
+            return
+          }
+
+          run()
+        })
+      }
 
       /**
        * Settles the callback exactly once and then retires the server, so the
@@ -447,7 +556,18 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        const url = new URL(request.url ?? '/', `http://${bindHost}`)
+        // The base's host is deliberately a constant rather than `bindHost`.
+        // Only `pathname` and `search` are ever read off this, so the authority
+        // is pure scaffolding — and building it from the bind host made it a
+        // crash. A bare IPv6 literal is not a valid URL authority unqualified:
+        // `new URL('/cb', 'http://::1')` throws `ERR_INVALID_URL`, and it
+        // throws synchronously inside a Node request handler, which is an
+        // `uncaughtException` and takes the process down on the first request
+        // to `loopbackReceiver({ host: '::1' })`. `primaryHost` is not the fix
+        // — it rewrites only `'localhost'`, so for `'::1'` the two are the same
+        // string. Bracketing the literal would work and would still leave a
+        // hostile-looking value in a position nothing reads.
+        const url = new URL(request.url ?? '/', 'http://localhost')
 
         if (url.pathname !== path) {
           response.writeHead(404, { ...securityHeaders, 'Content-Type': 'text/plain' })
@@ -456,32 +576,41 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           return
         }
 
-        // Read before responding, so ownership is decided before anything is
-        // written and before anything is settled. A callback that is not ours
-        // must leave the pending promise and the server exactly as it found
-        // them — the damage a drive-by does is not the response it gets, it is
-        // that settling closes the port the real redirect is about to arrive
-        // on.
-        const callback = read(url.search)
+        // Past this point the request is a callback for this receiver's path,
+        // so it can only be answered once there is an attempt to answer it
+        // *for*. Everything above is a flat refusal that touches neither the
+        // pending callback nor the server, and is answered straight away.
+        whenPresented(response, () => {
+          // Read before responding, so ownership is decided before anything is
+          // written and before anything is settled. A callback that is not ours
+          // must leave the pending promise and the server exactly as it found
+          // them — the damage a drive-by does is not the response it gets, it
+          // is that settling closes the port the real redirect is about to
+          // arrive on.
+          const callback = read(url.search)
 
-        if (!belongsToThisAttempt(callback.state)) {
-          response.writeHead(403, { ...securityHeaders, 'Content-Type': 'text/plain' })
-          response.end('Forbidden')
+          if (!belongsToThisAttempt(callback.state)) {
+            response.writeHead(403, { ...securityHeaders, 'Content-Type': 'text/plain' })
+            response.end('Forbidden')
 
-          return
-        }
+            return
+          }
 
-        if ('failure' in callback) {
-          response.writeHead(400, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
-          response.end((options.failureHtml ?? defaultFailureHtml)(callback.detail))
-          settle(response, () => rejectCallback(callback.failure))
+          if ('failure' in callback) {
+            response.writeHead(400, {
+              ...securityHeaders,
+              'Content-Type': 'text/html; charset=utf-8',
+            })
+            response.end((options.failureHtml ?? defaultFailureHtml)(callback.detail))
+            settle(response, () => rejectCallback(callback.failure))
 
-          return
-        }
+            return
+          }
 
-        response.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
-        response.end(options.successHtml ?? DEFAULT_SUCCESS_HTML)
-        settle(response, () => resolveCallback(callback.result))
+          response.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8' })
+          response.end(options.successHtml ?? DEFAULT_SUCCESS_HTML)
+          settle(response, () => resolveCallback(callback.result))
+        })
       }
 
       const server = createServer(handleRequest)
@@ -588,6 +717,12 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
       const onAbort = () => {
         settled = true
         rejectCallback(new OAuthError('aborted', 'Login was aborted.'))
+        /* Nothing is coming, so release anything parked on the deferral rather
+           than leaving a socket held open past the close. `torndown` first, so
+           what the release finds is a retired receiver and not a callback worth
+           reading. */
+        torndown = true
+        markPresented()
         void close()
       }
       context.signal?.addEventListener('abort', onAbort, { once: true })
@@ -608,6 +743,11 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
           // it, so what this receiver believes its attempt is can never drift
           // from what it actually sent the user to.
           presentedState = stateOfAuthorizationUrl(url)
+          // Set before the browser is launched, not after: `openUrl` is
+          // awaited and can take as long as it likes, and the callback this
+          // very call is about to provoke must not find the deferral still
+          // closed.
+          markPresented()
 
           options.onAuthorizationUrl?.(url)
 
@@ -617,9 +757,27 @@ export function loopbackReceiver(options: LoopbackReceiverOptions = {}): Callbac
             openBrowser(url)
           }
         },
-        wait: () => callbackPromise,
+        /**
+         * Also releases the deferral, for the caller who drives `start()` and
+         * opens the browser themselves. `login()` has always presented by the
+         * time it gets here, so for it this is a no-op; for a direct driver it
+         * is the moment they declare their setup finished, and it keeps such a
+         * caller briefly held rather than refused.
+         */
+        wait: () => {
+          markPresented()
+
+          return callbackPromise
+        },
         async close() {
           context.signal?.removeEventListener('abort', onAbort)
+          /* A parked request would otherwise hold a socket the close is waiting
+             on. Released here it finds `torndown` set and drops the callback
+             rather than evaluating one against a connection that is going away
+             — which is what makes this a teardown rather than one last
+             delivery. */
+          torndown = true
+          markPresented()
           await close()
         },
       }

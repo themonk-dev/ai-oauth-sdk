@@ -123,6 +123,43 @@ describe('an authenticated fetch against Copilot', () => {
     expect(github.calls[0]?.url).toBe(`${githubCopilot.apiBaseUrl}/chat/completions`)
   })
 
+  /*
+   * `endpoints.api` is remote-supplied — it arrives in a response body, not
+   * from anything the integrator wrote — and it becomes the base every later
+   * request is built on, each of them carrying `Authorization: Bearer <copilot
+   * token>`. So it gets the same `https` floor the codebase already puts under
+   * a discovery document's endpoints, and an unusable value falls back to the
+   * descriptor's own host rather than failing the sign-in.
+   */
+  it.each([
+    ['cleartext', 'http://api.enterprise.githubcopilot.com'],
+    ['a non-URL', 'api.enterprise.githubcopilot.com'],
+    ['a relative path', '/v1'],
+    ['another scheme entirely', 'file:///etc/passwd'],
+  ])('ignores an endpoints.api that is %s', async (_label, apiHost) => {
+    const client = await signedInClient()
+    const github = stubGitHub({ apiHost })
+    const api = createAuthenticatedFetch(client, { fetch: github.fetchImpl })
+
+    await api('/chat/completions')
+
+    // An http base would have put a live Copilot token on the wire in
+    // cleartext, on every request, for the token's whole lifetime.
+    expect(github.calls[0]?.url).toBe(`${githubCopilot.apiBaseUrl}/chat/completions`)
+  })
+
+  it('normalises the host GitHub names', async () => {
+    // The parser's `href`, so what was checked is what gets stored. The
+    // trailing slash `href` adds is absorbed when the path is joined.
+    const client = await signedInClient()
+    const github = stubGitHub({ apiHost: 'HTTPS://API.Enterprise.GitHubCopilot.com' })
+    const api = createAuthenticatedFetch(client, { fetch: github.fetchImpl })
+
+    await api('/chat/completions')
+
+    expect(github.calls[0]?.url).toBe('https://api.enterprise.githubcopilot.com/chat/completions')
+  })
+
   it('lets an explicit baseUrl option win over both', async () => {
     const client = await signedInClient()
     const github = stubGitHub()

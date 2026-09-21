@@ -21,6 +21,16 @@ const SECRET_PARAMS = [
   'client_secret',
   'code_verifier',
   'device_code',
+  // OpenAI's device flow is not RFC 8628 and spells the same two credentials
+  // differently: `device_auth_id` is its `device_code`, and it returns the
+  // authorization code under `authorization_code` rather than `code`. Both are
+  // posted and read by `receivers/openai-device.ts`, whose failure paths put an
+  // unredacted `safeSnippet` of the provider's body into the error message — so
+  // a gateway echoing the request back would have printed a live device
+  // credential. `device_code` was already listed; these two were an omission,
+  // not a decision.
+  'device_auth_id',
+  'authorization_code',
   'token',
   'code',
   'assertion',

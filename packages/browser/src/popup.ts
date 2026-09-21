@@ -2,6 +2,7 @@ import {
   OAuthError,
   isOAuthError,
   readCallback,
+  timingSafeEqual,
   type CallbackReceiver,
   type CallbackResult,
   type ReceiverContext,
@@ -205,11 +206,20 @@ export function popupReceiver(options: PopupReceiverOptions = {}): CallbackRecei
        * boundary, and `SECURITY.md` is plain about what it costs: these
        * providers resolve against the most recently started flow, which is fine
        * for a CLI or a single-flow app and is not safe in a multi-user server.
+       *
+       * The comparison is `timingSafeEqual`, matching `loopbackReceiver` and
+       * the client's own check. Nothing here is realistically attackable by
+       * timing — the channel is same-origin and the client compares again in
+       * constant time before exchanging anything — but `SECURITY.md` says
+       * `state` is verified in constant time on every callback without
+       * qualification, and a `===` in one of the three places that verify it
+       * made that sentence untrue. Cheaper to make the claim accurate than to
+       * caveat it.
        */
       const belongsToThisAttempt = (state: string | undefined): boolean =>
         presentedState === undefined ||
         context.provider.echoesState === false ||
-        state === presentedState
+        timingSafeEqual(state ?? '', presentedState)
 
       const onMessage = (event: MessageEvent) => {
         if (event.origin !== window.location.origin) {
