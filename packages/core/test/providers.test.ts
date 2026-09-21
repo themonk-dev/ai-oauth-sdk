@@ -271,6 +271,60 @@ describe('callback parsing', () => {
     expect(parsed.code).toBeUndefined()
   })
 
+  /*
+   * The guard that chooses between the query and the fragment used to test the
+   * whole remainder — fragment included — for `code=`. Each of these was wrong
+   * in a different way because of it, and each failed closed: a state mismatch,
+   * a login that hangs, a code never found.
+   */
+  describe('a callback carrying both a query and a fragment', () => {
+    it('keeps the query and drops the fragment', () => {
+      // `state` used to come back as `B#frag`, which then failed the
+      // comparison against the state that was actually presented.
+      expect(parseStandardCallback('https://app.test/cb?code=A&state=B#frag')).toEqual({
+        code: 'A',
+        state: 'B',
+      })
+    })
+
+    it('surfaces a denial rather than swallowing it', () => {
+      // No `code=` anywhere, so the query was thrown away in favour of a
+      // fragment holding nothing and the whole parse came back `{}` — a login
+      // that hangs instead of reporting why it failed.
+      expect(parseStandardCallback('https://app.test/cb?error=access_denied&state=S#z')).toEqual({
+        error: 'access_denied',
+        state: 'S',
+      })
+    })
+
+    it('takes the fragment when the query is not the response', () => {
+      // `code=` matched in the *fragment* while the test was meant to be about
+      // the query, so the query won and the code was never found.
+      expect(parseStandardCallback('https://app.test/cb?state=S#code=A&state=B')).toEqual({
+        code: 'A',
+        state: 'B',
+      })
+    })
+
+    it('is not fooled by a parameter that merely ends in code or error', () => {
+      // The pattern anchors on `^` or `&`, so `error_description` and
+      // `authorization_code` cannot pass for the parameter itself.
+      expect(
+        parseStandardCallback('https://app.test/cb?error_description=x#code=A&state=B'),
+      ).toEqual({ code: 'A', state: 'B' })
+    })
+  })
+
+  it('still reads a provider that answers wholly in the fragment', () => {
+    // The case that already worked, via the `#`-prefixed branch, and the one
+    // this must not break.
+    expect(parseStandardCallback('#code=X&state=Y')).toEqual({ code: 'X', state: 'Y' })
+    expect(parseStandardCallback('https://app.test/cb#code=X&state=Y')).toEqual({
+      code: 'X',
+      state: 'Y',
+    })
+  })
+
   it("parses Anthropic's code#state paste format", () => {
     expect(claude.parseCallback!('authcode123#statexyz')).toEqual({
       code: 'authcode123',

@@ -134,6 +134,13 @@ interface DiscoveryDocument {
 const loopbackHosts = new Set(['127.0.0.1', '[::1]', 'localhost'])
 
 /**
+ * C0 controls and DEL. Nothing legitimate in a URL is written with one — the
+ * syntax reserves percent-encoding for exactly this — so their presence is
+ * always either corruption or an attempt to smuggle a line break somewhere.
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/
+
+/**
  * The one rule, shared by every URL in a discovery exchange. It returns a
  * verdict rather than throwing so each caller can name its own value: what is
  * wrong with an `http` `token_endpoint` and what is wrong with an `http` issuer
@@ -157,24 +164,58 @@ function isLoopbackUrl(value: string): boolean {
   }
 }
 
-function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' {
+/**
+ * The verdict carries the parser's own `href` on success, because reading the
+ * scheme off a parse and then throwing that parse away is how a validated value
+ * and a *stored* value come to differ.
+ *
+ * They differed here. The WHATWG parser strips TAB, CR and LF from a URL
+ * wherever they appear — silently, as a repair — so
+ * `https://evil.test/a\r\ncalc.exe` parses with `protocol` `https:` and passes
+ * every check below, while the raw string, which is what was stored, still
+ * carries the line break. `appendQuery` copies everything before the `?`
+ * verbatim, so the descriptor hands that string on intact, and on Windows the
+ * browser launcher used to splice it into a `cmd.exe` command line where a CR
+ * or LF ends one command and begins the next.
+ *
+ * Both halves of that are now closed, and both are worth keeping. The launcher
+ * no longer goes near a shell, and a value that only looks clean because the
+ * parser rewrote it is refused rather than repaired: a document that names an
+ * endpoint containing a control character is not a document whose author's
+ * intent we can guess at. `'unsafe'` is a separate verdict from `'unparseable'`
+ * precisely because the URL does parse — saying "not a valid URL" about a
+ * string the parser accepted would send whoever reads the error looking for the
+ * wrong thing.
+ */
+type DiscoveryUrlVerdict =
+  | { verdict: 'ok'; href: string }
+  | { verdict: 'unparseable' }
+  | { verdict: 'insecure' }
+  | { verdict: 'unsafe' }
+
+function classifyDiscoveryUrl(value: string): DiscoveryUrlVerdict {
+  // Before the parse, not after: after it, the evidence is gone.
+  if (CONTROL_CHARACTERS.test(value)) {
+    return { verdict: 'unsafe' }
+  }
+
   let parsed: URL
 
   try {
     parsed = new URL(value)
   } catch {
-    return 'unparseable'
+    return { verdict: 'unparseable' }
   }
 
   if (parsed.protocol === 'https:') {
-    return 'ok'
+    return { verdict: 'ok', href: parsed.href }
   }
 
   if (parsed.protocol === 'http:' && loopbackHosts.has(parsed.hostname)) {
-    return 'ok'
+    return { verdict: 'ok', href: parsed.href }
   }
 
-  return 'insecure'
+  return { verdict: 'insecure' }
 }
 
 /**
@@ -188,30 +229,47 @@ function classifyDiscoveryUrl(value: string): 'ok' | 'unparseable' | 'insecure' 
  * an `http` `token_endpoint` would have us POST refresh tokens and the client
  * secret in cleartext for the entire life of the descriptor, silently. And the
  * `authorization_endpoint` is the only remotely-supplied string that reaches the
- * platform browser launcher, where a `%VAR%` in it is expanded by cmd.exe on
- * Windows.
+ * platform browser launcher.
+ *
+ * The return value is the point as much as the throw. What goes into the
+ * descriptor is the URL parser's `href`, not the string the document happened
+ * to spell it with, so the value that was checked and the value that is carried
+ * for the life of that descriptor are the same value. Anything less means the
+ * check is being performed on a string nobody afterwards uses.
  *
  * The message names the field and the offending value, because the failure
  * surfaces at client construction time far from whoever runs the discovery
  * endpoint.
  */
-function assertSecureDiscoveredEndpoint(field: string, value: string, source: string): void {
-  const verdict = classifyDiscoveryUrl(value)
+function normalizeDiscoveredEndpoint(field: string, value: string, source: string): string {
+  const outcome = classifyDiscoveryUrl(value)
 
-  if (verdict === 'unparseable') {
+  if (outcome.verdict === 'unparseable') {
     throw new OAuthError(
       'configuration_error',
       `Discovery document at ${source} has a ${field} that is not a valid URL: "${value}".`,
     )
   }
 
-  if (verdict === 'insecure') {
+  if (outcome.verdict === 'unsafe') {
+    throw new OAuthError(
+      'configuration_error',
+      `Discovery document at ${source} has a ${field} containing a control character. ` +
+        'Control characters are not allowed in an endpoint: the URL parser strips tab, carriage ' +
+        'return and line feed rather than rejecting them, so such a value would pass every ' +
+        'check here and still reach the browser launcher with the line break intact.',
+    )
+  }
+
+  if (outcome.verdict === 'insecure') {
     throw new OAuthError(
       'configuration_error',
       `Discovery document at ${source} names an insecure ${field}: "${value}". ` +
         'Endpoints taken from a discovery document must use https, except on loopback.',
     )
   }
+
+  return outcome.href
 }
 
 /**
@@ -235,9 +293,9 @@ function assertSecureDiscoveredEndpoint(field: string, value: string, source: st
  * the endpoints are theirs, not a remote party's.
  */
 function assertSecureIssuer(issuer: string): void {
-  const verdict = classifyDiscoveryUrl(issuer)
+  const outcome = classifyDiscoveryUrl(issuer)
 
-  if (verdict === 'unparseable') {
+  if (outcome.verdict === 'unparseable') {
     throw new OAuthError(
       'configuration_error',
       `Discovery issuer is not a valid URL: "${issuer}". ` +
@@ -245,7 +303,18 @@ function assertSecureIssuer(issuer: string): void {
     )
   }
 
-  if (verdict === 'insecure') {
+  // The issuer is string-concatenated into a `.well-known` path and handed to
+  // `fetch`, so it gets the same refusal its document's endpoints do rather
+  // than being left to the parser's silent repair.
+  if (outcome.verdict === 'unsafe') {
+    throw new OAuthError(
+      'configuration_error',
+      `Discovery issuer contains a control character: "${issuer}". ` +
+        'Control characters are not allowed in an issuer URL.',
+    )
+  }
+
+  if (outcome.verdict === 'insecure') {
     throw new OAuthError(
       'configuration_error',
       `Insecure discovery issuer: "${issuer}". The document fetched from it decides this ` +
@@ -356,8 +425,8 @@ export async function providerFromDiscovery(
   }
 
   const document = (await response.json()) as DiscoveryDocument
-  const authorizationUrl = input.authorizationUrl ?? document.authorization_endpoint
-  const tokenUrl = input.tokenUrl ?? document.token_endpoint
+  let authorizationUrl = input.authorizationUrl ?? document.authorization_endpoint
+  let tokenUrl = input.tokenUrl ?? document.token_endpoint
 
   if (!authorizationUrl || !tokenUrl) {
     throw new OAuthError(
@@ -376,31 +445,35 @@ export async function providerFromDiscovery(
   // yields `null`, which falls through to the document just as `undefined`
   // does. Testing only for `undefined` would let that document value through
   // unchecked, which is the whole case this guard exists for.
+  //
+  // The checked value is assigned back over the resolved one, so the descriptor
+  // carries the string that was actually validated rather than the one the
+  // document happened to spell it with. An endpoint the integrator passed
+  // explicitly is neither checked nor normalised: it is their own config, and
+  // rewriting it under them is not a surprise `defineProvider` springs either.
   if (input.authorizationUrl == null) {
-    assertSecureDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url)
+    authorizationUrl = normalizeDiscoveredEndpoint('authorization_endpoint', authorizationUrl, url)
   }
 
   if (input.tokenUrl == null) {
-    assertSecureDiscoveredEndpoint('token_endpoint', tokenUrl, url)
+    tokenUrl = normalizeDiscoveredEndpoint('token_endpoint', tokenUrl, url)
   }
 
   // The document's device endpoint always wins over `input.deviceAuthorizationUrl`
   // below, so it is always document-sourced when present.
-  if (document.device_authorization_endpoint) {
-    assertSecureDiscoveredEndpoint(
-      'device_authorization_endpoint',
-      document.device_authorization_endpoint,
-      url,
-    )
-  }
+  const deviceAuthorizationUrl = document.device_authorization_endpoint
+    ? normalizeDiscoveredEndpoint(
+        'device_authorization_endpoint',
+        document.device_authorization_endpoint,
+        url,
+      )
+    : undefined
 
   return defineProvider({
     ...input,
     authorizationUrl,
     tokenUrl,
     scopes: input.scopes ?? document.scopes_supported ?? ['openid'],
-    ...(document.device_authorization_endpoint
-      ? { deviceAuthorizationUrl: document.device_authorization_endpoint }
-      : {}),
+    ...(deviceAuthorizationUrl ? { deviceAuthorizationUrl } : {}),
   })
 }

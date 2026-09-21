@@ -53,6 +53,39 @@ describe('redactSecrets', () => {
     expect(redacted).toContain(REDACTED)
   })
 
+  // OpenAI's device flow is not RFC 8628 and names the same two credentials
+  // differently: `device_auth_id` for the device code, `authorization_code` for
+  // the code. `receivers/openai-device.ts` posts both and quotes an unredacted
+  // `safeSnippet` of the provider's body on its failure paths, so a gateway
+  // echoing the request back printed a live device credential. `device_code`
+  // was already covered; these two were an omission.
+  it("scrubs OpenAI's device-flow parameter names", () => {
+    const redacted = redactSecrets(
+      'device_auth_id=da_abcdefghijklmnop&authorization_code=ac_qrstuvwxyz012345',
+    )
+    expect(redacted).not.toContain('da_abcdefghijklmnop')
+    expect(redacted).not.toContain('ac_qrstuvwxyz012345')
+
+    const json = redactSecrets(
+      JSON.stringify({ device_auth_id: 'da_json_value_here', authorization_code: 'ac_json_value' }),
+    )
+    expect(json).not.toContain('da_json_value_here')
+    expect(json).not.toContain('ac_json_value')
+  })
+
+  it('leaves grant_type=authorization_code alone, which names no secret', () => {
+    // `authorization_code` is a credential where it is a *key*, and a plain
+    // constant where it is the value of `grant_type`. The pattern only matches
+    // a name in key position, followed by `:` or `=`, so the RFC 6749 grant
+    // type survives — and so does the diagnostic value of the message.
+    const body = 'grant_type=authorization_code&client_id=public&code=abc123def456'
+    const redacted = redactSecrets(body)
+
+    expect(redacted).toContain('grant_type=authorization_code')
+    expect(redacted).toContain('client_id=public')
+    expect(redacted).not.toContain('abc123def456')
+  })
+
   it('scrubs a JWT, which is what an id_token looks like', () => {
     const jwt = 'eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjMifQ.signature'
     expect(redactSecrets(`token was ${jwt}`)).not.toContain(jwt)

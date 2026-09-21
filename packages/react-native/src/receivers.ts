@@ -3,6 +3,7 @@ import {
   isOAuthError,
   parseQuery,
   readCallback,
+  timingSafeEqual,
   type CallbackReceiver,
   type CallbackResult,
   type ReceiverContext,
@@ -175,10 +176,17 @@ export function deepLinkReceiver(options: DeepLinkReceiverOptions): CallbackRece
         // provider that echoes nothing cannot tell two concurrent attempts
         // apart, so this is for a CLI or a single-flow app rather than a
         // multi-user server.
+        //
+        // `timingSafeEqual` rather than `!==`, matching `loopbackReceiver` and
+        // the client's own check. A deep link is delivered in-process, so there
+        // is no realistic timing channel to exploit here — but `SECURITY.md`
+        // states plainly that `state` is verified in constant time on every
+        // callback, and a `!==` in one of the three places that verify it made
+        // that untrue. The claim is worth more accurate than caveated.
         if (
           presentedState !== undefined &&
           context.provider.echoesState !== false &&
-          callback.state !== presentedState
+          !timingSafeEqual(callback.state ?? '', presentedState)
         ) {
           return
         }

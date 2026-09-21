@@ -239,9 +239,13 @@ describe('loopbackReceiver', () => {
 
   it('tells caches and referrers not to keep the callback URL', async () => {
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
+    // A callback is now evaluated only once the caller has said whose attempt
+    // it is — by presenting, or by waiting. A direct driver declares it here.
+    const waiting = started.wait()
 
     try {
       const response = await fetch(`${started.redirectUri}?code=abc&state=xyz`)
+      await expect(waiting).resolves.toMatchObject({ code: 'abc' })
       // The URL carries the authorization code, so it must not be cached or
       // leak through a Referer header.
       expect(response.headers.get('cache-control')).toContain('no-store')
@@ -412,10 +416,11 @@ describe('loopbackReceiver', () => {
   })
 
   it('takes callbacks as they come when it was never presented', async () => {
-    // A deliberate gap, and the reason there is no "has present() run" flag
-    // here: `start()` binds the port, so there is no channel for a stray
-    // callback to have arrived on beforehand, and a caller that drives
-    // `start()` itself and never presents must still be able to complete.
+    // A deliberate gap: a caller that drives `start()` itself, opens the
+    // browser its own way and never presents has given this receiver no
+    // attempt to compare against, and must still be able to complete. That is
+    // why the unpresented case defers rather than refuses — `wait()` releases
+    // the deferral, and the callback is then taken exactly as it comes.
     const started = await loopbackReceiver({ port: 0 }).start({ provider: testProvider(server.url) })
     const waiting = started.wait()
 
@@ -426,6 +431,113 @@ describe('loopbackReceiver', () => {
       )
       expect(response.status).toBe(200)
       await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+    } finally {
+      await started.close()
+    }
+  })
+
+  /*
+   * `start()` binds before `present()` runs, and `client.login()` does real
+   * async storage I/O in between — writing the pending record with the PKCE
+   * verifier. For that whole window the server used to be listening with
+   * nothing to judge a callback against, and `belongsToThisAttempt`
+   * short-circuits to `true` there. Two bundled providers bind fixed, published
+   * ports, so a page the user has open can top-level-navigate into the window
+   * and kill the login.
+   */
+  describe('a callback arriving before the attempt is known', () => {
+    it('does not cancel a login that has not presented yet', async () => {
+      const started = await loopbackReceiver({ port: 0, openBrowser: false }).start({
+        provider: testProvider(server.url),
+      })
+
+      try {
+        // Exactly what a cross-site top-level navigation to a published
+        // loopback port looks like: a navigation, so the fetch-metadata check
+        // passes it, and a bare denial, so settling it would reject `wait()`.
+        const driveBy = rawGet(`${started.redirectUri}?error=access_denied`, navigationHeaders)
+
+        // Let it reach the handler and park there. Under the old code it would
+        // already have settled and closed the server by now.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+
+        await started.present(
+          `https://provider.test/authorize?client_id=c&state=${PRESENTED_STATE}`,
+        )
+        const waiting = started.wait()
+
+        // Evaluated against the attempt that is now known, and refused.
+        expect((await driveBy).status).toBe(403)
+        expect(await isSettled(waiting)).toBe(false)
+
+        // And the real redirect still completes.
+        const real = await rawGet(
+          `${started.redirectUri}?code=abc&state=${PRESENTED_STATE}`,
+          navigationHeaders,
+        )
+        expect(real.status).toBe(200)
+        await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+      } finally {
+        await started.close()
+      }
+    })
+
+    it('holds a direct driver only until it waits, and never refuses it', async () => {
+      const started = await loopbackReceiver({ port: 0 }).start({
+        provider: testProvider(server.url),
+      })
+
+      try {
+        const inFlight = rawGet(`${started.redirectUri}?code=abc&state=xyz`, navigationHeaders)
+        await new Promise((resolve) => setTimeout(resolve, 50))
+
+        // Still parked: nothing has said whose attempt this is.
+        const waiting = started.wait()
+
+        expect((await inFlight).status).toBe(200)
+        await expect(waiting).resolves.toMatchObject({ code: 'abc' })
+      } finally {
+        await started.close()
+      }
+    })
+
+    it('answers a wrong path and a wrong method without waiting for anything', async () => {
+      // Neither touches the pending callback, so neither has any reason to be
+      // held — and holding them would hang a caller that never presents.
+      const started = await loopbackReceiver({ port: 0 }).start({
+        provider: testProvider(server.url),
+      })
+
+      try {
+        const base = new URL(started.redirectUri)
+        expect((await fetch(`${base.origin}/some/other/path`)).status).toBe(404)
+        expect((await fetch(started.redirectUri, { method: 'POST' })).status).toBe(405)
+      } finally {
+        await started.close()
+      }
+    })
+  })
+
+  it.skipIf(!hasIpv6)('serves a request when bound to a bare IPv6 literal', async () => {
+    // The request URL used to be resolved against `http://${bindHost}`, and a
+    // bare IPv6 literal is not a valid authority unqualified — `new URL('/cb',
+    // 'http://::1')` throws `ERR_INVALID_URL`. Thrown synchronously inside a
+    // Node request handler, that is an `uncaughtException`: the process died on
+    // the first request to `loopbackReceiver({ host: '::1' })`. `primaryHost`
+    // is not the fix, since it normalises only `'localhost'`.
+    const started = await loopbackReceiver({ port: 0, host: '::1' }).start({
+      provider: testProvider(server.url),
+    })
+    const waiting = started.wait()
+
+    try {
+      const port = new URL(started.redirectUri).port
+      const response = await rawGet(
+        `http://[::1]:${port}/callback?code=six&state=xyz`,
+        navigationHeaders,
+      )
+      expect(response.status).toBe(200)
+      await expect(waiting).resolves.toMatchObject({ code: 'six' })
     } finally {
       await started.close()
     }
@@ -489,6 +601,10 @@ describe('loopbackReceiver', () => {
         provider: testProvider(server.url),
       })
       const port = new URL(started.redirectUri).port
+      /* Called before the request, not after: a callback is evaluated only once
+         the caller has declared its attempt, and for a direct driver `wait()`
+         is that declaration. */
+      const waiting = started.wait()
 
       try {
         // The advertised URI still names `localhost` — nothing about what the
@@ -496,7 +612,7 @@ describe('loopbackReceiver', () => {
         expect(started.redirectUri).toContain('localhost')
         const viaIpv6 = await rawGet(`http://[::1]:${port}/callback?code=six&state=xyz`, navigationHeaders)
         expect(viaIpv6.status).toBe(200)
-        await expect(started.wait()).resolves.toMatchObject({ code: 'six' })
+        await expect(waiting).resolves.toMatchObject({ code: 'six' })
       } finally {
         await started.close()
       }
@@ -588,11 +704,14 @@ describe('loopbackReceiver', () => {
           redirect: { mode: 'loopback', loopbackPort: 0, loopbackHost: '127.0.0.1' },
         }),
       })
+      /* See above: a direct driver declares its attempt by waiting. */
+      const waiting = started.wait()
 
       try {
         expect(started.redirectUri).toContain('127.0.0.1')
         const result = await rawGet(`${started.redirectUri}?code=literal&state=xyz`, navigationHeaders)
         expect(result.status).toBe(200)
+        await expect(waiting).resolves.toMatchObject({ code: 'literal' })
       } finally {
         await started.close()
       }

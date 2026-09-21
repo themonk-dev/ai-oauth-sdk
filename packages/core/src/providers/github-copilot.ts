@@ -134,8 +134,27 @@ export async function exchangeForCopilotToken(
 /**
  * Reads the API host out of the exchange response.
  *
- * GitHub returns it under `endpoints.api`. Undefined when it is absent, which
- * leaves the descriptor's `apiBaseUrl` in place rather than guessing.
+ * GitHub returns it under `endpoints.api`, and individual, business and
+ * enterprise accounts each get a different one, so it genuinely has to be read
+ * rather than hard-coded. Undefined when it is absent or unusable, which leaves
+ * the descriptor's `apiBaseUrl` in place rather than guessing.
+ *
+ * It must parse and use `https`. This value is remote-supplied — it arrives in
+ * a response body, not from anything the integrator wrote — and it becomes
+ * `ResolvedCredential.baseUrl`, which is the base every later request is built
+ * on and every one of those requests carries `Authorization: Bearer <copilot
+ * token>`. An `http://` value is therefore a cleartext downgrade of a live
+ * credential, repeated for the token's whole lifetime.
+ *
+ * That is the same floor `providerFromDiscovery` already puts under endpoints
+ * taken out of a discovery document, and for the same reason: what the
+ * integrator vouched for is GitHub's certificate, not wherever GitHub's
+ * response happens to point. Loopback is not exempt here as it is there,
+ * because no part of Copilot's exchange is a local development server.
+ *
+ * Falling back rather than throwing is deliberate. A descriptor-supplied
+ * `apiBaseUrl` is a working default, and failing the whole sign-in over a field
+ * we have a sound answer for would be a worse trade than quietly ignoring it.
  */
 function readApiEndpoint(raw: Record<string, unknown>): string | undefined {
   const endpoints = raw['endpoints']
@@ -146,5 +165,16 @@ function readApiEndpoint(raw: Record<string, unknown>): string | undefined {
 
   const api = (endpoints as Record<string, unknown>)['api']
 
-  return typeof api === 'string' && api ? api : undefined
+  if (typeof api !== 'string' || !api) {
+    return undefined
+  }
+
+  try {
+    const parsed = new URL(api)
+
+    // The parser's `href`, so what was checked is what gets stored.
+    return parsed.protocol === 'https:' ? parsed.href : undefined
+  } catch {
+    return undefined
+  }
 }

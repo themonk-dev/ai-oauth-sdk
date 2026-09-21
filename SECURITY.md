@@ -32,7 +32,9 @@ what makes PKCE work on Hermes with no native polyfill.
 **`state` is verified on every callback, in constant time.** A plain `!==` short-circuits at the
 first differing character, which in principle turns a 256-bit guess into an incremental one. The
 practical risk is low, since an attacker also needs a usable `code` and the pending record is single
-use, but the comparison sits on a security boundary.
+use, but the comparison sits on a security boundary. Every place that compares a `state` uses the
+same constant-time comparison: the client, the loopback server, the popup receiver and the deep-link
+receiver.
 
 **A callback carrying no `state` is rejected.** Anyone can reach a loopback port or post a message to
 an opener, so omitting the parameter must not become a way to skip the check. A custom
@@ -64,6 +66,16 @@ without settling the pending callback and the server keeps listening for the rea
 declaring `echoesState: false` has said no `state` will come back and is exempt, and a receiver
 driven directly, without `present()`, has no attempt to compare against and takes callbacks as they
 come.
+
+A callback that arrives before the attempt is known is **held, not judged**. The port is bound by
+`start()` and the `state` is learned in `present()`, with real storage I/O in between, so there was
+a window in which any callback reaching a published loopback port was accepted as ours — enough for
+a page the user had open to navigate to `?error=access_denied` and kill the login. The request now
+waits for whichever comes first, `present()` or the first `wait()`, and is evaluated against what
+that establishes. Nothing is refused for being early: a caller that drives `start()` and opens the
+browser itself declares its attempt by calling `wait()`, and is held for that moment rather than
+turned away. Requests for another path or another method are answered immediately, since neither can
+touch the pending callback.
 
 **It binds every address the redirect URI's host resolves to**, which is not the same thing as
 binding one. Most providers register the `localhost` form of the redirect URI rather than the IP
@@ -114,6 +126,24 @@ server on `http://127.0.0.1:<port>` still works. Endpoints you pass explicitly a
 and are left alone. There is no issuer-equality check, which would break legitimate multi-tenant
 deployments; an `AuthClient` is bound to one provider at construction, so it has nothing to be
 mixed up with.
+
+A document endpoint containing a **control character is refused**, and what is stored is the URL
+parser's own normalised form rather than the string the document spelled it with. Those two go
+together. The URL parser strips tab, carriage return and line feed as a silent repair, so a value
+could pass a scheme check on the repaired parse while the raw string — which was what got stored —
+still carried the line break, all the way into the platform browser launcher. The check and the
+stored value are now the same value, and a value that only looks clean because the parser rewrote it
+is refused rather than repaired. The same floor applies to GitHub's `endpoints.api`, which arrives
+in Copilot's token-exchange response and becomes the base for requests carrying a live Copilot
+token: it must parse and use `https`, or the descriptor's own host is used instead.
+
+**The Windows browser launcher does not go through a shell.** `start` is a `cmd.exe` builtin, so
+using it meant `cmd` re-parsing a command line with the authorization URL in it, and that second
+parse could not be escaped safely: `^` escapes neither `%` — so `%USERPROFILE%` in a URL was
+expanded and sent to whoever served it — nor a carriage return, which ends one command and begins
+the next. The launcher now uses `rundll32 url.dll,FileProtocolHandler`, which takes the URL as an
+argument and re-parses nothing. A URL containing a control character is not launched at all, on any
+platform; the caller prints it instead.
 
 **Errors never carry a credential.** A failed token request quotes a snippet of the provider's
 response, which is genuinely useful for diagnosis, but that body is not ours and a misconfigured
