@@ -1,0 +1,15 @@
+---
+'@ai-oauth-sdk/react-native': patch
+---
+
+Bind the Expo auth-session callback to the attempt that started it, and take the sheet down on close.
+
+`authSessionReceiver` handed `result.url` straight to `readCallback` — no `state` comparison, no check that the URL is even the redirect URI. Both of its siblings do bind: `deepLinkReceiver` matches on the `state` it presented, `popupReceiver` in the browser package has `belongsToThisAttempt`, and the deep-link receiver's own docstring names this exact threat. This receiver was the one that never got it.
+
+On iOS that gap is not reachable: `ASWebAuthenticationSession` hands back only what its own sheet was redirected to. On Android it is. Expo's `openAuthSessionAsync` opens a Custom Tab and races a `Linking` listener against it, and that listener answers to any app on the device that can send `myapp://auth/callback?…`. An unsolicited `?error=access_denied` therefore resolved the session as a `success` carrying a hostile URL, which `readCallback` turned into `authorization_denied`, and a `wait()` that rejects throws out of `login()` before the client's own `state` comparison — that check sits after the await and only ever guards the success path. So another installed app could cancel a sign-in at a time of its choosing, and choose the error the app displayed for it.
+
+Be precise about the size of this: it is a denial of service, not credential injection. A hostile callback carrying a `code` was already caught by the client's `state` comparison and rejected as `state_mismatch`; nothing was ever exchanged for a token the attacker supplied. What was available was cancellation, and control over how the cancellation read.
+
+The receiver now captures the `state` of the authorization URL it presented, from the URL itself so the two cannot drift, and drops a result URL that does not carry it — the same rule, and the same `echoesState: false` exemption, that `deepLinkReceiver` already implements. One difference is worth stating plainly rather than leaving to be discovered: `openAuthSessionAsync` resolves once, so a dropped result cannot be replaced by the real one the way a dropped deep link can. A callback that is not ours leaves `wait()` pending, and the login ends on its own `timeoutMs` or `signal` instead of immediately. The attempt is not rescued; it is taken out of the attacker's hands.
+
+Separately, `close()` now dismisses the session. `dismissAuthSession()` was wired only to `context.signal`, and the signal is not how every login ends: `timeoutMs` rejects from the client's own timer without aborting anything, and a `login()` that fails after the callback — a refused token exchange — never touches the signal either. Both still run `close()` in `login()`'s `finally`, which previously only unhooked the abort listener, so the browser sheet stayed on screen over a flow that no longer existed. The dismissal is idempotent, since on the abort path both routes now ask for it. Nothing else was wrong with the orphaned chain: no late authorization code is consumed and nothing is stored.

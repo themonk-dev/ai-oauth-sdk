@@ -235,6 +235,59 @@ describe('custom provider bookkeeping', () => {
     expect(stored['tokens:acme']).toBeUndefined()
   })
 
+  /**
+   * Gives the stored `acme` descriptor a revocation endpoint.
+   *
+   * There is no `--revocation-url` flag, so the only way a custom provider can
+   * have one is in the descriptor `login` wrote — which is exactly how a
+   * discovered or hand-edited provider gets there in real use.
+   */
+  async function pointRevocationAt(url: string): Promise<void> {
+    const path = join(dir, 'auth.json')
+    const stored = JSON.parse(await readFile(path, 'utf8')) as Record<string, string>
+    const descriptor = JSON.parse(stored['provider:acme']!) as Record<string, unknown>
+    stored['provider:acme'] = JSON.stringify({ ...descriptor, revocationUrl: url })
+    await writeFile(path, JSON.stringify(stored))
+  }
+
+  it('reports revoked: true only for a revocation it watched succeed', async () => {
+    await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+    await pointRevocationAt(`${server.url}/revoke`)
+
+    stdout = []
+    expect(await run(['logout', 'acme', '--auth-dir', dir, '--revoke', '--json'])).toBe(0)
+    expect(JSON.parse(out())).toMatchObject({ provider: 'acme', signedOut: true, revoked: true })
+    expect(server.revocations).toHaveLength(1)
+  })
+
+  it('reports revoked: false when the provider refuses, and still signs out', async () => {
+    await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+    // An endpoint this server answers 404 for, so the revocation really fails.
+    await pointRevocationAt(`${server.url}/nowhere`)
+
+    stdout = []
+    stderr = []
+    expect(await run(['logout', 'acme', '--auth-dir', dir, '--revoke', '--json'])).toBe(0)
+    // A `revoked: true` here would tell a script the credential is dead at the
+    // provider when nothing of the sort was observed.
+    expect(JSON.parse(out())).toMatchObject({ signedOut: true, revoked: false })
+    expect(err()).toContain('Could not revoke')
+
+    const stored = JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8')) as Record<string, string>
+    // The local clear is not conditional on the provider answering.
+    expect(stored['tokens:acme']).toBeUndefined()
+  })
+
+  it('does not claim a revocation for a provider that cannot do one', async () => {
+    await run(['login', 'acme', ...customFlags(server, ['--port', '0'])])
+
+    stdout = []
+    stderr = []
+    expect(await run(['logout', 'acme', '--auth-dir', dir, '--revoke', '--json'])).toBe(0)
+    expect(JSON.parse(out())).toMatchObject({ signedOut: true, revoked: false })
+    expect(err()).toContain('no revocation endpoint')
+  })
+
   it('keeps the descriptor when only one account signs out', async () => {
     await run(['login', 'acme', ...customFlags(server, ['--port', '0', '--account', 'work'])])
     await run(['login', 'acme', ...customFlags(server, ['--port', '0', '--account', 'home'])])

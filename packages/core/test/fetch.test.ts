@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createAuthClient } from '../src/client.js'
 import { createAuthenticatedFetch, fetchUserInfo } from '../src/fetch.js'
 import { defineProvider } from '../src/providers/define.js'
+import { revokeToken } from '../src/revoke.js'
 import { memoryStorage } from '../src/storage.js'
 import type { AuthClient } from '../src/client.js'
 import type { ProviderConfig } from '../src/types.js'
@@ -340,6 +341,39 @@ describe('revocation', () => {
     const client = await signedInClient(server)
     await client.revoke()
     await expect(client.refresh()).rejects.toMatchObject({ code: 'refresh_failed' })
+  })
+
+  it('revokes the access token when the set carries no refresh token', async () => {
+    const client = await signedInClient(server)
+    await client.setTokens({ ...(await client.getTokens())!, refreshToken: undefined })
+    await client.revoke()
+
+    // The weaker revocation is still a revocation. Sending nothing left a live
+    // bearer token live while telling the caller the session was over.
+    expect(server.revocations).toHaveLength(1)
+    expect(server.revocations[0]?.['token']).toBe('access-1')
+    expect(server.revocations[0]?.['token_type_hint']).toBe('access_token')
+  })
+
+  it('refuses when the set carries neither token', async () => {
+    await expect(
+      revokeToken({
+        provider: testProvider(server.url),
+        clientId: 'test-client',
+        tokens: { accessToken: '', tokenType: 'Bearer', provider: 'test', raw: {} },
+      }),
+    ).rejects.toMatchObject({ code: 'configuration_error' })
+    expect(server.revocations).toHaveLength(0)
+  })
+
+  it('logout({ revoke: true }) reaches the provider on an access-token-only session', async () => {
+    const client = await signedInClient(server)
+    await client.setTokens({ ...(await client.getTokens())!, refreshToken: undefined })
+    await client.logout({ revoke: true })
+
+    expect(server.revocations).toHaveLength(1)
+    expect(server.revocations[0]?.['token_type_hint']).toBe('access_token')
+    expect(await client.getTokens()).toBeUndefined()
   })
 
   it('revoking without tokens is a no-op', async () => {
