@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { randomBytes } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
 import type { AuthStorage } from '@ai-oauth-sdk/core'
@@ -18,13 +18,42 @@ export function defaultAuthDir(): string {
 }
 
 /**
+ * One serialisation chain per credential file, shared by every `fileStorage()`
+ * built over that file in this process.
+ *
+ * `set` is a read-modify-rewrite of the *whole* record, so two of them running
+ * concurrently against one file both read the same base and the second rename
+ * discards the first's key — silently, because both writes succeed. A chain
+ * stored on the storage object itself does not prevent that: a client is free
+ * to build its own adapter, and `createNodeAuthClient` builds a fresh one per
+ * client, so a process holding an OpenAI client and a Claude client has two
+ * instances pointed at the same `auth.json`. Two overlapping token refreshes on
+ * a single client reach the same shape through `setTokens`. Keying the chain on
+ * the file rather than the instance is what makes those cases safe.
+ *
+ * The key is the *resolved* path, so a relative `dir` and the absolute one it
+ * denotes share a chain. Two names that reach one file by other means — a
+ * symlinked directory, a bind mount, a case-insensitive filesystem — still get
+ * separate chains and can still clobber each other.
+ *
+ * This is a per-process guard only. Two `ai-oauth` processes writing the same
+ * file concurrently are not serialised by anything here; that would need an
+ * advisory lock on disk, with the stale-lock handling that implies, and is
+ * deliberately out of scope. The map holds one settled promise per file path,
+ * which is bounded by the number of credential files a process touches.
+ */
+const queues = new Map<string, Promise<unknown>>()
+
+/**
  * JSON-file storage for CLIs, written `0600` so other users on the box cannot
  * read the tokens.
  *
  * Writes go to a temp file and are renamed into place: an interrupted write
  * cannot leave a truncated credential file behind. All reads and writes are
- * serialised through a promise chain so concurrent `set` calls do not clobber
- * each other's copy of the record.
+ * serialised through a promise chain keyed on the file, so concurrent `set`
+ * calls within this process do not clobber each other's copy of the record —
+ * including calls made through two different `fileStorage()` instances. Writes
+ * from a *separate* process are not serialised; see {@link queues}.
  *
  * The directory is created `0700`, but an existing one keeps whatever mode it
  * already has: a `dir` other local users can write to is outside what this
@@ -32,8 +61,7 @@ export function defaultAuthDir(): string {
  */
 export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
   const dir = options.dir ?? defaultAuthDir()
-  const path = join(dir, options.file ?? 'auth.json')
-  let queue: Promise<unknown> = Promise.resolve()
+  const path = resolve(join(dir, options.file ?? 'auth.json'))
 
   const readAll = async (): Promise<Record<string, string>> => {
     try {
@@ -49,6 +77,22 @@ export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
       }
 
       if (error instanceof SyntaxError) {
+        // An unparseable file must not wedge login, so the record still reads
+        // as empty — but it must not be *discarded* either. `set` rewrites the
+        // whole file from whatever `readAll` returned, so returning `{}` alone
+        // turns the next sign-in to any one provider into a silent wipe of
+        // every other provider's refresh token. A zero-length `auth.json` is
+        // the same shape and is a realistic post-crash artifact.
+        //
+        // Moving the bad file aside keeps both properties: login proceeds, and
+        // the old credentials are still on disk for a human to salvage. The
+        // suffix puts it outside every path this adapter reads — `auth.json`
+        // and `auth.json.<hex>.tmp` — so it cannot be mistaken for the record
+        // later. `rename` preserves the inode, and with it the `0600` mode.
+        // Failure to rename is swallowed: a read-only directory should still
+        // not wedge a caller that only wanted to read.
+        await rename(path, `${path}.corrupt-${Date.now()}`).catch(() => {})
+
         return {}
       }
 
@@ -88,6 +132,17 @@ export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
         )
       }
 
+      // Any other failure — `ENOSPC` part-way through, `EIO`, a quota refusal —
+      // leaves a partially written temp file holding every provider's tokens in
+      // plaintext, and nothing else ever sweeps it: the name is random, so the
+      // next write picks a fresh one, and even `logout` does not remove it.
+      //
+      // The unlink has to sit *below* the `EEXIST` branch. On `EEXIST` we never
+      // created that inode — it is whatever was already there, which is exactly
+      // the planted symlink `O_EXCL` exists to refuse — and removing it would
+      // hand the attacker the retry they were denied.
+      await unlink(temp).catch(() => {})
+
       throw error
     }
 
@@ -101,10 +156,12 @@ export function fileStorage(options: FileStorageOptions = {}): AuthStorage {
     await chmod(path, 0o600).catch(() => {})
   }
 
-  /** Serialises an operation behind whatever is already queued. */
+  /** Serialises an operation behind whatever is already queued for this file. */
   const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
-    const result = queue.then(operation, operation)
-    queue = result.catch(() => {})
+    const result = (queues.get(path) ?? Promise.resolve()).then(operation, operation)
+    // The stored tail is the swallowed copy: one failed `set` must not reject
+    // every operation queued behind it.
+    queues.set(path, result.catch(() => {}))
 
     return result
   }

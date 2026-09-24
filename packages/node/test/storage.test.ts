@@ -1,6 +1,16 @@
-import { mkdtemp, readdir, rm, stat, readFile, symlink, writeFile, mkdir } from 'node:fs/promises'
+import {
+  mkdtemp,
+  readdir,
+  rm,
+  stat,
+  lstat,
+  readFile,
+  symlink,
+  writeFile,
+  mkdir,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fileStorage } from '../src/storage.js'
@@ -112,6 +122,131 @@ describe('fileStorage', () => {
     for (let i = 0; i < 10; i++) {
       expect(record[`key-${i}`]).toBe(String(i))
     }
+  })
+
+  it('does not lose writes across two instances over the same file', async () => {
+    // `createNodeAuthClient` builds a fresh `fileStorage()` per client, so a
+    // process signed in to two providers holds two adapters pointed at one
+    // `auth.json`. A queue living on the instance serialises neither against
+    // the other: both read the same base record and the second rename drops
+    // the first's key, with both `set` calls resolving successfully.
+    const openai = fileStorage({ dir })
+    const claude = fileStorage({ dir })
+
+    await Promise.all([
+      openai.set('tokens:openai', '{"accessToken":"openai"}'),
+      claude.set('tokens:claude', '{"accessToken":"claude"}'),
+    ])
+
+    expect(JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8'))).toEqual({
+      'tokens:openai': '{"accessToken":"openai"}',
+      'tokens:claude': '{"accessToken":"claude"}',
+    })
+  })
+
+  it('shares one chain between a relative and an absolute dir', async () => {
+    // The chain is keyed on the resolved path, so `--auth-dir ./creds` and the
+    // absolute path it denotes are one file as far as serialisation goes.
+    const asRelative = relative(process.cwd(), dir)
+    const absolute = fileStorage({ dir })
+    const viaRelative = fileStorage({ dir: asRelative })
+
+    await Promise.all([absolute.set('a', '1'), viaRelative.set('b', '2')])
+
+    expect(JSON.parse(await readFile(join(dir, 'auth.json'), 'utf8'))).toEqual({ a: '1', b: '2' })
+  })
+
+  it('removes the temp file when the write fails part-way', async () => {
+    // A failure below `EEXIST` — `ENOSPC`, `EIO`, a quota refusal — used to
+    // rethrow with the temp file still on disk, holding every provider's
+    // access *and* refresh tokens in plaintext. Nothing swept it afterwards:
+    // the name is random, so no later write reuses it, and `logout` only
+    // rewrites `auth.json`.
+    vi.resetModules()
+    vi.doMock('node:fs/promises', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs/promises')>()
+
+      return {
+        ...actual,
+        writeFile: async (file: string, _data: string, options: { mode: number; flag: string }) => {
+          /* Create the inode the way the real call would, then fail mid-write. */
+          await actual.writeFile(file, '', options)
+          const error = new Error('no space left on device') as NodeJS.ErrnoException
+          error.code = 'ENOSPC'
+
+          throw error
+        },
+      }
+    })
+
+    try {
+      const { fileStorage: withFailingWrite } = await import('../src/storage.js')
+
+      await expect(withFailingWrite({ dir }).set('tokens:openai', '{"refreshToken":"secret"}'))
+        .rejects.toThrow(/no space left/)
+      expect((await readdir(dir)).filter((entry) => entry.endsWith('.tmp'))).toEqual([])
+    } finally {
+      vi.doUnmock('node:fs/promises')
+      vi.resetModules()
+    }
+  })
+
+  it('leaves a planted temp file alone instead of clearing the way for it', async () => {
+    // The unlink above must not run on `EEXIST`. That file is not ours — it is
+    // exactly the symlink `O_EXCL` just refused to follow — and removing it
+    // would hand the attacker the retry they were denied.
+    const store = join(dir, 'store')
+    const decoy = join(dir, 'decoy')
+    await mkdir(store, { recursive: true })
+    await writeFile(decoy, 'attacker owned')
+
+    vi.resetModules()
+    vi.doMock('node:crypto', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('node:crypto')>()),
+      randomBytes: () => Buffer.from('deadbeefcafebabe', 'hex'),
+    }))
+
+    try {
+      const { fileStorage: withPinnedSuffix } = await import('../src/storage.js')
+      const planted = join(store, 'auth.json.deadbeefcafebabe.tmp')
+      await symlink(decoy, planted)
+
+      await expect(
+        withPinnedSuffix({ dir: store }).set('tokens:openai', '{"accessToken":"secret"}'),
+      ).rejects.toThrow(/Refusing to overwrite/)
+      expect((await lstat(planted)).isSymbolicLink()).toBe(true)
+    } finally {
+      vi.doUnmock('node:crypto')
+      vi.resetModules()
+    }
+  })
+
+  it('moves a corrupt file aside instead of wiping every other provider', async () => {
+    await mkdir(dir, { recursive: true })
+    const survivors = {
+      'tokens:openai': '{"refreshToken":"openai"}',
+      'tokens:claude': '{"refreshToken":"claude"}',
+      'tokens:gemini': '{"refreshToken":"gemini"}',
+    }
+    // A truncated record: three providers' refresh tokens, and one byte of the
+    // file lost — the shape a crash or a full disk leaves behind. `readAll`
+    // mapped that to `{}`, and because `set` rewrites the whole file from what
+    // `readAll` returned, the next sign-in to a fourth provider silently
+    // deleted the other three.
+    const truncated = JSON.stringify(survivors, null, 2).slice(0, -1)
+    await writeFile(join(dir, 'auth.json'), truncated)
+
+    const storage = fileStorage({ dir })
+    await storage.set('tokens:xai', '{"refreshToken":"xai"}')
+
+    /* Login did not wedge, and the new provider is stored. */
+    expect(await storage.get('tokens:xai')).toBe('{"refreshToken":"xai"}')
+
+    const salvaged = (await readdir(dir)).filter((entry) => entry.includes('.corrupt-'))
+    expect(salvaged).toHaveLength(1)
+    expect(await readFile(join(dir, salvaged[0]!), 'utf8')).toBe(truncated)
+    /* The moved-aside name is not one the adapter ever reads back as the record. */
+    expect(salvaged[0]).not.toBe('auth.json')
   })
 
   it('recovers from a corrupt file instead of wedging login', async () => {
