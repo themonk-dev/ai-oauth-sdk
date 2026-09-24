@@ -553,21 +553,27 @@ export async function logout({ args, json }: CommandContext): Promise<void> {
   let revoked = false
 
   if (shouldRevoke) {
-    if (!client.provider.revocationUrl) {
-      warn(`${client.provider.label} has no revocation endpoint — clearing locally only.`)
-    } else if (!(await client.getTokens())) {
-      warn(`No stored ${client.provider.label} session to revoke — clearing locally only.`)
-    } else {
-      try {
+    /* The whole block is guarded, not just the `revoke()` call. Reading the
+       stored tokens is itself a storage operation, and a backend whose `get`
+       throws would otherwise abort the command here — leaving the session on
+       disk, which is the one outcome `logout` must never produce. Anything
+       that goes wrong while revoking degrades to a warning and falls through
+       to the local clear below. */
+    try {
+      if (!client.provider.revocationUrl) {
+        warn(`${client.provider.label} has no revocation endpoint — clearing locally only.`)
+      } else if (!(await client.getTokens())) {
+        warn(`No stored ${client.provider.label} session to revoke — clearing locally only.`)
+      } else {
         await client.revoke()
         revoked = true
-      } catch (error) {
-        warn(
-          `Could not revoke at ${client.provider.label} ` +
-            `(${error instanceof Error ? error.message : String(error)}) — ` +
-            'the token may still be live there. Clearing locally anyway.',
-        )
       }
+    } catch (error) {
+      warn(
+        `Could not revoke at ${client.provider.label} ` +
+          `(${error instanceof Error ? error.message : String(error)}) — ` +
+          'the token may still be live there. Clearing locally anyway.',
+      )
     }
   }
 
