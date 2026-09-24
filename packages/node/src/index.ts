@@ -53,9 +53,38 @@ export function defaultReceiver(provider: {
     return promptReceiver()
   }
 
-  return loopbackReceiver({ openBrowser: false, onAuthorizationUrl: (url) => {
-    process.stdout.write(`\nOpen this URL to sign in:\n\n  ${url}\n\n`)
-  } })
+  // Headless, and the provider publishes no hosted redirect to fall back to:
+  // every bundled provider except Claude lands here. There is nothing better to
+  // return — the loopback server is the only receiver that can complete this
+  // provider's flow — so the browser is not launched and the URL is printed for
+  // the user to carry to whatever machine can open it.
+  //
+  // That is only usable if the redirect can reach *this* host, which over SSH
+  // it usually cannot: the provider sends the laptop's browser to the laptop's
+  // own `localhost`, where nothing is listening, and `client.login()` arms no
+  // deadline unless `timeoutMs` was passed — so the command waits forever with
+  // no output. Saying so turns a silent hang into one the user can diagnose and
+  // act on.
+  return loopbackReceiver({
+    openBrowser: false,
+    onAuthorizationUrl: (url) => {
+      process.stdout.write(
+        '\nOpen this URL to sign in:\n\n' +
+          `  ${url}\n\n` +
+          'This machine looks headless, and this provider publishes no hosted redirect\n' +
+          'page, so the callback is still being served from *this* host. The browser you\n' +
+          'open the URL in has to be able to reach it — on approval the provider redirects\n' +
+          "to this machine's localhost, and over SSH that is your laptop's localhost, where\n" +
+          'nothing is listening.\n\n' +
+          'If the browser is on another machine, use one of:\n\n' +
+          '  - forward the port first, e.g. ssh -L\n' +
+          '  - --paste on the CLI, to paste the redirected URL back by hand\n' +
+          '  - client.deviceLogin() / --device, where the provider has a device flow\n\n' +
+          'Otherwise this command waits for a callback that cannot arrive; no deadline is\n' +
+          'armed unless you pass timeoutMs (--timeout).\n\n',
+      )
+    },
+  })
 }
 
 export interface NodeClientOptions extends Omit<AuthClientOptions, 'storage'> {

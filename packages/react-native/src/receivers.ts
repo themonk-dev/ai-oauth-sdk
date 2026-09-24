@@ -5,6 +5,7 @@ import {
   readCallback,
   type CallbackReceiver,
   type CallbackResult,
+  type ProviderConfig,
   type ReceiverContext,
 } from '@ai-oauth-sdk/core'
 
@@ -49,6 +50,69 @@ function stateOfAuthorizationUrl(url: string): string | undefined {
   }
 
   return parseQuery(url.slice(questionMark + 1).split('#')[0]!)['state']
+}
+
+/**
+ * A callback URL read by the provider's own parser, with the `state` it carries
+ * separated from the outcome it represents.
+ *
+ * The `state` has to come from the same parser the client will use: providers
+ * disagree about where the callback params live, and `parseCallback` is the
+ * only thing that knows which. Settling is handed back as a thunk rather than
+ * done here so ownership can be decided first — `readCallback` throws on an
+ * `error=` callback, and that rejection is exactly what an unrelated app would
+ * like to hand us.
+ */
+interface CallbackRead {
+  state: string | undefined
+  settle: (
+    resolve: (result: CallbackResult) => void,
+    reject: (error: unknown) => void,
+  ) => void
+}
+
+function readCallbackUrl(provider: ProviderConfig, url: string): CallbackRead {
+  try {
+    const result = readCallback(provider, url)
+
+    return { state: result.state, settle: (resolve) => resolve(result) }
+  } catch (error) {
+    // `readCallback` carries the `state` its parse found onto the error it
+    // throws, so even a refusal still says whose it is.
+    return {
+      state: isOAuthError(error) ? error.state : undefined,
+      settle: (_resolve, reject) => reject(error),
+    }
+  }
+}
+
+/**
+ * Whether a callback can be answered for by the attempt this receiver presented.
+ *
+ * Only a `state` that was presented can be compared against. Where none was,
+ * there is nothing to compare and the callback is taken as it comes; where one
+ * was, silence is a disagreement like any other — a callback that cannot be
+ * shown to be ours is not ours, because on these transports "not ours" is the
+ * default rather than the exception.
+ *
+ * A provider declaring `echoesState: false` is the first case even where the
+ * URL carried a `state`, because it has said the callback will not bring one
+ * back — holding it to a comparison it has already said it cannot satisfy would
+ * reject the only callback it can send. The client draws the same exception,
+ * with the same caveat: a provider that echoes nothing cannot tell two
+ * concurrent attempts apart, so this is for a CLI or a single-flow app rather
+ * than a multi-user server.
+ */
+function belongsToThisAttempt(
+  provider: ProviderConfig,
+  presentedState: string | undefined,
+  callbackState: string | undefined,
+): boolean {
+  if (presentedState === undefined || provider.echoesState === false) {
+    return true
+  }
+
+  return callbackState === presentedState
 }
 
 /**
@@ -130,60 +194,18 @@ export function deepLinkReceiver(options: DeepLinkReceiverOptions): CallbackRece
        */
       let presented = false
 
-      /**
-       * The provider's own read of a deep link, with the failure it may
-       * represent held rather than thrown.
-       *
-       * The `state` has to come from the same parser the client will use:
-       * providers disagree about where the callback params live, and
-       * `parseCallback` is the only thing that knows which. Settling is held
-       * back so ownership can be decided first — `readCallback` throws on an
-       * `error=` callback, and that rejection is exactly what an unrelated app
-       * would like to hand us.
-       */
-      const read = (url: string): { state: string | undefined; settle: () => void } => {
-        try {
-          const result = readCallback(context.provider, url)
-
-          return { state: result.state, settle: () => resolveCallback(result) }
-        } catch (error) {
-          // `readCallback` carries the `state` its parse found onto the error
-          // it throws, so even a refusal still says whose it is.
-          return {
-            state: isOAuthError(error) ? error.state : undefined,
-            settle: () => rejectCallback(error),
-          }
-        }
-      }
-
       const handleUrl = (url: string) => {
         if (!presented || pathOfUrl(url) !== pathOfUrl(options.redirectUri)) {
           return
         }
 
-        const callback = read(url)
+        const callback = readCallbackUrl(context.provider, url)
 
-        // Only a `state` that was presented can be answered for. Where none
-        // was, there is nothing to compare and the callback is taken as it
-        // comes; where one was, silence is a disagreement like any other.
-        //
-        // A provider declaring `echoesState: false` is the first case even
-        // where the URL carried a `state`, because it has said the callback
-        // will not bring one back — holding it to a comparison it has already
-        // said it cannot satisfy would reject the only callback it can send.
-        // The client draws the same exception, with the same caveat: a
-        // provider that echoes nothing cannot tell two concurrent attempts
-        // apart, so this is for a CLI or a single-flow app rather than a
-        // multi-user server.
-        if (
-          presentedState !== undefined &&
-          context.provider.echoesState !== false &&
-          callback.state !== presentedState
-        ) {
+        if (!belongsToThisAttempt(context.provider, presentedState, callback.state)) {
           return
         }
 
-        callback.settle()
+        callback.settle(resolveCallback, rejectCallback)
       }
 
       const subscription = options.linking.addEventListener('url', (event) => handleUrl(event.url))
@@ -236,40 +258,121 @@ export interface AuthSessionReceiverOptions {
  * Custom Tabs, so the user keeps their provider cookies and the OS closes the
  * sheet automatically on redirect. `openAuthSessionAsync` both presents the URL
  * and returns the result, so `present()` starts it and `wait()` awaits it.
+ *
+ * The result URL is bound to the attempt by `state`, the same way
+ * `deepLinkReceiver` binds a deep link, because on Android it is not
+ * necessarily the auth session that produced it. `ASWebAuthenticationSession`
+ * on iOS hands back only what its own sheet was redirected to, but Expo's
+ * Android implementation opens a Custom Tab and races a `Linking` listener
+ * against it, and that listener answers to any app on the device that can send
+ * `myapp://auth/callback?…`. An unsolicited `?error=access_denied` therefore
+ * resolved `openAuthSessionAsync` as a `success` carrying a hostile URL, which
+ * `readCallback` turned into `authorization_denied` — a sign-in cancelled on
+ * demand, with an error of somebody else's choosing surfaced to the app as the
+ * provider's answer. The receiver is the only place that can be caught: a
+ * `wait()` that rejects throws out of `login()` before the client's own `state`
+ * comparison, which sits after the await.
+ *
+ * Be clear about what this does and does not buy. It is a denial of service
+ * that is being closed off, not credential injection — a hostile callback
+ * carrying a `code` was already stopped by the client's `state` comparison on
+ * the success path. And a dropped result cannot be replaced: unlike the
+ * deep-link receiver, which keeps listening and can still take the real
+ * callback when it arrives, `openAuthSessionAsync` resolves once and is done.
+ * So a callback that is not ours leaves `wait()` pending and the login runs to
+ * its `timeoutMs` or its `signal` instead of failing immediately. That is worth
+ * it: the attempt fails on the app's own terms rather than on an attacker's
+ * schedule and in an attacker's words, and `close()` takes the sheet down when
+ * it does.
  */
 export function authSessionReceiver(options: AuthSessionReceiverOptions): CallbackReceiver {
   return {
     id: 'auth-session',
     async start(context: ReceiverContext) {
-      let pending: Promise<CallbackResult> | undefined
+      let resolveCallback: (result: CallbackResult) => void
+      let rejectCallback: (error: unknown) => void
+      const callbackPromise = new Promise<CallbackResult>((resolve, reject) => {
+        resolveCallback = resolve
+        rejectCallback = reject
+      })
+      callbackPromise.catch(() => {})
 
-      const onAbort = () => options.webBrowser.dismissAuthSession?.()
+      /**
+       * The `state` of the authorization this receiver actually presented,
+       * learned from the URL it was handed rather than tracked separately, so
+       * the two cannot disagree.
+       */
+      let presentedState: string | undefined
+      let presented = false
+
+      /**
+       * Takes the sheet down, once.
+       *
+       * Both the abort listener and `close()` ask for this, and on the abort
+       * path they both fire: `close()` runs in `login()`'s `finally`, after the
+       * signal has already been handled. `dismissAuthSession` is a no-op on a
+       * sheet that is already gone, but the guard keeps that an invariant of
+       * this file rather than an assumption about someone else's.
+       */
+      let dismissed = false
+      const dismiss = () => {
+        if (dismissed) {
+          return
+        }
+
+        dismissed = true
+        options.webBrowser.dismissAuthSession?.()
+      }
+
+      const onAbort = () => dismiss()
       context.signal?.addEventListener('abort', onAbort, { once: true })
 
       return {
         redirectUri: options.redirectUri,
         async present(url) {
-          pending = options.webBrowser
+          // Read from the URL the client built rather than tracked alongside
+          // it, so what this receiver believes its attempt is can never drift
+          // from what it actually sent the user to.
+          presentedState = stateOfAuthorizationUrl(url)
+          presented = true
+
+          void options.webBrowser
             .openAuthSessionAsync(url, options.redirectUri, options.browserOptions)
             .then((result) => {
               if (result.type !== 'success' || !result.url) {
-                throw new OAuthError(
-                  'aborted',
-                  `Sign-in did not complete (${result.type}).`,
+                // A dismissal is the user's own doing and belongs to this
+                // attempt whatever else is going on, so it settles unbound.
+                rejectCallback(
+                  new OAuthError('aborted', `Sign-in did not complete (${result.type}).`),
                 )
+
+                return
               }
 
-              return readCallback(context.provider, result.url)
-            })
+              const callback = readCallbackUrl(context.provider, result.url)
+
+              if (!belongsToThisAttempt(context.provider, presentedState, callback.state)) {
+                return
+              }
+
+              callback.settle(resolveCallback, rejectCallback)
+            }, rejectCallback)
         },
         async wait() {
-          if (!pending) {
+          if (!presented) {
             throw new OAuthError('configuration_error', 'present() must be called before wait().')
           }
 
-          return pending
+          return callbackPromise
         },
         async close() {
+          // The signal is not the only way a login ends. `timeoutMs` rejects
+          // from the client's own timer without aborting anything, and a
+          // `login()` that fails after the callback — a token exchange that is
+          // refused — never touches the signal either. Every one of those still
+          // reaches `close()`, and without this the sheet stayed up over a flow
+          // that no longer existed.
+          dismiss()
           context.signal?.removeEventListener('abort', onAbort)
         },
       }

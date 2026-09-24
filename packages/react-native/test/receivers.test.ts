@@ -280,12 +280,64 @@ describe('authSessionReceiver', () => {
     await started.close()
   })
 
-  it('surfaces a denial carried on the result URL', async () => {
+  it('surfaces a denial that echoes the presented state', async () => {
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}?error=access_denied&state=xyz`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).rejects.toMatchObject({ code: 'authorization_denied' })
+
+    await started.close()
+  })
+
+  it('ignores a denial that carries no state', async () => {
+    // Expo's Android implementation races a `Linking` listener against the
+    // Custom Tab, so this result URL need not have come from the sheet at all:
+    // any app on the device can send it. It must not be able to fail a login
+    // that is genuinely in progress.
     const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?error=access_denied` })
     const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
 
-    await started.present('https://provider.test/authorize')
-    await expect(started.wait()).rejects.toMatchObject({ code: 'authorization_denied' })
+    await started.present('https://provider.test/authorize?state=xyz')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('ignores a callback whose state disagrees', async () => {
+    const webBrowser = fakeWebBrowser({
+      type: 'success',
+      url: `${REDIRECT}?code=forged&state=someone-elses`,
+    })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    expect(await outcomeOf(started.wait())).toBe('ignored')
+
+    await started.close()
+  })
+
+  it('resolves a callback that echoes the presented state', async () => {
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=abc&state=xyz` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize?state=xyz')
+    await expect(started.wait()).resolves.toEqual({ code: 'abc', state: 'xyz' })
+
+    await started.close()
+  })
+
+  it('still takes a callback from a provider that declares it echoes no state', async () => {
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=unechoed` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({
+      provider: defineProvider({ ...provider, echoesState: false }),
+    })
+
+    await started.present('https://provider.test/authorize?state=presented')
+    await expect(started.wait()).resolves.toMatchObject({ code: 'unechoed' })
 
     await started.close()
   })
@@ -307,6 +359,32 @@ describe('authSessionReceiver', () => {
 
     controller.abort()
     expect(webBrowser.dismissAuthSession).toHaveBeenCalled()
+  })
+
+  it('dismisses the sheet on close, for the endings the signal never sees', async () => {
+    // `timeoutMs` rejects from the client's own timer without aborting
+    // anything, and a token exchange that fails never touches the signal
+    // either. Both still reach `close()`, which used to leave the sheet up over
+    // a flow that no longer existed.
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=a` })
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({ provider })
+
+    await started.present('https://provider.test/authorize')
+    await started.close()
+    expect(webBrowser.dismissAuthSession).toHaveBeenCalled()
+  })
+
+  it('dismisses the sheet only once when the signal already did it', async () => {
+    const webBrowser = fakeWebBrowser({ type: 'success', url: `${REDIRECT}?code=a` })
+    const controller = new AbortController()
+    const started = await authSessionReceiver({ webBrowser, redirectUri: REDIRECT }).start({
+      provider,
+      signal: controller.signal,
+    })
+
+    controller.abort()
+    await started.close()
+    expect(webBrowser.dismissAuthSession).toHaveBeenCalledTimes(1)
   })
 })
 

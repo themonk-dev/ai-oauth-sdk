@@ -140,17 +140,47 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
 
       setState({ isLoading: true, error: undefined })
 
+      /**
+       * Whether this attempt is still the one the store is showing.
+       *
+       * A second `login()` aborts the first and takes the state over, but the
+       * first is a promise that still has to land somewhere, and it lands after
+       * the second has already set `isLoading: true`. Whatever it lands as, it
+       * is no longer describing anything the user can see: an abort that turns
+       * the spinner off turns off the *replacement's* spinner, a stale success
+       * writes its `TokenSet` over the newer one and fires `onSuccess` a second
+       * time, and a genuine failure — a refused token exchange, a denial —
+       * paints the superseded attempt's error into the live attempt's UI and
+       * calls `onError` while that attempt is still running. So only the
+       * current attempt may write state or fire callbacks; a superseded one
+       * still returns to its own caller, and says nothing to anyone else.
+       *
+       * This is the same identity test the `finally` below already makes, which
+       * is why the controller was never cleared by the loser: it is exactly
+       * what distinguishes the two.
+       */
+      const isCurrentAttempt = () => abortController === controller
+
       try {
         const tokens = await client.login({
           receiver,
           signal: controller.signal,
           ...(overrides.scopes ? { scopes: overrides.scopes } : {}),
         })
+
+        if (!isCurrentAttempt()) {
+          return tokens
+        }
+
         setState({ tokens, isLoading: false })
         options.onSuccess?.(tokens)
 
         return tokens
       } catch (caught) {
+        if (!isCurrentAttempt()) {
+          return undefined
+        }
+
         if (isOAuthError(caught) && caught.code === 'aborted') {
           setState({ isLoading: false })
 

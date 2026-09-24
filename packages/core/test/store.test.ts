@@ -55,6 +55,61 @@ const hangingReceiver = (): CallbackReceiver => ({
   },
 })
 
+/**
+ * A scripted receiver whose `close()` can be held open.
+ *
+ * `close()` runs in `client.login()`'s `finally`, so holding it there holds the
+ * whole attempt: it has already done everything it is going to do, and is only
+ * waiting to settle. That is what makes a superseded attempt's landing
+ * deterministic — release it after the login that replaced it has finished, and
+ * whatever it does next it does to somebody else's state.
+ */
+function heldReceiver(
+  outcome: 'success' | 'denied',
+  redirectUri = 'http://localhost:9999/callback',
+) {
+  let release!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let reached!: () => void
+  const closing = new Promise<void>((resolve) => {
+    reached = resolve
+  })
+
+  const receiver: CallbackReceiver = {
+    id: 'held',
+    async start() {
+      let result: Promise<{ code: string; state: string }> | undefined
+
+      return {
+        redirectUri,
+        async present(url) {
+          if (outcome === 'denied') {
+            return
+          }
+
+          result = fetch(url, { redirect: 'manual' }).then((response) => {
+            const params = new URL(response.headers.get('location')!).searchParams
+
+            return { code: params.get('code')!, state: params.get('state')! }
+          })
+        },
+        wait: () =>
+          outcome === 'denied'
+            ? Promise.reject(new OAuthError('authorization_denied', 'The user said no.'))
+            : result!,
+        async close() {
+          reached()
+          await held
+        },
+      }
+    },
+  }
+
+  return { receiver, closing, release }
+}
+
 function makeStore(storage: AuthStorage = memoryStorage(), receiver = scriptedReceiver()) {
   const client = createAuthClient({ provider: testProvider(server.url), storage })
 
@@ -172,6 +227,71 @@ describe('createAuthStore', () => {
 
     await expect(first).resolves.toBeUndefined()
     await expect(second).resolves.toMatchObject({ accessToken: 'access-1' })
+  })
+
+  it('does not let a superseded attempt turn off the replacement spinner', async () => {
+    const client = createAuthClient({ provider: testProvider(server.url), storage: memoryStorage() })
+    const store = createAuthStore({ client, receiver: hangingReceiver() })
+
+    const first = store.login()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // The double-tap: the second login aborts the first, and the first's abort
+    // handler used to run `setState({ isLoading: false })` unconditionally.
+    const second = store.login({ receiver: hangingReceiver() })
+
+    await expect(first).resolves.toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(store.getState().isLoading).toBe(true)
+
+    store.cancel()
+    await expect(second).resolves.toBeUndefined()
+  })
+
+  it('does not let a superseded attempt overwrite the tokens that replaced it', async () => {
+    const onSuccess = vi.fn()
+    const client = createAuthClient({ provider: testProvider(server.url), storage: memoryStorage() })
+    const held = heldReceiver('success')
+    const store = createAuthStore({ client, receiver: held.receiver, onSuccess })
+
+    const first = store.login()
+    // The first attempt has exchanged its code and is waiting to settle.
+    await held.closing
+
+    await expect(store.login({ receiver: scriptedReceiver() })).resolves.toMatchObject({
+      accessToken: 'access-2',
+    })
+
+    held.release()
+    await first
+
+    // Its own caller still hears about it; the store does not.
+    expect(store.getState().tokens?.accessToken).toBe('access-2')
+    expect(onSuccess).toHaveBeenCalledOnce()
+    expect(onSuccess.mock.calls[0]?.[0]).toMatchObject({ accessToken: 'access-2' })
+  })
+
+  it('does not let a superseded attempt report its failure as the current one', async () => {
+    const onError = vi.fn()
+    const client = createAuthClient({ provider: testProvider(server.url), storage: memoryStorage() })
+    const held = heldReceiver('denied')
+    const store = createAuthStore({ client, receiver: held.receiver, onError })
+
+    const first = store.login()
+    await held.closing
+
+    await expect(store.login({ receiver: scriptedReceiver() })).resolves.toMatchObject({
+      accessToken: 'access-1',
+    })
+
+    held.release()
+    await expect(first).resolves.toBeUndefined()
+
+    // A denial of the attempt the user already walked away from must not paint
+    // an error over the sign-in that succeeded.
+    expect(store.getState().error).toBeUndefined()
+    expect(store.getState().isAuthenticated).toBe(true)
+    expect(onError).not.toHaveBeenCalled()
   })
 
   it('reports a missing receiver instead of throwing', async () => {

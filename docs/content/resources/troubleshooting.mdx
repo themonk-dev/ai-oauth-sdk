@@ -9,9 +9,13 @@ icon: RiToolsLine
 Almost always a redirect that cannot arrive.
 
 **Over SSH, or in a container.** A loopback redirect goes to the browser machine's own `localhost`,
-which is not yours. Use `--paste`, or `promptReceiver()`, or the device flow. The Node adapter's
-`defaultReceiver()` detects `SSH_TTY` and `SSH_CONNECTION` and switches automatically, so this
-usually means a receiver was chosen explicitly.
+which is not yours. Use `--paste`, or `promptReceiver()`, or the device flow. `defaultReceiver()`
+does detect `SSH_TTY`, `SSH_CONNECTION` and a missing display, but switching away from loopback
+needs somewhere to switch *to*: it can only pick the paste route for a provider that publishes a
+hosted redirect page, which today means Claude alone. For every other provider it still returns a
+loopback receiver, printing the URL rather than opening a browser, and says so — the callback is
+served from the remote host, so either forward the port (`ssh -L`) or take one of the routes above.
+Pass `timeoutMs` (`--timeout`) so a callback that cannot arrive fails instead of hanging.
 
 **Device flow on OpenAI.** Turn on "Enable device code authorization for Codex" in
 [**ChatGPT > Settings > Security**](https://chatgpt.com/#settings/Security) first. Without it the verification page refuses the code and the poll runs until

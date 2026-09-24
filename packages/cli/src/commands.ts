@@ -533,29 +533,67 @@ export async function list({ args, json }: CommandContext): Promise<void> {
  * A custom provider's descriptor is written at login so later commands can
  * resolve the id. Once the tokens are gone it is orphaned, so it goes too —
  * otherwise `logout` leaves the credential file dirtier than it found it.
+ *
+ * `--revoke` is driven from here rather than through `client.logout({ revoke:
+ * true })`, which is deliberately silent about how the revocation went: it
+ * swallows the failure so that a provider that cannot be reached never leaves
+ * the user apparently still signed in. That is the right behaviour for a
+ * library, and the wrong thing to report from. `revoked: true` in `--json` is
+ * an assertion a script will act on — it is the difference between "that
+ * credential is dead at the provider" and "it is merely gone from this
+ * machine" — so it is only ever printed for a revocation this command watched
+ * succeed. Running the two steps separately keeps that visible while leaving
+ * the clear-locally-regardless rule exactly where it was: every path below
+ * reaches `client.logout()`.
  */
 export async function logout({ args, json }: CommandContext): Promise<void> {
   const providerId = requireProvider(args, 'logout')
   const client = await clientFor(providerId, args)
   const shouldRevoke = flagBoolean(args.flags, 'revoke')
+  let revoked = false
 
-  if (shouldRevoke && !client.provider.revocationUrl) {
-    warn(`${client.provider.label} has no revocation endpoint — clearing locally only.`)
+  if (shouldRevoke) {
+    /* The whole block is guarded, not just the `revoke()` call. Reading the
+       stored tokens is itself a storage operation, and a backend whose `get`
+       throws would otherwise abort the command here — leaving the session on
+       disk, which is the one outcome `logout` must never produce. Anything
+       that goes wrong while revoking degrades to a warning and falls through
+       to the local clear below. */
+    try {
+      if (!client.provider.revocationUrl) {
+        warn(`${client.provider.label} has no revocation endpoint — clearing locally only.`)
+      } else if (!(await client.getTokens())) {
+        warn(`No stored ${client.provider.label} session to revoke — clearing locally only.`)
+      } else {
+        await client.revoke()
+        revoked = true
+      }
+    } catch (error) {
+      warn(
+        `Could not revoke at ${client.provider.label} ` +
+          `(${error instanceof Error ? error.message : String(error)}) — ` +
+          'the token may still be live there. Clearing locally anyway.',
+      )
+    }
   }
 
-  await client.logout(shouldRevoke ? { revoke: true } : {})
+  await client.logout()
 
   if (!(providerId in providers) && !flagString(args.flags, 'account')) {
     await storageFor(args).delete(PROVIDER_KEY_PREFIX + providerId)
   }
 
   if (json) {
-    outputJson({ provider: providerId, signedOut: true, revoked: shouldRevoke })
+    outputJson({ provider: providerId, signedOut: true, revoked })
 
     return
   }
 
-  success(`Signed out of ${client.provider.label}.`)
+  success(
+    revoked
+      ? `Signed out of ${client.provider.label}, and revoked the token there.`
+      : `Signed out of ${client.provider.label}.`,
+  )
 }
 
 export async function refresh({ args, json }: CommandContext): Promise<void> {

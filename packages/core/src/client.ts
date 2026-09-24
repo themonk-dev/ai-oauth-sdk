@@ -699,7 +699,12 @@ export class AuthClient {
    * Revokes a token at the provider (RFC 7009).
    *
    * Revoking the refresh token is what ends the session; revoking only the
-   * access token leaves this client able to mint a new one.
+   * access token leaves this client able to mint a new one. So the refresh
+   * token is what goes by default, and the access token only where the stored
+   * set has no refresh token to send — a device-flow-less provider, a grant
+   * issued without `offline_access`, a set whose refresh token was dropped on
+   * a renewal. Revoking the weaker credential is a smaller promise than
+   * revoking the stronger one, but it is a real one; sending nothing was not.
    *
    * This talks to the provider and nothing else — the local token stays in
    * storage, so `isAuthenticated()` keeps returning true until you clear it.
