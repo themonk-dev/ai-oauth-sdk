@@ -9,8 +9,10 @@ There are **19 open pull requests** from previous runs of this routine, the olde
 **2026-08-19** — five weeks of daily output, none merged, none reviewed. `main` has not
 received a single one of these fixes.
 
-That changes what today's run is worth. The bottleneck is not finding vulnerabilities; it
-is that nothing lands. And because every run starts fresh from `main` with no knowledge of
+That changes what today's run is worth. A full sweep of the surface those PRs have *not*
+touched produced **zero confirmed new vulnerabilities** — five of its eleven candidates were
+already fixed in the backlog, and the two strongest of the rest died on adversarial review.
+The bottleneck is not finding vulnerabilities; it is that nothing lands. And because every run starts fresh from `main` with no knowledge of
 the open PRs, the routine has spent those five weeks **re-discovering and re-fixing the
 same bugs**, producing pull requests that now conflict with each other.
 
@@ -110,16 +112,18 @@ The sweep deliberately targeted the surface the 19 open PRs have *not* touched
 provider descriptors, `receivers/manual.ts`, `receivers/device.ts`, `browser/storage.ts`,
 `auto.ts`, `login.ts`, the solid/vue/svelte adapters, `cli/output.ts`).
 
-It surfaced **11 substantive candidates. Five were already fixed in the unmerged backlog.**
+It surfaced **11 substantive candidates. Five were already fixed in the unmerged backlog,
+and the two strongest of the remainder were rejected on adversarial review.**
+**Confirmed new vulnerabilities: zero.**
 
 | # | Candidate | Verdict |
 |---|---|---|
-| 1 | `azureAi()` gives every Entra tenant the id `azure-ai`, so two directories share `tokens:azure-ai` | **NEW** |
-| 2 | `token.ts:119` dereferences a body of `null` → raw `TypeError`, escaping the `OAuthError` contract | **NEW** (minor) |
-| 3 | `fetch.ts:387` `fetchUserInfo` casts unparsed JSON to `UserInfo`; HTML 200 → raw `SyntaxError` | **NEW** (minor) |
-| 4 | device flow does not validate `verification_uri` *scheme* (`javascript:`, `file:`) | **NEW** (thin) |
-| 5 | browser SSR gate: a *throwing* storage getter lands in the Safari-private `catch` → module-scope `Map` | **NEW** (narrow) |
-| 6 | `TOKEN_SHAPES` omits Google's `1//…` refresh shape vs SECURITY.md's promise | **NEW** (doc gap) |
+| 1 | `azureAi()` gives every Entra tenant the id `azure-ai`, so two directories share `tokens:azure-ai` | NEW, **reviewed → not a vulnerability** |
+| 2 | `token.ts:119` dereferences a body of `null` → raw `TypeError`, escaping the `OAuthError` contract | NEW (minor, not reviewer-vetted) |
+| 3 | `fetch.ts:387` `fetchUserInfo` casts unparsed JSON to `UserInfo`; HTML 200 → raw `SyntaxError` | NEW (minor, not reviewer-vetted) |
+| 4 | device flow does not validate `verification_uri` *scheme* (`javascript:`, `file:`) | NEW, **reviewed → rejected**, low-priority hardening |
+| 5 | browser SSR gate: a *throwing* storage getter lands in the Safari-private `catch` → module-scope `Map` | NEW (narrow, not reviewer-vetted) |
+| 6 | `TOKEN_SHAPES` omits Google's `1//…` refresh shape vs SECURITY.md's promise | NEW (doc gap, not reviewer-vetted) |
 | 7 | `base64UrlDecode`'s `/=+$/` backtracks quadratically — 117 KB `id_token` stalls the loop 11.5 s | **DUPLICATE — PR #44** |
 | 8 | provider text reaches the terminal with ANSI escapes intact; a token endpoint can repaint `✗` as `✓` | **DUPLICATE — PR #44** |
 | 9 | `table()` measures column widths on raw `String.length`, so escapes mis-pad every column | **DUPLICATE — PR #44** |
@@ -138,42 +142,57 @@ diffing all 19 branches themselves. The lesson is not "the hunters erred" — it
 exclusion set must be the **whole open set**, and that a partial one reproduces the
 routine's core defect inside a single run.
 
-### The one finding worth a maintainer's attention
+### Net result after adversarial review: no confirmed new vulnerability
+
+Both candidates that went to the reviewer came back rejected **as vulnerabilities**. The
+review corrected me as well as the hunter, so the correction is recorded here rather than
+quietly dropped.
 
 **`azureAi()` is tenant-scoped in its endpoints but not in its identity.**
 `packages/core/src/providers/azure-ai.ts:41-42` folds `tenant` into every endpoint;
 line 45 hardcodes `id: 'azure-ai'`. The credential key is derived from the id alone
 (`client.ts:528`), so `azureAi({tenant:'contoso…'})` and `azureAi({tenant:'fabrikam…'})`
 both read and write `tokens:azure-ai`. An app signing into two directories is served,
-refreshes, and logs out of the wrong tenant's token — **with no attacker involved**.
-`accountKey` mitigates it, but `docs/content/providers/azure-ai.mdx`'s "Multi-tenant"
-section never says you need it.
+refreshes, and logs out of the wrong tenant's token, with no attacker involved.
 
 `azure-ai.ts` is untouched by all 19 open PRs, and `providers.test.ts` cannot catch it: it
 iterates `Object.values(providers)`, and `azureAi` is a factory that is not in that map.
 
-The secondary claim — that `#ownsProviderId` lets one tenant consume another's pending
-authorization — is real but **not attacker-reachable**: pending records are keyed
-`pending:${state}` (`registry.ts:107,185`) on a 256-bit random state, so it needs the
-application to misroute a callback. Treat it as a degraded defence-in-depth guard, not a hole.
+**Verdict: a real foot-gun and a docs cross-reference gap. Not a vulnerability. No code
+change.** Two things killed it, and I had the second one wrong myself:
 
-**This fix is a judgement call, not a mechanical one, which is why this run does not push
-it.** Scoping the id to the tenant changes the storage key, so it either orphans existing
-`tokens:azure-ai` credentials or needs a `previousIds` migration; and `previousIds` already
-carries `microsoft`. Given the backlog already holds three contradictory answers to a
-comparable question (Finding 2), a fourth unreviewed opinion is not what this repo needs.
-Recommended shape, for the maintainer to accept or reject:
+1. **`accountKey` is the documented answer, and it is documented prominently.**
+   `docs/content/reference/tokens.mdx:78-84` shows this exact two-client pattern with
+   `accountKey: 'work'` / `'personal'`, and `docs/content/recipes/multi-user.mdx:7-27`
+   prescribes `accountKey` *plus* `prefixedStorage`. My earlier claim that the docs never
+   tell you to use it was **wrong**. The real gap is narrow: `azure-ai.mdx`'s "Multi-tenant"
+   section explains what `tenant` values mean without cross-referencing either page, and it
+   never actually recommends building two clients.
+2. **`azure-ai.ts:42` hardcodes the host for every tenant.** Every tenant's token endpoint is
+   `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token`. So the cross-tenant
+   callback case sends the code and PKCE verifier to a **different path on the same host,
+   operated by the same issuer that minted the code** - Microsoft rejects a code presented
+   to the wrong authority and the login simply fails. That is categorically not the OAuth
+   BCP section 4.4 mix-up the `#ownsProviderId` comment describes, where the credential
+   reaches a *different* issuer. Nothing crosses a trust boundary.
 
-```ts
-// tenant-scoped identity, with the unscoped key migrated once
-const tenant = options.tenant ?? 'common'
-id: `azure-ai:${tenant}`,
-previousIds: ['azure-ai', 'microsoft'],
-```
+On the secondary claim the review also corrected my reasoning while reaching the same
+conclusion. I said state secrecy made it unreachable; in fact the guard's whole scenario is
+a mis-routed shared `/callback`, where the state arrives in the request URL, so it *is*
+reachable - it just has no impact, per point 2. Note also that `accountKey` does **not**
+isolate pending records (keyed `pending:<state>`, no account scoping); only `prefixedStorage`
+does, which is why the multi-user recipe prescribes both.
 
-Note that `previousIds` adoption is *destructive* (it moves the old record), so with two
-tenants the first client constructed would claim the legacy `tokens:azure-ai`. Migrating
-only when `tenant === 'common'` avoids that and is probably the right trade.
+**I am withdrawing the fix I sketched earlier in this run.** Scoping the id to the tenant is
+not merely breaking, it is wrong: `#readRenamedTokens` (`client.ts:544-572`) *moves* a
+`previousIds` record rather than copying it, so with a tenant-scoped id whichever tenant's
+client reads first would claim the shared legacy `tokens:azure-ai` and the others would get
+nothing - order-dependent and nondeterministic. It would also break the CLI's
+`provider:`-keyed descriptor store.
+
+The right change is two sentences in `azure-ai.mdx`'s Multi-tenant section: the provider id
+is `azure-ai` for every tenant, so a client per tenant needs its own `accountKey`, plus
+`prefixedStorage` if the store is shared; link `recipes/multi-user`.
 
 ## What to do
 
@@ -232,11 +251,16 @@ guard. An HTML 200 (captive portal, CDN error page, proxy interstitial) throws a
 `await fetchUserInfo(client)` with no guard.
 
 **C. `receivers/device.ts:~92-114` — `verification_uri` gets no scheme validation.**
+*(Reviewed and rejected as a vulnerability; kept here as low-priority hardening.)*
 `expires_in` and `interval` are clamped; the URIs are checked only with
 `typeof === 'string'`. A hostile authorization server can return `javascript:…` or
 `file:///…`. The CLI itself never navigates to it, and PR #44 already neutralises the
-terminal-escape variant, so what remains is the documented navigate-to-it pattern in
-`examples/` and the docs — i.e. consumer code. One `new URL()` plus a scheme test.
+terminal-escape variant, so what remains depends on consumer code that no doc recommends:
+every doc occurrence is a `console.log`, and `verificationUri` never reaches `openBrowser()`
+in-tree. The attacker would also have to *be* GitHub, Microsoft, Alibaba or xAI, since every
+in-tree device provider hardcodes an https host and discovery enforces https on
+`device_authorization_endpoint`. One `new URL()` plus a scheme test, whenever someone is
+next in the file.
 
 **D. `browser/src/storage.ts:69,95` — a *throwing* storage getter is read as Safari private mode.**
 PR #45's `inDocument()` closes the case where the globals are present on a server. It does
