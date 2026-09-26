@@ -103,6 +103,78 @@ The worst repeats:
 | `usePkce: undefined` / `defineProvider` defaults | #40, #55 (2×) |
 | provider id aliasing another's storage key | #39, #46 (2×) |
 
+## Today's detection sweep — and what it proves
+
+The sweep deliberately targeted the surface the 19 open PRs have *not* touched
+(`fetch.ts`, `http.ts`, `token.ts`, `query.ts`, `crypto/`, `registry.ts`, the concrete
+provider descriptors, `receivers/manual.ts`, `receivers/device.ts`, `browser/storage.ts`,
+`auto.ts`, `login.ts`, the solid/vue/svelte adapters, `cli/output.ts`).
+
+It surfaced **11 substantive candidates. Five were already fixed in the unmerged backlog.**
+
+| # | Candidate | Verdict |
+|---|---|---|
+| 1 | `azureAi()` gives every Entra tenant the id `azure-ai`, so two directories share `tokens:azure-ai` | **NEW** |
+| 2 | `token.ts:119` dereferences a body of `null` → raw `TypeError`, escaping the `OAuthError` contract | **NEW** (minor) |
+| 3 | `fetch.ts:387` `fetchUserInfo` casts unparsed JSON to `UserInfo`; HTML 200 → raw `SyntaxError` | **NEW** (minor) |
+| 4 | device flow does not validate `verification_uri` *scheme* (`javascript:`, `file:`) | **NEW** (thin) |
+| 5 | browser SSR gate: a *throwing* storage getter lands in the Safari-private `catch` → module-scope `Map` | **NEW** (narrow) |
+| 6 | `TOKEN_SHAPES` omits Google's `1//…` refresh shape vs SECURITY.md's promise | **NEW** (doc gap) |
+| 7 | `base64UrlDecode`'s `/=+$/` backtracks quadratically — 117 KB `id_token` stalls the loop 11.5 s | **DUPLICATE — PR #44** |
+| 8 | provider text reaches the terminal with ANSI escapes intact; a token endpoint can repaint `✗` as `✓` | **DUPLICATE — PR #44** |
+| 9 | `table()` measures column widths on raw `String.length`, so escapes mis-pad every column | **DUPLICATE — PR #44** |
+| 10 | browser SSR gate: globals *present* on a server runtime (Deno, Node `--experimental-webstorage`) | **DUPLICATE — PR #45** |
+| 11 | `createBrowserAuthClient` spreads the storage default *before* caller options, so `{storage: undefined}` erases it | **DUPLICATE — PR #45** |
+
+Candidates 7–11 are not near-misses; they are the same defects with the same fixes.
+PR #44 adds precisely the linear reverse scan for #7, the `plain()` C0/C1/DEL stripper for
+#8, and `safeRows` stripping cells *before* measuring for #9. PR #45 adds precisely
+`inDocument()` for #10 and `options.storage ?? sessionStorageAdapter()` for #11.
+
+**A process note against myself, because it is the same failure:** the exclusion briefing I
+gave the hunters covered only the 8 most recent PRs, not all 19. That is exactly why they
+re-derived #44's and #45's work. Two of the three hunters caught it independently by
+diffing all 19 branches themselves. The lesson is not "the hunters erred" — it is that the
+exclusion set must be the **whole open set**, and that a partial one reproduces the
+routine's core defect inside a single run.
+
+### The one finding worth a maintainer's attention
+
+**`azureAi()` is tenant-scoped in its endpoints but not in its identity.**
+`packages/core/src/providers/azure-ai.ts:41-42` folds `tenant` into every endpoint;
+line 45 hardcodes `id: 'azure-ai'`. The credential key is derived from the id alone
+(`client.ts:528`), so `azureAi({tenant:'contoso…'})` and `azureAi({tenant:'fabrikam…'})`
+both read and write `tokens:azure-ai`. An app signing into two directories is served,
+refreshes, and logs out of the wrong tenant's token — **with no attacker involved**.
+`accountKey` mitigates it, but `docs/content/providers/azure-ai.mdx`'s "Multi-tenant"
+section never says you need it.
+
+`azure-ai.ts` is untouched by all 19 open PRs, and `providers.test.ts` cannot catch it: it
+iterates `Object.values(providers)`, and `azureAi` is a factory that is not in that map.
+
+The secondary claim — that `#ownsProviderId` lets one tenant consume another's pending
+authorization — is real but **not attacker-reachable**: pending records are keyed
+`pending:${state}` (`registry.ts:107,185`) on a 256-bit random state, so it needs the
+application to misroute a callback. Treat it as a degraded defence-in-depth guard, not a hole.
+
+**This fix is a judgement call, not a mechanical one, which is why this run does not push
+it.** Scoping the id to the tenant changes the storage key, so it either orphans existing
+`tokens:azure-ai` credentials or needs a `previousIds` migration; and `previousIds` already
+carries `microsoft`. Given the backlog already holds three contradictory answers to a
+comparable question (Finding 2), a fourth unreviewed opinion is not what this repo needs.
+Recommended shape, for the maintainer to accept or reject:
+
+```ts
+// tenant-scoped identity, with the unscoped key migrated once
+const tenant = options.tenant ?? 'common'
+id: `azure-ai:${tenant}`,
+previousIds: ['azure-ai', 'microsoft'],
+```
+
+Note that `previousIds` adoption is *destructive* (it moves the old record), so with two
+tenants the first client constructed would claim the legacy `tokens:azure-ai`. Migrating
+only when `tenant === 'common'` avoids that and is probably the right trade.
+
 ## What to do
 
 **Do not ask this routine for more detection until the backlog drains.** More PRs make the
@@ -133,3 +205,62 @@ conflict problem worse, not better.
 
 Consider also having the routine consolidate rather than accumulate: one long-lived
 branch that it rebases and extends, instead of a new branch per day.
+
+---
+
+## Appendix — the other new findings, recorded so they are not lost
+
+None of these is urgent and none is pushed. They are cheap, uncontroversial fixes whenever
+someone is next in these files.
+
+**A. `token.ts:105` + `:119` — a body of `null` escapes the `OAuthError` contract.**
+`text ? JSON.parse(text) : {}` treats the string `"null"` as truthy, so `parsed` becomes
+`null` and `parsed.error` two lines later throws a raw `TypeError`. `errors.ts` promises
+`catch (e) { if (e instanceof OAuthError) … }` is sufficient, and `refreshTokens`' wrapper
+only rewraps `OAuthError`, so the documented "catch `refresh_failed`, prompt a re-login"
+branch is skipped. Fires at any status, so a 4xx/5xx page whose body is `null` hits it too.
+Every other degenerate shape (`'[]'`, `'3'`, `'true'`, `'"s"'`, `'{}'`, `''`) is handled
+correctly — `null` is the only hole. Fix: `parsed === null` guard, or a plain-object check.
+Note `registry.ts` already fixes this exact class for the pending record in PR #45.
+
+**B. `fetch.ts:387` — `fetchUserInfo` trusts the userinfo response.**
+`return (await response.json()) as UserInfo` with no try, no content-type check and no shape
+guard. An HTML 200 (captive portal, CDN error page, proxy interstitial) throws a raw
+`SyntaxError`; a body of `null` resolves as a `UserInfo` that throws in the caller on
+`.email`. Compare `token.ts:105-113`, which wraps the same operation into
+`invalid_token_response`. `docs/content/reference/tokens.mdx:96` teaches
+`await fetchUserInfo(client)` with no guard.
+
+**C. `receivers/device.ts:~92-114` — `verification_uri` gets no scheme validation.**
+`expires_in` and `interval` are clamped; the URIs are checked only with
+`typeof === 'string'`. A hostile authorization server can return `javascript:…` or
+`file:///…`. The CLI itself never navigates to it, and PR #44 already neutralises the
+terminal-escape variant, so what remains is the documented navigate-to-it pattern in
+`examples/` and the docs — i.e. consumer code. One `new URL()` plus a scheme test.
+
+**D. `browser/src/storage.ts:69,95` — a *throwing* storage getter is read as Safari private mode.**
+PR #45's `inDocument()` closes the case where the globals are present on a server. It does
+not close the case where the getter itself throws: `typeof localStorage` throws inside the
+`try`, so control reaches the `/* fall through to memory */` catch and returns a
+module-scope `Map` shared by every request — the outcome `unavailableStorage()` exists to
+refuse. Reproducible on Node with `--experimental-webstorage` and no `--localstorage-file`.
+Narrow, but it survives the backlog's fix.
+
+**E. `redact.ts:40-51` — `TOKEN_SHAPES` omits shapes SECURITY.md implies are covered.**
+Google's `1//…` refresh token and Copilot's `tid=…;exp=…;sku=…:<sig>` match no entry, so a
+*bare* occurrence in prose (e.g. inside `error_description`) is not scrubbed. The keyed
+forms (`refresh_token=1//…`) redact correctly, which is the case SECURITY.md actually
+describes, and no real provider is known to echo a bare token. Doc-vs-code gap, not a
+demonstrated leak.
+
+### Two documentation errors found incidentally
+
+- `query.ts:59-60` claims last-wins duplicate handling "is what `URLSearchParams.get` would
+  return". It is not — `new URLSearchParams('a=1&a=2').get('a')` returns `'1'`. Not
+  exploitable (both sides of every `state` comparison go through the same `parseQuery`), but
+  the comment is wrong.
+- `crypto/adapter.ts` justifies the pure-JS SHA-256 fallback with "a hash handles no
+  secrets", but `pkce.ts:32` hashes the PKCE verifier, which is one. The conclusion still
+  holds — SHA-256 is unkeyed and the digest is published as the challenge — the sentence is
+  just inaccurate. `SECURITY.md` repeats it.
+
